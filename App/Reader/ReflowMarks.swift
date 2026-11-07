@@ -241,6 +241,96 @@ enum ReflowMarks {
         return out;
       }
 
+      function insidePage(r) {
+        var w = lasa.pageWidth();
+        var h = window.innerHeight;
+        return r.width > 0 && r.right > 1 && r.left < w - 1 && r.bottom > 0 && r.top < h;
+      }
+
+      function charVisible(node, i) {
+        var r = document.createRange();
+        r.setStart(node, i);
+        r.setEnd(node, i + 1);
+        var list = r.getClientRects();
+        for (var k = 0; k < list.length; k++) {
+          if (insidePage(list[k])) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // Var texten som syns på sidan börjar och slutar. Sidan ska vara vald med lasa.ensurePage.
+      function visibleRange() {
+        ensure();
+        var w = lasa.pageWidth();
+        var first = -1;
+        var last = -1;
+        for (var i = 0; i < nodes.length; i++) {
+          var node = nodes[i];
+          if (!node.data.length || /^\s*$/.test(node.data)) {
+            continue;
+          }
+          var whole = document.createRange();
+          whole.selectNodeContents(node);
+          var list = whole.getClientRects();
+          var visible = false;
+          for (var k = 0; k < list.length; k++) {
+            if (insidePage(list[k])) {
+              visible = true;
+              break;
+            }
+          }
+          if (!visible) {
+            if (first >= 0 && list.length && list[0].left >= w - 1) {
+              break;
+            }
+            continue;
+          }
+          if (first < 0) {
+            first = i;
+          }
+          last = i;
+        }
+        if (first < 0) {
+          return null;
+        }
+        var a = nodes[first];
+        var startIn = 0;
+        while (startIn < a.data.length && !charVisible(a, startIn)) {
+          startIn++;
+        }
+        var b = nodes[last];
+        var endIn = b.data.length;
+        while (endIn > 0 && !charVisible(b, endIn - 1)) {
+          endIn--;
+        }
+        var start = starts[first] + startIn;
+        return { start: start, end: Math.max(start, starts[last] + endIn) };
+      }
+
+      // Om tecknet vid en plats (eller det före) står på sidan som syns, nära fingrets höjd.
+      function nearFinger(offset, y) {
+        for (var k = 0; k < 2; k++) {
+          var o = offset - k;
+          if (o < 0 || o >= total) {
+            continue;
+          }
+          var range = rangeFor(o, o + 1);
+          if (!range) {
+            continue;
+          }
+          var list = range.getClientRects();
+          for (var i = 0; i < list.length; i++) {
+            var r = list[i];
+            if (insidePage(r) && Math.abs((r.top + r.bottom) / 2 - y) < 48) {
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+
       // Samma vikning som FoldedText i Swift: små bokstäver, ett mellanslag mellan orden, inga avstavningar.
       function isSpaceCode(c) {
         return c === 0x20 || c === 0x09 || c === 0xA0 || c === 0x0A || c === 0x0D || c === 0x2028 ||
@@ -468,7 +558,9 @@ enum ReflowMarks {
         if (!range || !range.startContainer || range.startContainer.nodeType !== 3) {
           return -1;
         }
-        return offsetOf(range.startContainer, range.startOffset);
+        var offset = offsetOf(range.startContainer, range.startOffset);
+        // Under sista raden ger webbvyn en plats någon annanstans, ibland på förra sidan.
+        return offset >= 0 && nearFinger(offset, y) ? offset : -1;
       }
 
       function select(index, x1, y1, x2, y2) {
@@ -479,11 +571,18 @@ enum ReflowMarks {
         if (a < 0 && b < 0) {
           return null;
         }
-        if (a < 0) {
-          a = b;
-        }
-        if (b < 0) {
-          b = a;
+        if (a < 0 || b < 0) {
+          // Ena fingret utanför texten: markera till sidans början eller slut, åt det håll fingret drog.
+          var bounds = visibleRange();
+          if (!bounds) {
+            return null;
+          }
+          if (a < 0) {
+            a = y1 <= y2 ? bounds.start : Math.max(bounds.start, bounds.end - 1);
+          }
+          if (b < 0) {
+            b = y2 >= y1 ? Math.max(bounds.start, bounds.end - 1) : bounds.start;
+          }
         }
         var start = Math.min(a, b);
         var end = Math.max(a, b);
@@ -590,69 +689,12 @@ enum ReflowMarks {
       // Texten som syns på en sida, och var den börjar i kapitlet.
       function pageText(index) {
         lasa.ensurePage(index);
-        ensure();
-        var w = lasa.pageWidth();
-        var h = window.innerHeight;
-        function inside(r) {
-          return r.width > 0 && r.right > 1 && r.left < w - 1 && r.bottom > 0 && r.top < h;
-        }
-        function charVisible(node, i) {
-          var r = document.createRange();
-          r.setStart(node, i);
-          r.setEnd(node, i + 1);
-          var list = r.getClientRects();
-          for (var k = 0; k < list.length; k++) {
-            if (inside(list[k])) {
-              return true;
-            }
-          }
-          return false;
-        }
-        var first = -1;
-        var last = -1;
-        for (var i = 0; i < nodes.length; i++) {
-          var node = nodes[i];
-          if (!node.data.length || /^\s*$/.test(node.data)) {
-            continue;
-          }
-          var whole = document.createRange();
-          whole.selectNodeContents(node);
-          var list = whole.getClientRects();
-          var visible = false;
-          for (var k = 0; k < list.length; k++) {
-            if (inside(list[k])) {
-              visible = true;
-              break;
-            }
-          }
-          if (!visible) {
-            if (first >= 0 && list.length && list[0].left >= w - 1) {
-              break;
-            }
-            continue;
-          }
-          if (first < 0) {
-            first = i;
-          }
-          last = i;
-        }
-        if (first < 0) {
+        var bounds = visibleRange();
+        if (!bounds) {
           return { start: 0, length: 0, text: '' };
         }
-        var a = nodes[first];
-        var startIn = 0;
-        while (startIn < a.data.length && !charVisible(a, startIn)) {
-          startIn++;
-        }
-        var b = nodes[last];
-        var endIn = b.data.length;
-        while (endIn > 0 && !charVisible(b, endIn - 1)) {
-          endIn--;
-        }
-        var start = starts[first] + startIn;
-        var end = Math.max(start, starts[last] + endIn);
-        var range = rangeFor(start, end);
-        return { start: start, length: end - start, text: range ? range.toString() : '' };
+        var range = rangeFor(bounds.start, bounds.end);
+        return { start: bounds.start, length: bounds.end - bounds.start, text: range ? range.toString() : '' };
       }
 
       // Rutorna för ett intervall på en sida.
@@ -675,7 +717,7 @@ enum ReflowMarks {
       };
 
       return { installStyle: installStyle, apply: apply, select: select, text: text, find: find, reveal: reveal,
-               visible: visible, pageText: pageText, rectsOn: rectsOn };
+               visible: visible, visibleRange: visibleRange, pageText: pageText, rectsOn: rectsOn };
     })();
     lasaMarks.installStyle(css);
     return true;

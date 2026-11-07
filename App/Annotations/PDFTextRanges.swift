@@ -28,8 +28,17 @@ enum PDFTextRanges {
                 }
             }
         }
-        guard let found = best, found.distance <= tolerance else { return nil }
-        return found.range
+        if let found = best, found.distance <= tolerance {
+            return found.range
+        }
+        // Reserv: PDFKit:s egen ordmarkering, omräknad till ett teckenintervall.
+        if let selection = page.selectionForWord(at: point), (selection.string ?? "").contains(where: { $0.isLetter }) {
+            let range = selection.range(at: 0, on: page)
+            if range.location != NSNotFound, range.length > 0, NSMaxRange(range) <= text.length {
+                return range
+            }
+        }
+        return nil
     }
 
     /// Intervallet från ett ord till ett annat, i vilken ordning de än kom.

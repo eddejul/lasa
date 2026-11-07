@@ -172,6 +172,11 @@ final class ReaderContentsContainerViewController: UIViewController {
         show(picker.selectedSegmentIndex)
     }
 
+    /// Används av självtestet: hur många listor som syns (ska vara en).
+    var visibleListCount: Int {
+        pages.filter { $0.isViewLoaded && $0.view.superview != nil && !$0.view.isHidden }.count
+    }
+
     private func show(_ index: Int) {
         let target: UIViewController = index == 0 ? pages[0] : annotations
         if index == 1 {
@@ -179,19 +184,19 @@ final class ReaderContentsContainerViewController: UIViewController {
         } else if index == 2 {
             annotations.kind = .highlights
         }
-        if current !== target {
-            if let old = current {
-                old.willMove(toParent: nil)
-                old.view.removeFromSuperview()
-                old.removeFromParent()
-            }
-            addChild(target)
-            target.view.frame = view.bounds
-            target.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            view.addSubview(target.view)
-            target.didMove(toParent: self)
-            current = target
+        for page in pages where page.parent !== self {
+            addChild(page)
+            page.view.frame = view.bounds
+            page.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            page.view.backgroundColor = .systemBackground
+            view.addSubview(page.view)
+            page.didMove(toParent: self)
         }
+        for page in pages {
+            page.view.isHidden = page !== target
+        }
+        view.bringSubviewToFront(target.view)
+        current = target
         // Innehållsförteckningens egna knappar (som Gå till sida) följer med.
         navigationItem.leftBarButtonItem = index == 0 ? target.navigationItem.leftBarButtonItem : nil
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done,
