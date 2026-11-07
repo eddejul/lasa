@@ -6,7 +6,9 @@ import { ACCEPT_ATTRIBUTE, importFiles, renderLibrary } from './library.js';
 import { setAboutHandler } from './popup.js';
 import { applyTheme, closeReader, openReader } from './reader.js';
 import { renderSavedWords } from './savedwords.js';
+import { renderSettings } from './settings.js';
 import { getBook, openStore, settings } from './store.js';
+import { syncSoon, syncState } from './sync.js';
 import { el, replace, toast } from './ui.js';
 
 const app = document.getElementById('app');
@@ -14,6 +16,7 @@ const TABS = [
   { id: 'library', title: 'Bibliotek' },
   { id: 'saved', title: 'Sparade ord' },
   { id: 'about', title: 'Om ordboken' },
+  { id: 'settings', title: 'Inställningar' },
 ];
 let currentTab = null;
 
@@ -39,6 +42,7 @@ async function showTab(tab) {
   replace(app, header, content);
   if (tab === 'library') await renderLibrary(content, { onOpen: openBook });
   else if (tab === 'saved') await renderSavedWords(content);
+  else if (tab === 'settings') await renderSettings(content);
   else await renderAbout(content);
 }
 
@@ -131,7 +135,15 @@ async function start() {
   });
   const { error } = await checkDictionary();
   if (error) toast(error, 10);
+  // Efter en synk visas hämtade ord direkt om Sparade ord är öppet.
+  window.addEventListener('lasa-sync', () => {
+    if (!syncState.running && currentTab === 'saved') {
+      const content = app.querySelector('.main-content[data-view="saved"]');
+      if (content) renderSavedWords(content);
+    }
+  });
   await showTab('library');
+  syncSoon();
 }
 
 start();

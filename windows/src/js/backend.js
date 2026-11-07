@@ -60,6 +60,16 @@ export async function deleteBookFile(id, ext) {
   return invoke('library_delete', { id, ext });
 }
 
+/** Synkens hemligheter (sync-publishable-key, sync-refresh-token) i Windows Autentiseringshanteraren. */
+export async function secretGet(name) {
+  return invoke('secret_get', { name });
+}
+
+/** Sparar en hemlighet. null eller tom text tar bort den. */
+export async function secretSet(name, value) {
+  return invoke('secret_set', { name, value: value || null });
+}
+
 /** Öppnar en adress i den vanliga webbläsaren (svenska.se, källorna under Om ordboken). */
 export async function openUrl(url) {
   if (tauri) return tauri.invoke('plugin:opener|open_url', { url });

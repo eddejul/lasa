@@ -183,6 +183,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .saved-sentence { margin-top: 4px; font-family: Georgia, serif; line-height: 1.4; }
 .license-text { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflow: auto; background: var(--surface-2); padding: 10px; border-radius: 6px; width: 100%; }
 
+/* Inställningar */
+
+.settings-form { padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+.settings-field { display: flex; flex-direction: column; gap: 4px; }
+.settings-label { font-weight: 600; font-size: 13px; }
+.settings-note { color: var(--muted); font-size: 12px; }
+.settings-buttons { margin-top: 2px; }
+.settings-message { margin: 0; color: var(--muted); }
+.settings-message.error, .list-text.error { color: var(--danger); }
+.settings-status-row { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
+.settings-status-row .list-text { text-align: right; }
+.button:disabled { opacity: 0.55; cursor: default; }
+
 /* Läsaren */
 
 .reader-container, .reader { height: 100%; display: flex; flex-direction: column; min-height: 0; }

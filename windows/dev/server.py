@@ -83,6 +83,26 @@ class Backend:
                 if os.path.exists(path):
                     os.remove(path)
                 return None
+            if command in ("secret_get", "secret_set"):
+                # Appen sparar hemligheterna i Windows Autentiseringshanteraren. Provservern har en fil i
+                # datamappen i stället, bara för provningen.
+                path = os.path.join(self.data, "hemligheter-provserver.json")
+                secrets = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as file:
+                        secrets = json.load(file)
+                name = args["name"]
+                if name not in ("sync-publishable-key", "sync-refresh-token"):
+                    raise ValueError(f"Okänd hemlighet: {name}")
+                if command == "secret_get":
+                    return secrets.get(name)
+                if args.get("value"):
+                    secrets[name] = args["value"]
+                else:
+                    secrets.pop(name, None)
+                with open(path, "w", encoding="utf-8") as file:
+                    json.dump(secrets, file)
+                return None
             if command == "open_url":
                 with open(os.path.join(self.data, "opened_urls.txt"), "a", encoding="utf-8") as file:
                     file.write(args["url"] + "\n")
@@ -151,8 +171,10 @@ def main():
     args = parser.parse_args()
     with open(CONFIG, encoding="utf-8") as file:
         config = json.load(file)
-    # Samma policy som i appen, utan Tauris egna adresser för anropen.
+    # Samma policy som i appen, utan Tauris egna adresser för anropen. Bara här får sidan dessutom
+    # anropa 127.0.0.1, så att synken kan provas mot låtsasservern (windows/tests/mock_supabase.py).
     csp = config["app"]["security"]["csp"].replace(" ipc: http://ipc.localhost", "")
+    csp = csp.replace("https://*.supabase.co", "https://*.supabase.co http://127.0.0.1:*")
     backend = Backend(args.dictionary, args.data)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(backend, csp))
     print(f"Läsa på http://127.0.0.1:{args.port}/ (pid {os.getpid()}, data i {args.data})", flush=True)
