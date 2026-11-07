@@ -30,14 +30,16 @@ Pusha inte flera orelaterade ändringar i samma commit. Varje runda tar flera mi
 ```
 App/
   AppDelegate.swift, SceneDelegate.swift
+  Books/       EPUB och textfiler: zip, XML, uppackning, omvandling till HTML-kapitel
   Library/     bibliotek, import, lagring
-  Reader/      läsare, rendering, pappersvikning
+  Reader/      läsare, rendering, pappersvikning (PDF och, med Reflow i namnet, EPUB och text)
   Dictionary/  ordboken, ordet under fingret, ordrutan, sparade ord
   Support/     haptik och små hjälpare
   Resources/   lasa-ordbok.sqlite läggs här av bygget, checkas inte in
 Config/Info.plist
 docs/SPEC.md
 tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
+tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en iPad-simulator
 .github/workflows/ios-build.yml
 ```
 
@@ -48,6 +50,15 @@ tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
 * Håll minnet nere: högst 5 renderade sidbilder (även i uppslag), högst 3 webbvyer för EPUB.
 * Sidans placering och renderingsstorlek får bara bero på vyns storlek och läsarens fasta marginaler, aldrig på om menyraden eller statusfältet syns. Använd inte vyns `safeAreaInsets` för sidan, de ändras med menyraden.
 * Haptik går genom `Haptics.shared`. iPad har ingen vibrationsmotor, där händer inget, och det är förväntat.
+
+## EPUB och textfiler (fas 3)
+
+* Inget Readium. `App/Books/` packar upp EPUB med en egen zipläsare och läser OPF, nav och NCX med `XMLTree`. Textfiler görs om till HTML-kapitel av `TextBookConverter`.
+* Varje kapitel ligger i en dold `WKWebView` (`ChapterView` i `ReflowRenderer.swift`) med CSS-kolumner. Bladen i vikningen är ögonblicksbilder. Webbvyerna får aldrig synas eller ta tryck, de ligger under `paperCover` i läsaren.
+* Högst 3 webbvyer och högst 5 sidbilder. Ett jobb i taget per webbvy, med en vakt som laddar om kapitlet efter 8 sekunder utan svar.
+* Skripten i webbvyn (`ReflowStyle.script`) körs i en egen JavaScript-värld (`.defaultClient`) och anropas med `callAsyncJavaScript`.
+* Ordfunktionen i EPUB använder ordboken på ett enda ställe: `presentWord` i `ReflowReaderViewController.swift`. Hållgesten är densamma som i PDF (ordet närmast fingret, bubbla, rutan öppnas när man släpper). Ordet hittas i den dolda webbvyn med `lasa.wordAt`, ett uppslag i taget.
+* Simulatortestet (jobbet Simulatortest) bygger appen för en iPad-simulator och startar den med `-LasaSelfTest <fil>`. Läs loggen och bilderna i artefakten Simulatortest efter varje ändring i läsaren, innan Edvin får något att testa. Simulatorn kör en nyare iOS än iPaden, och iOS 26 nekar appen att vrida skärmen, så självtestet gör läsarens yta bred för att pröva uppslag. Tider och minne gäller en Mac, inte iPaden.
 
 ## Ordboken (fas 2)
 

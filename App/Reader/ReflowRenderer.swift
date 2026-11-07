@@ -70,6 +70,8 @@ final class ReflowRenderer {
     }
 
     private(set) var failures = 0
+    /// När den första sidbilden blev klar, för att kunna visa hur lång tid det tar att öppna en bok.
+    private(set) var firstSnapshotAt: CFTimeInterval?
 
     private let host: UIView
     private var views: [ChapterView] = []
@@ -223,11 +225,16 @@ final class ReflowRenderer {
 
     // MARK: Frågor
 
-    /// Ordet vid en punkt på en sida (i sidans koordinater), eller nil om fingret inte är på ett ord.
-    func word(at point: CGPoint, on page: ReflowPage, completion: @escaping (ReflowWord?) -> Void) {
+    /// Ordet närmast en punkt på en sida (i sidans koordinater), eller nil om inget ord ligger inom `tolerance` punkter.
+    func word(at point: CGPoint,
+              on page: ReflowPage,
+              tolerance: CGFloat = 8,
+              completion: @escaping (ReflowWord?) -> Void) {
+        let arguments: [String: Any] = ["index": page.page, "x": Double(point.x), "y": Double(point.y),
+                                        "tolerance": Double(tolerance)]
         let query = Query(chapter: page.chapter,
-                          body: "return lasa.wordAt(index, x, y);",
-                          arguments: ["index": page.page, "x": Double(point.x), "y": Double(point.y)]) { value in
+                          body: "return lasa.wordAt(index, x, y, tolerance);",
+                          arguments: arguments) { value in
             completion(ReflowValues.word(from: value))
         }
         queries.append(query)
@@ -508,6 +515,9 @@ final class ReflowRenderer {
     // MARK: Bildminnet
 
     private func store(_ snapshot: ReflowSnapshot, for page: ReflowPage) {
+        if firstSnapshotAt == nil {
+            firstSnapshotAt = CACurrentMediaTime()
+        }
         let callbacks = waiting.removeValue(forKey: page) ?? []
         waitingOrder.removeAll { $0 == page }
         if !callbacks.isEmpty || workingSet.contains(page) {

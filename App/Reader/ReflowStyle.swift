@@ -270,7 +270,45 @@ enum ReflowStyle {
         return document.body || root;
       }
 
-      function wordAt(index, x, y) {
+      // Ordet som innehåller tecknet på plats i, som [början, slut], eller null.
+      function wordSpan(text, i) {
+        if (i < 0 || i >= text.length || !isWord(text[i])) {
+          return null;
+        }
+        var start = i;
+        var end = i + 1;
+        while (start > 0 && (isWord(text[start - 1]) || isJoiner(text, start - 1))) {
+          start -= 1;
+        }
+        while (end < text.length && (isWord(text[end]) || isJoiner(text, end))) {
+          end += 1;
+        }
+        return [start, end];
+      }
+
+      // Avståndet från punkten till närmaste ruta, och rutorna.
+      function measureSpan(node, span, x, y) {
+        var wordRange = document.createRange();
+        wordRange.setStart(node, span[0]);
+        wordRange.setEnd(node, span[1]);
+        var rects = [];
+        var best = Infinity;
+        var list = wordRange.getClientRects();
+        for (var k = 0; k < list.length; k++) {
+          var r = list[k];
+          if (r.width < 1 || r.height < 1) {
+            continue;
+          }
+          rects.push({ x: r.left, y: r.top, w: r.width, h: r.height });
+          var dx = Math.max(r.left - x, 0, x - r.right);
+          var dy = Math.max(r.top - y, 0, y - r.bottom);
+          best = Math.min(best, Math.sqrt(dx * dx + dy * dy));
+        }
+        return { distance: best, rects: rects };
+      }
+
+      // Ordet närmast fingret, inte bara ordet till vänster om markören, och bara om det ligger inom tolerance.
+      function wordAt(index, x, y, tolerance) {
         var target = index * pageWidth();
         if (offset !== target) {
           setOffset(target);
@@ -285,40 +323,25 @@ enum ReflowStyle {
         }
         var text = node.data;
         var i = range.startOffset;
-        if (i >= text.length || !isWord(text[i])) {
-          i -= 1;
-        }
-        if (i < 0 || i >= text.length || !isWord(text[i])) {
+        var chosen = null;
+        var tried = {};
+        [i, i - 1, i + 1].forEach(function (position) {
+          var span = wordSpan(text, position);
+          if (!span || tried[span[0]]) {
+            return;
+          }
+          tried[span[0]] = true;
+          var measured = measureSpan(node, span, x, y);
+          if (!chosen || measured.distance < chosen.distance) {
+            chosen = { span: span, distance: measured.distance, rects: measured.rects };
+          }
+        });
+        if (!chosen || chosen.distance > tolerance) {
           return null;
         }
-        var start = i;
-        var end = i + 1;
-        while (start > 0 && (isWord(text[start - 1]) || isJoiner(text, start - 1))) {
-          start -= 1;
-        }
-        while (end < text.length && (isWord(text[end]) || isJoiner(text, end))) {
-          end += 1;
-        }
-
-        var wordRange = document.createRange();
-        wordRange.setStart(node, start);
-        wordRange.setEnd(node, end);
-        var rects = [];
-        var hit = false;
-        var list = wordRange.getClientRects();
-        for (var k = 0; k < list.length; k++) {
-          var r = list[k];
-          if (r.width < 1 || r.height < 1) {
-            continue;
-          }
-          rects.push({ x: r.left, y: r.top, w: r.width, h: r.height });
-          if (x >= r.left - 8 && x <= r.right + 8 && y >= r.top - 8 && y <= r.bottom + 8) {
-            hit = true;
-          }
-        }
-        if (!hit) {
-          return null;
-        }
+        var start = chosen.span[0];
+        var end = chosen.span[1];
+        var rects = chosen.rects;
 
         var before = '';
         var after = '';

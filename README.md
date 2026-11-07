@@ -2,7 +2,7 @@
 
 Läsapp för iPad och iPhone med pappersvikning som i Apple Books, och en ordfunktion som visar synonymer när man trycker på ett ord. Hela planen finns i [docs/SPEC.md](docs/SPEC.md).
 
-**Status:** fas 2 byggs på grenen `fas2`: ordboken. Fas 1 (uppslag i liggande läge, innehållsförteckning, Gå till sida, reglage, zoom och tre bakgrunder) testas på iPaden. Fas 0 är testad och godkänd.
+**Status:** fas 3 (EPUB och textfiler) byggs på grenen `fas3`, fas 2 (ordboken) på grenen `fas2`. Fas 1 testas på iPaden. Fas 0 är testad och godkänd.
 
 ## Kom igång (en gång)
 
@@ -49,6 +49,16 @@ Berätta för Claude Code vad som känns fel, till exempel om vikningen hackar e
 * I biblioteket, knappen uppe till vänster: Sparade ord (orden du slagit upp, med meningen) och Om ordboken (källor och hur snabbt uppslagen gick).
 
 Testrapporten för ordboken (150 ord ur kurslitteraturen och appens svar) finns som artefakten **Ordbok-testrapport** i samma körning som appen.
+
+## Testa fas 3
+
+* Lägg in en EPUB (helst en roman och en kursbok) och en textfil (txt eller md) med plus. Den öppnas med samma pappersvikning som PDF.
+* Bläddra genom några kapitelgränser, framåt och bakåt, snabbt och långsamt. Säg till om vikningen hackar eller om en sida är tom en stund.
+* Knappen med två A i menyn: ändra storlek och typsnitt. Sidan ska hamna ungefär där du var.
+* Vänd iPaden till liggande: två sidor bredvid varandra. Varje kapitel börjar till vänster.
+* Håll fingret på ett ord i EPUB:en och dra lite: markeringen och bubblan ska följa fingret som i PDF, och rutan öppnas när du släpper. Tryck på en fotnot och sedan Tillbaka.
+
+Under knappen med två A står längst ner hur många millisekunder en sidbild tar på din iPad. Skriv gärna av det.
 
 ## Licenser för ordboken
 
