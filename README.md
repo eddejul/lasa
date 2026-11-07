@@ -15,10 +15,10 @@ Läsapp för iPad och iPhone med pappersvikning som i Apple Books, och en ordfun
 
 ## Installera på iPaden
 
-1. Installera **iTunes från Apples webbplats** (inte versionen från Microsoft Store) och **Sideloadly** från sideloadly.io.
+1. Installera **iTunes** och **iCloud** från Apples webbplats (inte versionerna från Microsoft Store), sedan **Sideloadly** från sideloadly.io. Länkarna finns under "Before you install" på sideloadly.io.
 2. Öppna den gröna körningen under Actions, ladda ner artefakten **Lasa-ipa** och packa upp zip-filen. Du får filen `Lasa-unsigned.ipa`.
-3. Koppla iPaden till datorn med kabel, lås upp den och tryck **Lita på** datorn.
-4. Dra in `.ipa`-filen i Sideloadly, skriv ditt Apple-ID och tryck **Start**.
+3. Koppla iPaden till datorn med kabel, lås upp den och tryck **Lita på** datorn. Frågan om att ge datorn åtkomst till bilder gäller bara foton och behövs inte.
+4. Öppna programmet Sideloadly. iPaden syns inte i Utforskaren, den väljs i Sideloadly under iDevice. Dra `.ipa`-filen från Utforskaren till IPA-ikonen i Sideloadlys fönster, skriv ditt Apple-ID och tryck **Start**.
 5. På iPaden: Inställningar, Allmänt, VPN och enhetshantering. Tryck på ditt Apple-ID och välj **Lita på**.
 6. Öppna Läsa, tryck på **+** och välj en PDF. Du kan också välja Öppna i Läsa från Filer-appen.
 
