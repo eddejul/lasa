@@ -1,5 +1,6 @@
 // Det användaren gör: biblioteket, läspositioner, inställningar, sparade ord och dolda synonympar.
 // Två egna SQLite-filer i appens datamapp (bibliotek.sqlite och anvandarord.sqlite), aldrig ordboken.
+// Synken (fas 6, sync.js) läser och skriver läspositioner och sparade ord här.
 
 import { userDb } from './backend.js';
 import { hiddenKey } from './lookup.js';
@@ -7,7 +8,9 @@ import { hiddenKey } from './lookup.js';
 const words = userDb('ord');
 const library = userDb('bibliotek');
 
-// Samma kolumner som saved_words i App/Dictionary/UserWords.swift, plus uuid och book_id för synken i fas 6.
+// Samma kolumner som saved_words i App/Dictionary/UserWords.swift, plus uuid och book_id för synken.
+// deleted: borttaget ord som synken ska skicka vidare. due, interval, ease, reps, lapses och
+// review_updated är repetitionen från iPaden. Windows repeterar inte, men skickar dem vidare oförändrade.
 const WORDS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS saved_words (
   id INTEGER PRIMARY KEY,
@@ -32,6 +35,15 @@ CREATE TABLE IF NOT EXISTS hidden_pairs (
   PRIMARY KEY (language, lemma, synonym)
 );
 `;
+const WORD_COLUMNS = [
+  ['deleted', 'INTEGER NOT NULL DEFAULT 0'],
+  ['due', 'REAL'],
+  ['interval', 'REAL'],
+  ['ease', 'REAL'],
+  ['reps', 'INTEGER'],
+  ['lapses', 'INTEGER'],
+  ['review_updated', 'REAL'],
+];
 
 const LIBRARY_SCHEMA = `
 CREATE TABLE IF NOT EXISTS books (
@@ -45,20 +57,34 @@ CREATE TABLE IF NOT EXISTS books (
   added REAL NOT NULL,
   opened REAL NOT NULL DEFAULT 0,
   position TEXT NOT NULL DEFAULT '',
-  progress REAL NOT NULL DEFAULT 0,
-  cover TEXT NOT NULL DEFAULT ''
+  progress REAL NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 `;
+// position_updated: när läspositionen senast flyttades av läsaren eller kom från synken (sekunder).
+const BOOK_COLUMNS_ADDED = [
+  ['cover', "TEXT NOT NULL DEFAULT ''"],
+  ['position_updated', 'REAL'],
+];
 
 const now = () => Date.now() / 1000;
+
+/** Lägger till kolumner som saknas, så att en databas från en tidigare version fungerar. */
+async function ensureColumns(db, table, columns) {
+  const existing = new Set((await db.all(`PRAGMA table_info(${table})`)).map((row) => row[1]));
+  for (const [name, definition] of columns) {
+    if (!existing.has(name)) await db.run(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  }
+}
 
 export async function openStore() {
   await words.batch(WORDS_SCHEMA);
   await library.batch(LIBRARY_SCHEMA);
+  await ensureColumns(words, 'saved_words', WORD_COLUMNS);
+  await ensureColumns(library, 'books', BOOK_COLUMNS_ADDED);
   await loadHiddenPairs();
   await loadSettings();
 }
@@ -79,23 +105,28 @@ async function loadSettings() {
 
 export async function setSetting(key, value) {
   settings[key] = value;
+  if (value === undefined || value === null) {
+    delete settings[key];
+    await library.run('DELETE FROM settings WHERE key = ?', [key]);
+    return;
+  }
   await library.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value',
     [key, JSON.stringify(value)]);
 }
 
 // Biblioteket
 
-const BOOK_COLUMNS = 'id, title, author, format, ext, file_name, size, added, opened, position, progress, cover';
+const BOOK_COLUMNS = 'id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated';
 
 function bookFromRow(row) {
-  const [id, title, author, format, ext, fileName, size, added, opened, position, progress, cover] = row;
+  const [id, title, author, format, ext, fileName, size, added, opened, position, progress, cover, positionUpdated] = row;
   let parsed = null;
   try {
     parsed = position ? JSON.parse(position) : null;
   } catch {
     parsed = null;
   }
-  return { id, title, author, format, ext, fileName, size, added, opened, position: parsed, progress, cover };
+  return { id, title, author, format, ext, fileName, size, added, opened, position: parsed, progress, cover, positionUpdated };
 }
 
 export async function listBooks() {
@@ -122,42 +153,84 @@ export async function markOpened(id) {
   await library.run('UPDATE books SET opened = ? WHERE id = ?', [now(), id]);
 }
 
+/** Läsaren har flyttat sig i boken. Ändringstiden blir nu, så att synken skickar positionen. */
 export async function savePosition(id, position, progress) {
-  await library.run('UPDATE books SET position = ?, progress = ? WHERE id = ?',
-    [JSON.stringify(position), Math.max(0, Math.min(1, progress || 0)), id]);
+  await library.run('UPDATE books SET position = ?, progress = ?, position_updated = ? WHERE id = ?',
+    [JSON.stringify(position), Math.max(0, Math.min(1, progress || 0)), now(), id]);
+}
+
+/** En nyare position från synken. Gäller nästa gång boken öppnas (en öppen bok hoppar inte). */
+export async function applySyncedPosition(id, position, updated) {
+  await library.run('UPDATE books SET position = ?, position_updated = ? WHERE id = ?',
+    [JSON.stringify(position), updated, id]);
 }
 
 // Sparade ord
 
 /** Sparar ett uppslaget ord. Har det slagits upp förut räknas det upp, och meningen, boken och sidan
- *  byts mot de senaste. uuid sätts första gången och ändras aldrig (synken i fas 6). */
+ *  byts mot de senaste. uuid sätts första gången och ändras aldrig. Ett borttaget ord blir sparat igen. */
 export async function saveWord({ word, lemma, language, sentence, book, page, bookId }) {
   const time = now();
   await words.run(`INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated, uuid, book_id)
     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
     ON CONFLICT (lemma, language) DO UPDATE SET
       word = excluded.word, sentence = excluded.sentence, book = excluded.book, page = excluded.page,
-      book_id = excluded.book_id, lookups = lookups + 1, updated = excluded.updated`,
+      book_id = excluded.book_id, lookups = CASE WHEN deleted THEN 1 ELSE lookups + 1 END,
+      created = CASE WHEN deleted THEN excluded.created ELSE created END,
+      deleted = 0, updated = excluded.updated`,
   [word, lemma, language, sentence, book, page, time, time, crypto.randomUUID(), bookId ?? '']);
 }
 
 export async function savedWords() {
   const rows = await words.all(`SELECT id, word, lemma, language, sentence, book, page, lookups, updated, uuid, book_id
-    FROM saved_words ORDER BY updated DESC`);
+    FROM saved_words WHERE deleted = 0 ORDER BY updated DESC`);
   return rows.map(([id, word, lemma, language, sentence, book, page, lookups, updated, uuid, bookId]) =>
     ({ id, word, lemma, language, sentence, book, page, lookups, updated, uuid, bookId }));
 }
 
+/** Ett borttaget ord raderas inte: det märks som borttaget med ny ändringstid, så att synken kan ta bort
+ *  det på iPaden också. Repetitionen följer inte med ett borttaget ord. */
+const TOMBSTONE = `UPDATE saved_words SET deleted = 1, updated = ?, due = NULL, interval = NULL, ease = NULL,
+  reps = NULL, lapses = NULL, review_updated = NULL`;
+
 export async function deleteSavedWord(id) {
-  await words.run('DELETE FROM saved_words WHERE id = ?', [id]);
+  await words.run(`${TOMBSTONE} WHERE id = ?`, [now(), id]);
 }
 
 export async function unsaveWord(lemma, language) {
-  await words.run('DELETE FROM saved_words WHERE lemma = ? AND language = ?', [lemma, language]);
+  await words.run(`${TOMBSTONE} WHERE lemma = ? AND language = ?`, [now(), lemma, language]);
 }
 
 export async function isSaved(lemma, language) {
-  return (await words.all('SELECT 1 FROM saved_words WHERE lemma = ? AND language = ?', [lemma, language])).length > 0;
+  return (await words.all('SELECT 1 FROM saved_words WHERE lemma = ? AND language = ? AND deleted = 0', [lemma, language])).length > 0;
+}
+
+const SYNC_WORD_COLUMNS = `lemma, language, word, sentence, book, page, lookups, created, updated, deleted,
+  due, interval, ease, reps, lapses, review_updated, uuid, book_id`;
+
+/** Alla ord för synken, även borttagna. */
+export async function wordsForSync() {
+  const rows = await words.all(`SELECT ${SYNC_WORD_COLUMNS} FROM saved_words`);
+  return rows.map(([lemma, language, word, sentence, book, page, lookups, created, updated, deleted,
+    due, interval, ease, reps, lapses, reviewUpdated, uuid, bookId]) => ({
+    lemma, language, word, sentence, book, page, lookups, created, updated, deleted: Boolean(deleted),
+    due, interval, ease, reps, lapses, reviewUpdated, uuid, bookId,
+  }));
+}
+
+/** Skriver ett ord från synken. uuid och book_id behålls om ordet finns, annars får det ett nytt uuid. */
+export async function applySyncedWord(word) {
+  await words.run(`INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated, uuid, book_id,
+      deleted, due, interval, ease, reps, lapses, review_updated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (lemma, language) DO UPDATE SET
+      word = excluded.word, sentence = excluded.sentence, book = excluded.book, page = excluded.page,
+      lookups = excluded.lookups, created = excluded.created, updated = excluded.updated, deleted = excluded.deleted,
+      due = excluded.due, interval = excluded.interval, ease = excluded.ease, reps = excluded.reps,
+      lapses = excluded.lapses, review_updated = excluded.review_updated`,
+  [word.word, word.lemma, word.language, word.sentence, word.book, word.page, word.lookups, word.created, word.updated,
+    crypto.randomUUID(), word.deleted ? 1 : 0, word.due ?? null, word.interval ?? null, word.ease ?? null,
+    word.reps ?? null, word.lapses ?? null, word.reviewUpdated ?? null]);
 }
 
 // Fel synonym

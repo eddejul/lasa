@@ -6,6 +6,7 @@ import { closeWordPopup, isWordPopupOpen, showWordPopup } from './popup.js';
 import { PdfReader } from './pdfreader.js';
 import { FONTS, ReflowReader, SIZES } from './reflowreader.js';
 import { markOpened, savePosition, setSetting, settings } from './store.js';
+import { syncSoon } from './sync.js';
 import { el, promptDialog, replace, toast } from './ui.js';
 
 const THEMES = [
@@ -25,6 +26,8 @@ export async function closeReader() {
   const reader = active;
   active = null;
   await reader.close();
+  // Synka när en bok stängs (högst en gång i minuten, och bara om synken är inställd).
+  syncSoon();
 }
 
 /** Öppnar en bok i `container`. onBack går tillbaka till biblioteket. */
@@ -58,18 +61,33 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     el('footer', { class: 'reader-bottom' }, slider, label));
   replace(container, view);
 
+  // Positionen sparas bara när läsaren har flyttat sig sedan boken öppnades eller senast sparades. Då
+  // skriver en öppen bok aldrig över en nyare position som synken hämtat medan boken var öppen (den
+  // gäller nästa gång boken öppnas, och läsningen hoppar inte).
   let location = null;
   let saveTimer = null;
+  let baseline = null; // positionen när boken hade öppnats klart, eller senast sparades
+  const positionKey = (position) => JSON.stringify(position ?? null);
   const save = () => {
     clearTimeout(saveTimer);
     saveTimer = null;
-    if (location) return savePosition(book.id, location.position, location.fraction);
-    return null;
+    if (!location || baseline === null) return null;
+    const key = positionKey(location.position);
+    if (key === baseline) return null;
+    baseline = key;
+    return savePosition(book.id, location.position, location.fraction);
   };
   const onRelocate = (next) => {
-    location = next;
     label.textContent = next.label;
     if (document.activeElement !== slider) slider.value = String(Math.round(next.fraction * 1000));
+    // Medan boken öppnas sparas inget, platsen blir utgångsläget när den har öppnats klart.
+    if (baseline === null) {
+      location = next;
+      return;
+    }
+    // En omritning på samma ställe (EPUB) är ingen flytt.
+    if (next.moved === false) return;
+    location = next;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 400);
   };
@@ -291,6 +309,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     console.error(error);
     replace(stage, el('div', { class: 'empty' }, el('p', {}, 'Boken kunde inte öppnas.'), el('p', { class: 'muted' }, String(error?.message ?? error))));
   }
+  // Boken har öppnats: platsen nu är utgångsläget, och först en flytt härifrån sparas.
+  baseline = positionKey(location?.position);
   stage.focus({ preventScroll: true });
   return reader;
 }

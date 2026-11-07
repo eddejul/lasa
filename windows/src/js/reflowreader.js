@@ -113,12 +113,14 @@ export class ReflowReader {
     this.view = document.createElement('foliate-view');
     this.stage.replaceChildren(this.view);
     this.view.addEventListener('load', (event) => this.onLoad(event.detail));
-    this.view.addEventListener('relocate', (event) => this.onRelocateEvent(event.detail));
     const book = ext === 'epub'
       ? new File([bytes], 'bok.epub', { type: 'application/epub+zip' })
       : makeTextBook(bytes, { title, ext });
     await this.view.open(book);
+    this.mapSections();
     const renderer = this.view.renderer;
+    // Lyssnar på sidornas egen händelse (den kommer efter vyns), som har andelen av kapitlet.
+    renderer.addEventListener('relocate', (event) => this.onRelocateEvent(event.detail));
     renderer.setAttribute('flow', 'paginated');
     renderer.setAttribute('max-inline-size', '620px');
     renderer.setAttribute('max-column-count', '2');
@@ -126,7 +128,37 @@ export class ReflowReader {
     renderer.setAttribute('margin', '40px');
     renderer.setAttribute('animated', '');
     this.applyStyles();
-    await this.view.init({ lastLocation: position?.cfi ?? null });
+    // En position från synken har kapitel och andel men ingen CFI: då öppnas kapitlet på den andelen.
+    const synced = !position?.cfi && Number.isInteger(position?.section) ? this.sectionOfDocument[position.section] : undefined;
+    if (synced !== undefined) {
+      await renderer.goTo({ index: synced, anchor: Math.min(Math.max(Number(position.progression) || 0, 0), 1) });
+    } else {
+      await this.view.init({ lastLocation: position?.cfi ?? null });
+    }
+  }
+
+  /** Kapitlens nummer för synken: bara poster i läsordningen (spine) som är (X)HTML-dokument räknas,
+   *  även linear="no", som på iPaden (EPUBBookReader.swift). foliate-js har alla poster som sektioner. */
+  mapSections() {
+    const book = this.view.book;
+    this.documentOfSection = [];
+    this.sectionOfDocument = [];
+    const manifest = book.resources?.manifest;
+    book.sections.forEach((section, index) => {
+      let isDocument = true;
+      if (manifest) {
+        const item = manifest.find((entry) => entry.href === section.id);
+        const type = String(item?.mediaType ?? '').toLowerCase();
+        isDocument = Boolean(item) && (type === 'application/xhtml+xml' || type === 'text/html'
+          || /\.(xhtml|html|htm)$/i.test(item.href ?? ''));
+      }
+      if (isDocument) {
+        this.documentOfSection[index] = this.sectionOfDocument.length;
+        this.sectionOfDocument.push(index);
+      } else {
+        this.documentOfSection[index] = null;
+      }
+    });
   }
 
   onLoad({ doc }) {
@@ -144,18 +176,31 @@ export class ReflowReader {
     doc.addEventListener('drop', (event) => event.preventDefault());
   }
 
-  onRelocateEvent(detail) {
+  /** Sidornas händelse: index är sektionen i foliate-js, fraction andelen av den. Vyns sammanställning
+   *  (CFI, plats i boken, innehåll) finns redan i view.lastLocation. */
+  onRelocateEvent({ index, fraction: sectionFraction, reason }) {
+    const detail = this.view?.lastLocation ?? {};
     const total = detail.location?.total ?? 0;
     const current = (detail.location?.current ?? 0) + 1;
     const parts = [];
     if (detail.tocItem?.label) parts.push(detail.tocItem.label.trim());
     if (total) parts.push(`plats ${Math.min(current, total)} av ${total}`);
     this.lastPage = detail.location?.current ?? 0;
+    const position = { cfi: detail.cfi };
+    // Synkens plats: kapitlet bland bokens dokument och andelen av kapitlet (bara EPUB).
+    const section = this.view?.book?.resources ? this.documentOfSection?.[index] : null;
+    if (Number.isInteger(section)) {
+      position.section = section;
+      position.progression = Math.round(Math.min(Math.max(Number(sectionFraction) || 0, 0), 1) * 10000) / 10000;
+    }
     this.onRelocate?.({
       label: parts.join(', ') || `${Math.round((detail.fraction ?? 0) * 100)} %`,
       page: this.lastPage,
       fraction: detail.fraction ?? 0,
-      position: { cfi: detail.cfi },
+      position,
+      // 'anchor' är när sidorna ritas om på samma ställe (typsnitt som laddas, fönstret som ändras).
+      // Det är ingen flytt och ska inte ge positionen en ny ändringstid.
+      moved: reason !== 'anchor',
     });
   }
 
