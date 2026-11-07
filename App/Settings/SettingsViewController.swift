@@ -1,12 +1,11 @@
 import UIKit
 
-/// Inställningar (fas 6): bläddringsljud och uppläsning, nyckeln till AI-knappen och synken.
+/// Inställningar (fas 6): bläddringsljud, nyckeln till AI-knappen och synken.
 /// Hemligheter sparas i nyckelringen, aldrig i filer.
 final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
     private enum Row {
         case pageSound
-        case speechRate
         case geminiKey
         case geminiModel
         case geminiTest
@@ -65,8 +64,7 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
             syncRows += [.syncPassword, .syncSignIn]
         }
         sections = [
-            Section(title: "Läsaren", rows: [.pageSound, .speechRate],
-                    footer: "Uppläsningen använder iPadens egna röster och fungerar utan nät."),
+            Section(title: "Läsaren", rows: [.pageSound], footer: nil),
             Section(title: "Förklaring med AI", rows: [.geminiKey, .geminiModel, .geminiTest],
                     footer: "Knappen Förklara i meningen i ordrutan använder Google Gemini. En gratis nyckel skapas i "
                         + "Google AI Studio (aistudio.google.com, Get API key). Nyckeln sparas bara i iPadens nyckelring. "
@@ -141,21 +139,6 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
                 }
             }, for: .valueChanged)
             cell.accessoryView = toggle
-            cell.selectionStyle = .none
-        case .speechRate:
-            content.text = "Uppläsningens hastighet"
-            let current = ReadAloud.rates.first { abs($0.factor - ReadAloud.rateFactor) < 0.01 }?.title ?? "Normalt"
-            let button = UIButton(type: .system)
-            button.setTitle(current, for: .normal)
-            button.showsMenuAsPrimaryAction = true
-            button.menu = UIMenu(children: ReadAloud.rates.map { option in
-                UIAction(title: option.title, state: option.title == current ? .on : .off) { [weak self] _ in
-                    ReadAloud.rateFactor = option.factor
-                    self?.rebuild()
-                }
-            })
-            button.sizeToFit()
-            cell.accessoryView = button
             cell.selectionStyle = .none
         case .geminiTest:
             content = UIListContentConfiguration.subtitleCell()

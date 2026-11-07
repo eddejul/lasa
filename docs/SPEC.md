@@ -71,7 +71,6 @@ Så blev den (7 november 2026, detaljer i `windows/README.md`):
 8. Bläddringsljud på iPad (avstängbart).
 9. Synk mellan iPad och dator.
 10. AI-knappen "Förklara i sammanhang".
-11. Uppläsning (AVSpeechSynthesizer).
 
 ## 5. Ordfunktionen
 
@@ -192,15 +191,15 @@ Byggd 7 november 2026 på grenen `fas4`.
 * **Bläddringsljud:** ett svagt prassel när en sida börjar vikas, på från början, kan stängas av i menyn Bakgrund.
 * Allt sparas i en egen databas och överlever omstart. Borttaget sparas som borttaget, så att synken i fas 6 kan föra det vidare.
 
-### 6.5 Repetition, uppläsning, AI-knappen och synk (fas 6)
+### 6.5 Repetition, AI-knappen och synk (fas 6)
 
 Byggd 7 november 2026 på grenen `fas6`.
 
 * **Repetera ord:** kort med ordet och meningen det stod i, svaret ur ordboken bakom ett tryck. Igen, Svårt, Bra och Lätt flyttar ordet i ett schema i stil med Anki (Igen: tio minuter, Bra: en dag, sedan tre dagar och vidare). Högst 20 nya ord per dag.
-* **Uppläsning:** AVSpeechSynthesizer med svensk eller engelsk röst efter sidans språk. Ordet som läses markeras, och sidan vänds med pappersvikning när den är slut. Hastigheten är en inställning.
+* **Uppläsning:** byggdes med AVSpeechSynthesizer men togs bort 8 november 2026, eftersom rösterna lät som en robot. Ett bättre alternativ undersöks senare.
 * **AI-knappen:** se 5.5. Modellen är `gemini-3.5-flash-lite` från början och kan bytas under Inställningar.
 * **Synk:** se `docs/SYNK.md`. Supabase med e-post och lösenord, regler som bara släpper fram den inloggades rader, och den nyaste ändringen vinner rad för rad.
-* **Inställningar:** kugghjulet i biblioteket: bläddringsljud, uppläsningens hastighet, AI-nyckel och modell, synkens adress, nyckel och inloggning.
+* **Inställningar:** kugghjulet i biblioteket: bläddringsljud, AI-nyckel och modell, synkens adress, nyckel och inloggning.
 
 ## 7. Bygge och installation
 
@@ -225,7 +224,7 @@ Varje fas är klar först när Edvin har testat den på iPaden (fas 5 på Window
 | 3 | EPUB och textfiler med pappersvikning, typsnitt och storlek, ordfunktion i EPUB | En EPUB-roman läses utan hack |
 | 4 | Markeringar, anteckningar, bokmärken, sök, bläddringsljud | Allt sparas och överlever omstart |
 | 5 | Windows-appen: bibliotek, PDF och EPUB och text, ordruta, sparade ord, teman, visning och zoom för PDF. Byggd 7 november 2026 på grenen `fas5`, väntar på Edvins test | Kurslitteratur i PDF och EPUB läses på datorn med ordfunktion |
-| 6 | Synk, AI-knapp, repetition av sparade ord, uppläsning | Läsposition och sparade ord följer med mellan iPad och dator |
+| 6 | Synk, AI-knapp, repetition av sparade ord | Läsposition och sparade ord följer med mellan iPad och dator |
 
 ### Synk (fas 6)
 

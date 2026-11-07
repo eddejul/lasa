@@ -83,10 +83,10 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Bläddringsljudet räknas fram i appen (`PageTurnSound`), ingen ljudfil. Spelas när en vikning börjar.
 * Självtestet provar allt detta i alla testböcker, även en PDF (`test.pdf` från `make_books.py`).
 
-## Fas 6: repetition, uppläsning, AI-knappen och synk
+## Fas 6: repetition, AI-knappen och synk
 
 * Repetitionen (`WordReviewViewController`, schemat i `UserWords.swift`) ligger i `anvandarord.sqlite`: tabellen `reviews`, och `deleted_words` för borttagna ord (synken behöver dem). Signaturerna för `UserWords.save`, `WordDictionary.lookup` och `WordPopupViewController.present` är oförändrade.
-* Uppläsningen (`ReadAloud`) läser en sida i taget med iOS röster, `FoldedText(..., lowercase: false)` ger texten och vägen tillbaka till sidans tecken så att ordet som läses kan markeras. EPUB: `lasaMarks.pageText` ger sidans text i webbvyn.
+* Uppläsningen togs bort 8 november 2026 (Edvin tyckte att iOS röster lät som en robot). Ett bättre alternativ undersöks senare. Lägg inte tillbaka den utan att han ber om det.
 * AI-knappen (`GeminiClient`) använder `generateContent` med `responseJsonSchema`. Modellen får bara välja bland ordbokens betydelser och ord, och ord den hittat på själv visas inte. Nyckeln ligger i nyckelringen, modellen är en inställning (från början `gemini-3.5-flash-lite`, gratis enligt Googles prissida 7 november 2026). Gratisnivåns data får användas av Google, det står i Inställningar.
 * Synken (`SyncEngine`, `SyncClient`) och protokollet beskrivs i `docs/SYNK.md`. Tabellerna i `tools/supabase/schema.sql`. Inga nycklar i koden: adressen i UserDefaults, nyckel och inloggning i nyckelringen.
 * Självtestet `-LasaSelfTest fas6` provar repetitionen, AI-tolkningen och synken mot `tools/simtest/mock_supabase.py`. Läs `fas6.log` och `mock-supabase.json` i artefakten Simulatortest.

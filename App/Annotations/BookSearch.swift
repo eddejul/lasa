@@ -21,8 +21,7 @@ struct FoldedText {
     let text: NSString
     let map: [Int]
 
-    /// `lowercase` falskt ger samma text med kvar stora bokstäver, till uppläsningen.
-    init(_ original: NSString, lowercase: Bool = true) {
+    init(_ original: NSString) {
         var units: [unichar] = []
         var map: [Int] = []
         units.reserveCapacity(original.length)
@@ -58,7 +57,7 @@ struct FoldedText {
                     continue
                 }
             }
-            units.append(lowercase ? FoldedText.lower(unit) : unit)
+            units.append(FoldedText.lower(unit))
             map.append(index)
             index += 1
         }

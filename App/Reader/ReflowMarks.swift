@@ -684,26 +684,6 @@ enum ReflowMarks {
         return { start: start, length: length, text: clean(range.toString()), page: page, rects: rectsOf(range) };
       }
 
-      // MARK: Uppläsning (fas 6)
-
-      // Texten som syns på en sida, och var den börjar i kapitlet.
-      function pageText(index) {
-        lasa.ensurePage(index);
-        var bounds = visibleRange();
-        if (!bounds) {
-          return { start: 0, length: 0, text: '' };
-        }
-        var range = rangeFor(bounds.start, bounds.end);
-        return { start: bounds.start, length: bounds.end - bounds.start, text: range ? range.toString() : '' };
-      }
-
-      // Rutorna för ett intervall på en sida.
-      function rectsOn(index, start, length) {
-        lasa.ensurePage(index);
-        var range = rangeFor(start, start + length);
-        return { rects: range ? rectsOf(range) : [] };
-      }
-
       // Sidbilden får också markeringarnas rutor, så att ett tryck på en markering kan hittas utan webbvyn.
       var originalShowPage = lasa.showPage;
       lasa.showPage = async function (index) {
@@ -717,7 +697,7 @@ enum ReflowMarks {
       };
 
       return { installStyle: installStyle, apply: apply, select: select, text: text, find: find, reveal: reveal,
-               visible: visible, visibleRange: visibleRange, pageText: pageText, rectsOn: rectsOn };
+               visible: visible, visibleRange: visibleRange };
     })();
     lasaMarks.installStyle(css);
     return true;
