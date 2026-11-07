@@ -458,10 +458,24 @@ final class WordDictionary {
     // MARK: Språk och ordklass ur meningen
 
     /// Språkmodellerna skapas en gång. De används under ett lås, eftersom de värms i bakgrunden.
+    /// Huvudtråden väntar aldrig på låset: pågår uppvärmningen används en egen modell, som förut.
+    /// (I simulatortestet tog ett uppslag 9 sekunder när huvudtråden väntade på bakgrundens lås.)
     private static let languageLock = NSLock()
     private static let recognizer = NLLanguageRecognizer()
     private static let tagger = NLTagger(tagSchemes: [.lexicalClass])
     private static var warmedUp = false
+
+    /// Kör `body` med den gemensamma modellen om den är ledig, annars med en ny.
+    private static func withShared<Model, Value>(_ shared: Model, fresh: () -> Model, wait: Bool,
+                                                 _ body: (Model) -> Value) -> Value {
+        if wait {
+            languageLock.lock()
+        } else if !languageLock.try() {
+            return body(fresh())
+        }
+        defer { languageLock.unlock() }
+        return body(shared)
+    }
 
     /// Laddar språkmodellerna i bakgrunden, så att första uppslaget inte väntar på dem.
     /// Anropas när en bok öppnas. Gör inget andra gången.
@@ -472,27 +486,27 @@ final class WordDictionary {
         languageLock.unlock()
         guard first else { return }
         DispatchQueue.global(qos: .utility).async {
-            _ = guessLanguage(of: "The book was on the table.")
-            _ = englishPos(of: "book", in: "The book was on the table.", range: nil)
+            _ = guessLanguage(of: "The book was on the table.", wait: true)
+            _ = englishPos(of: "book", in: "The book was on the table.", range: nil, wait: true)
         }
     }
 
     /// Svenska eller engelska, efter meningen. Oavgjort, eller för lite text, blir svenska.
-    static func guessLanguage(of sentence: String) -> WordLanguage {
-        languageLock.lock()
-        defer { languageLock.unlock() }
-        recognizer.reset()
-        recognizer.languageConstraints = [.swedish, .english]
-        recognizer.processString(sentence)
-        let hypotheses = recognizer.languageHypotheses(withMaximum: 2)
-        let swedish = hypotheses[.swedish] ?? 0
-        let english = hypotheses[.english] ?? 0
-        return english > swedish ? .english : .swedish
+    static func guessLanguage(of sentence: String, wait: Bool = false) -> WordLanguage {
+        withShared(recognizer, fresh: { NLLanguageRecognizer() }, wait: wait) { recognizer -> WordLanguage in
+            recognizer.reset()
+            recognizer.languageConstraints = [.swedish, .english]
+            recognizer.processString(sentence)
+            let hypotheses = recognizer.languageHypotheses(withMaximum: 2)
+            let swedish = hypotheses[.swedish] ?? 0
+            let english = hypotheses[.english] ?? 0
+            return english > swedish ? .english : .swedish
+        }
     }
 
     /// Ordklassen som ordet har i meningen (n, v, a, r), så att rätt betydelse av till exempel
     /// "attribute" visas först. Fungerar bara för engelska.
-    static func englishPos(of word: String, in sentence: String, range: NSRange?) -> String? {
+    static func englishPos(of word: String, in sentence: String, range: NSRange?, wait: Bool = false) -> String? {
         guard !sentence.isEmpty else { return nil }
         let text = sentence as NSString
         var location = range?.location ?? NSNotFound
@@ -502,11 +516,11 @@ final class WordDictionary {
         guard location != NSNotFound, let index = Range(NSRange(location: location, length: 0), in: sentence)?.lowerBound else {
             return nil
         }
-        languageLock.lock()
-        defer { languageLock.unlock() }
-        tagger.string = sentence
-        tagger.setLanguage(.english, range: sentence.startIndex..<sentence.endIndex)
-        let (tag, _) = tagger.tag(at: index, unit: .word, scheme: .lexicalClass)
+        let tag = withShared(tagger, fresh: { NLTagger(tagSchemes: [.lexicalClass]) }, wait: wait) { tagger -> NLTag? in
+            tagger.string = sentence
+            tagger.setLanguage(.english, range: sentence.startIndex..<sentence.endIndex)
+            return tagger.tag(at: index, unit: .word, scheme: .lexicalClass).0
+        }
         let classes: [NLTag: String] = [.noun: "n", .verb: "v", .adjective: "a", .adverb: "r"]
         return tag.flatMap { classes[$0] }
     }

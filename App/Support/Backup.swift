@@ -202,6 +202,8 @@ enum Backup {
             throw Failure.sqlite(message(to))
         }
         try SQLiteDatabase.backup(from: from, to: to)
+        // Kopian blir en vanlig databas utan WAL, en enda fil i Filer.
+        sqlite3_exec(to, "PRAGMA journal_mode = DELETE", nil, nil, nil)
     }
 
     private static func message(_ handle: OpaquePointer?) -> String {
