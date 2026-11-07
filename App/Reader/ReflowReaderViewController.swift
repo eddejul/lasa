@@ -1909,17 +1909,25 @@ extension ReflowReaderViewController {
             return
         }
         let size = page.view.bounds.size
-        let a = page.pagePoint(CGPoint(x: size.width * 0.25, y: size.height * 0.30))
-        let b = page.pagePoint(CGPoint(x: size.width * 0.70, y: size.height * 0.36))
-        let arguments: [String: Any] = ["index": number, "x1": Double(a.x), "y1": Double(a.y),
-                                        "x2": Double(b.x), "y2": Double(b.y)]
-        let range: ReflowTextRange? = await withCheckedContinuation { continuation in
-            renderer.evaluate("return lasaMarks.select(index, x1, y1, x2, y2);", arguments: arguments,
-                              in: page.chapter) { value in
-                continuation.resume(returning: ReflowMarks.textRange(from: value))
+        // Sista sidan i ett kapitel kan vara nästan tom: prova högre upp om det inte finns text där.
+        var found: ReflowTextRange?
+        for top in [0.30, 0.15, 0.06] as [CGFloat] {
+            let a = page.pagePoint(CGPoint(x: size.width * 0.25, y: size.height * top))
+            let b = page.pagePoint(CGPoint(x: size.width * 0.70, y: size.height * (top + 0.06)))
+            let arguments: [String: Any] = ["index": number, "x1": Double(a.x), "y1": Double(a.y),
+                                            "x2": Double(b.x), "y2": Double(b.y)]
+            found = await withCheckedContinuation { continuation in
+                renderer.evaluate("return lasaMarks.select(index, x1, y1, x2, y2);", arguments: arguments,
+                                  in: page.chapter) { value in
+                    continuation.resume(returning: ReflowMarks.textRange(from: value))
+                }
             }
+            if found != nil {
+                break
+            }
+            SelfTest.log("Ingen text att markera på \(Int(top * 100)) procent av sidans höjd (tomrummet ger ingen markering)")
         }
-        guard let range = range else {
+        guard let range = found else {
             SelfTest.log("FEL: markeringen gav inget textintervall")
             return
         }
