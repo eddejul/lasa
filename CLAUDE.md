@@ -57,7 +57,7 @@ tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en 
 * Varje kapitel ligger i en dold `WKWebView` (`ChapterView` i `ReflowRenderer.swift`) med CSS-kolumner. Bladen i vikningen är ögonblicksbilder. Webbvyerna får aldrig synas eller ta tryck, de ligger under `paperCover` i läsaren.
 * Högst 3 webbvyer och högst 5 sidbilder. Ett jobb i taget per webbvy, med en vakt som laddar om kapitlet efter 8 sekunder utan svar.
 * Skripten i webbvyn (`ReflowStyle.script`) körs i en egen JavaScript-värld (`.defaultClient`) och anropas med `callAsyncJavaScript`.
-* Ordfunktionen i EPUB använder ordboken på ett enda ställe: `presentWord` i `ReflowReaderViewController.swift`.
+* Ordfunktionen i EPUB använder ordboken på ett enda ställe: `presentWord` i `ReflowReaderViewController.swift`. Hållgesten är densamma som i PDF (ordet närmast fingret, bubbla, rutan öppnas när man släpper). Ordet hittas i den dolda webbvyn med `lasa.wordAt`, ett uppslag i taget.
 * Simulatortestet (jobbet Simulatortest) bygger appen för en iPad-simulator och startar den med `-LasaSelfTest <fil>`. Läs loggen och bilderna i artefakten Simulatortest efter varje ändring i läsaren, innan Edvin får något att testa. Simulatorn kör en nyare iOS än iPaden, och iOS 26 nekar appen att vrida skärmen, så självtestet gör läsarens yta bred för att pröva uppslag. Tider och minne gäller en Mac, inte iPaden.
 
 ## Ordboken (fas 2)

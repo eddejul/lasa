@@ -61,7 +61,11 @@ final class ReflowReaderViewController: UIViewController {
     private var chromeTap: UITapGestureRecognizer?
     private var linkTap: UITapGestureRecognizer?
     private var wordPress: UILongPressGestureRecognizer?
-    private weak var highlightedPage: ReflowPageViewController?
+    private var pressedWord: PressedWord?
+    private var wordQueryRunning = false
+    private var queuedWordPoint: CGPoint?
+    private var pressEnded = false
+    private weak var wordBubble: PaddedLabel?
     private weak var toastLabel: UILabel?
     private var contentsItem: UIBarButtonItem?
     private var typographyItem: UIBarButtonItem?
@@ -761,30 +765,162 @@ final class ReflowReaderViewController: UIViewController {
 
     // MARK: Ordboken
 
-    /// Håll fingret på ett ord: ordet hittas i kapitlets webbvy, markeras och slås upp.
+    /// Hur långt från fingret ett ord får ligga och ändå väljas, i punkter. Samma som i PDF-läsaren.
+    static let fingerTolerance: CGFloat = 22
+
+    /// Ordet under fingret medan man håller.
+    private struct PressedWord {
+        let found: ReflowWord
+        let page: ReflowPageViewController
+        /// Var fingret var senast, i bladets vy.
+        let finger: CGPoint
+    }
+
+    /// Håll fingret på ett ord, som i PDF-läsaren: ordet närmast fingret markeras och visas i en bubbla
+    /// ovanför fingret, markeringen följer med om man drar, och rutan öppnas när man släpper.
+    /// Ordet hittas i kapitlets dolda webbvy. Ett uppslag i taget, fingrets senaste plats väntar på tur.
     @objc private func handleWordPress(_ press: UILongPressGestureRecognizer) {
-        guard press.state == .began, presentedViewController == nil, let renderer = renderer else { return }
-        let started = CACurrentMediaTime()
         let point = press.location(in: view)
-        guard let page = visiblePages.first(where: { candidate in
+        switch press.state {
+        case .began:
+            guard presentedViewController == nil else { return }
+            // Trycket ska inte också vika sidan eller visa menyn när fingret lyfts.
+            cancelPageGestures()
+            pressEnded = false
+            requestPressedWord(at: point)
+        case .changed:
+            guard presentedViewController == nil else { return }
+            requestPressedWord(at: point)
+            if pressedWord != nil {
+                moveWordBubble(to: point)
+            }
+        case .ended:
+            guard presentedViewController == nil else { return }
+            pressEnded = true
+            hideWordBubble()
+            if !wordQueryRunning {
+                finishPress()
+            }
+        default:
+            pressEnded = false
+            queuedWordPoint = nil
+            hideWordBubble()
+            clearPressedWord()
+        }
+    }
+
+    private func pageView(at point: CGPoint) -> ReflowPageViewController? {
+        visiblePages.first { candidate in
             !candidate.isBlank && candidate.hasImage
                 && candidate.view.bounds.contains(candidate.view.convert(point, from: view))
-        }), let number = page.page else { return }
-
-        // Trycket ska inte också vika sidan eller visa menyn när fingret lyfts.
-        cancelPageGestures()
-
-        let local = page.view.convert(point, from: view)
-        renderer.word(at: page.pagePoint(local), on: ReflowPage(chapter: page.chapter, page: number)) { [weak self, weak page] found in
-            guard let self = self, let page = page, let found = found else { return }
-            self.presentWord(found, on: page, started: started)
         }
+    }
+
+    /// Frågar webbvyn efter ordet närmast fingret. Ligger fingret mellan ord ligger markeringen kvar.
+    private func requestPressedWord(at point: CGPoint) {
+        if wordQueryRunning {
+            queuedWordPoint = point
+            return
+        }
+        guard let renderer = renderer, let page = pageView(at: point), let number = page.page else { return }
+        wordQueryRunning = true
+        let local = page.view.convert(point, from: view)
+        let tolerance = Self.fingerTolerance * page.pagePoint(CGPoint(x: 1, y: 0)).x
+        renderer.word(at: page.pagePoint(local),
+                      on: ReflowPage(chapter: page.chapter, page: number),
+                      tolerance: tolerance) { [weak self, weak page] found in
+            guard let self = self else { return }
+            self.wordQueryRunning = false
+            if let page = page, let found = found {
+                self.setPressedWord(found, on: page, finger: local, screenPoint: point)
+            } else if self.pressedWord != nil {
+                self.pressedWord = self.pressedWord.map {
+                    PressedWord(found: $0.found, page: $0.page, finger: local)
+                }
+            }
+            if let next = self.queuedWordPoint, !self.pressEnded {
+                self.queuedWordPoint = nil
+                self.requestPressedWord(at: next)
+                return
+            }
+            self.queuedWordPoint = nil
+            if self.pressEnded {
+                self.finishPress()
+            }
+        }
+    }
+
+    private func setPressedWord(_ found: ReflowWord, on page: ReflowPageViewController, finger: CGPoint, screenPoint: CGPoint) {
+        if let current = pressedWord, current.page === page,
+           current.found.word == found.word, current.found.rects.first == found.rects.first {
+            pressedWord = PressedWord(found: current.found, page: page, finger: finger)
+            return
+        }
+        pressedWord?.page.clearHighlight()
+        page.showHighlight(found.rects)
+        pressedWord = PressedWord(found: found, page: page, finger: finger)
+        Haptics.shared.wordTapped()
+        if !pressEnded {
+            showWordBubble(found.word, at: screenPoint)
+        }
+    }
+
+    /// Fingret är släppt: slå upp ordet som var markerat.
+    private func finishPress() {
+        pressEnded = false
+        guard let pressed = pressedWord else { return }
+        presentWord(pressed.found, on: pressed.page, started: CACurrentMediaTime(), finger: pressed.finger)
+    }
+
+    private func clearPressedWord() {
+        pressedWord?.page.clearHighlight()
+        pressedWord = nil
+    }
+
+    /// Fingret skymmer ordet, så ordet visas också i en bubbla ovanför fingret medan man håller.
+    private func showWordBubble(_ word: String, at point: CGPoint) {
+        let bubble: PaddedLabel
+        if let existing = wordBubble {
+            bubble = existing
+        } else {
+            bubble = PaddedLabel()
+            bubble.insets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+            bubble.font = .preferredFont(forTextStyle: .headline)
+            bubble.textColor = .white
+            bubble.backgroundColor = UIColor(white: 0.12, alpha: 0.9)
+            bubble.layer.cornerRadius = 10
+            bubble.layer.masksToBounds = true
+            bubble.isUserInteractionEnabled = false
+            view.addSubview(bubble)
+            wordBubble = bubble
+        }
+        bubble.text = word
+        bubble.sizeToFit()
+        moveWordBubble(to: point)
+    }
+
+    private func moveWordBubble(to point: CGPoint) {
+        guard let bubble = wordBubble else { return }
+        let size = bubble.bounds.size
+        let margin: CGFloat = 8
+        var center = CGPoint(x: point.x, y: point.y - 64)
+        if center.y - size.height / 2 < view.safeAreaInsets.top + margin {
+            center.y = point.y + 64
+        }
+        center.x = min(max(center.x, size.width / 2 + margin), view.bounds.width - size.width / 2 - margin)
+        bubble.center = center
+    }
+
+    private func hideWordBubble() {
+        wordBubble?.removeFromSuperview()
+        wordBubble = nil
     }
 
     /// Slår upp ordet och visar ordrutan vid ordet. Det enda stället där EPUB-läsaren använder ordboken.
     private func presentWord(_ found: ReflowWord,
                              on page: ReflowPageViewController,
                              started: CFTimeInterval,
+                             finger: CGPoint? = nil,
                              onShown: (() -> Void)? = nil) {
         guard presentedViewController == nil else { return }
         guard let dictionary = WordDictionary.shared else {
@@ -805,11 +941,15 @@ final class ReflowReaderViewController: UIViewController {
             }
         }
         let lookupTime = (CACurrentMediaTime() - started) * 1000
-        Haptics.shared.wordTapped()
 
-        page.showHighlight(found.rects)
-        highlightedPage = page
-        let anchor = found.rects.first.map { page.viewRect($0) }
+        if pressedWord?.page !== page || pressedWord?.found.word != found.word {
+            pressedWord?.page.clearHighlight()
+            page.showHighlight(found.rects)
+            pressedWord = PressedWord(found: found, page: page, finger: finger ?? .zero)
+        }
+        let rects = found.rects.map { page.viewRect($0) }
+        let anchor = rects.first { rect in finger.map { rect.insetBy(dx: -6, dy: -6).contains($0) } ?? false }
+            ?? rects.first
             ?? CGRect(x: page.view.bounds.midX, y: page.view.bounds.midY, width: 1, height: 1)
         let sourceRect = view.convert(anchor, from: page.view)
         let pageIndex = bookPageIndex(chapter: page.chapter, page: page.page ?? 0)
@@ -837,8 +977,7 @@ final class ReflowReaderViewController: UIViewController {
                 onShown?()
             },
             onDismiss: { [weak self] in
-                self?.highlightedPage?.clearHighlight()
-                self?.highlightedPage = nil
+                self?.clearPressedWord()
             })
     }
 
@@ -1247,16 +1386,28 @@ extension ReflowReaderViewController {
             for column in [3, 5, 7] {
                 let local = CGPoint(x: size.width * CGFloat(column) / 10, y: size.height * CGFloat(row) / 10)
                 let found: ReflowWord? = await withCheckedContinuation { continuation in
-                    renderer.word(at: page.pagePoint(local), on: ReflowPage(chapter: page.chapter, page: number)) { word in
+                    renderer.word(at: page.pagePoint(local),
+                                  on: ReflowPage(chapter: page.chapter, page: number),
+                                  tolerance: Self.fingerTolerance) { word in
                         continuation.resume(returning: word)
                     }
                 }
-                guard let word = found else { continue }
-                presentWord(word, on: page, started: CACurrentMediaTime())
+                guard found != nil else { continue }
+                // Samma väg som fingret: håll (markering och bubbla), släpp (rutan öppnas).
+                let screen = view.convert(local, from: page.view)
+                pressEnded = false
+                requestPressedWord(at: screen)
+                await pause(0.6)
+                SelfTest.log("Hållgesten: \(pressedWord?.found.word ?? "FEL, inget ord markerat"), "
+                             + "bubblan visar \(wordBubble?.text ?? "ingenting")")
+                SelfTest.saveScreen(view, name: name + "-haller")
+                pressEnded = true
+                hideWordBubble()
+                finishPress()
                 await pause(1.5)
                 SelfTest.saveScreen(view.window ?? view, name: name)
                 dismiss(animated: false)
-                page.clearHighlight()
+                clearPressedWord()
                 return
             }
         }

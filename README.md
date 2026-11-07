@@ -56,7 +56,7 @@ Testrapporten för ordboken (150 ord ur kurslitteraturen och appens svar) finns 
 * Bläddra genom några kapitelgränser, framåt och bakåt, snabbt och långsamt. Säg till om vikningen hackar eller om en sida är tom en stund.
 * Knappen med två A i menyn: ändra storlek och typsnitt. Sidan ska hamna ungefär där du var.
 * Vänd iPaden till liggande: två sidor bredvid varandra. Varje kapitel börjar till vänster.
-* Håll fingret på ett ord i EPUB:en (rutan ska komma som i PDF). Tryck på en fotnot och sedan Tillbaka.
+* Håll fingret på ett ord i EPUB:en och dra lite: markeringen och bubblan ska följa fingret som i PDF, och rutan öppnas när du släpper. Tryck på en fotnot och sedan Tillbaka.
 
 Under knappen med två A står längst ner hur många millisekunder en sidbild tar på din iPad. Skriv gärna av det.
 
