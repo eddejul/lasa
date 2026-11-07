@@ -293,7 +293,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
 /* Ordrutan */
 
-#popup-layer { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
+/* Över rutorna (Sparade ord och Om ordboken öppnade från läsaren), så att Slå upp syns där också. */
+#popup-layer { position: fixed; inset: 0; pointer-events: none; z-index: 65; }
 
 .popup {
   position: absolute;

@@ -302,6 +302,21 @@ def run(url, books, out):
             page.keyboard.press('Escape')
         epub_label = page.locator('.page-label').inner_text()
 
+        # Sparade ord som ruta över läsaren, och Slå upp därifrån
+        page.locator('.toolbar-button', has_text='Sparade ord').click()
+        page.wait_for_selector('.modal-panel [data-testid="saved-word"]')
+        page.locator('.modal-panel [data-testid="saved-word"]').first.get_by_text('Slå upp').click()
+        page.wait_for_selector('.popup [data-testid="header"]')
+        box = page.locator('.popup').bounding_box()
+        on_top = page.evaluate("([x, y]) => !!document.elementFromPoint(x, y)?.closest('.popup')",
+                              [box["x"] + box["width"] / 2, box["y"] + 20])
+        check(on_top, 'ordrutan syns ovanpå Sparade ord i läsaren')
+        page.keyboard.press('Escape')
+        page.wait_for_timeout(200)
+        if page.locator('.modal-backdrop').count():
+            page.keyboard.press('Escape')
+        check(wait_for(lambda: page.locator('.modal-backdrop').count() == 0), 'Esc stänger rutan över läsaren')
+
         # Typsnitt och storlek
         page.locator('.toolbar-button', has_text='Aa').click()
         page.locator('.font-choice', has_text='Verdana').click()
