@@ -30,7 +30,7 @@ Senast uppdaterad: 7 november 2026.
         ┌──────────────────┴───────────────────┐
         │                                      │
  iPad/iPhone-app (Swift, UIKit)        Windows-app (Tauri, fas 5)
- PDFKit + Readium + egen pappersvikning   foliate-js + pdf.js
+ PDFKit + WKWebView + egen pappersvikning foliate-js + pdf.js
 ```
 
 ### iPad/iPhone-appen
@@ -39,8 +39,8 @@ Senast uppdaterad: 7 november 2026.
 * **Lägsta version:** iOS/iPadOS 15.0.
 * **Projektfil:** genereras av XcodeGen från `project.yml`. Ingen `.xcodeproj` i repot.
 * **PDF:** PDFKit. Sidorna renderas till bilder i bakgrunden och visas i en `UIPageViewController` med övergången `.pageCurl`.
-* **EPUB:** Readium Swift Toolkit (ReadiumStreamer) för att öppna och tolka filen. Visningen sker i en egen navigator med pappersvikning (se 6.3), eftersom Readiums egen navigator inte har pappersvikning.
-* **Textfiler** (txt, md, rtf, html): görs om till enkel HTML vid import och visas i samma navigator som EPUB.
+* **EPUB:** en egen liten läsare i appen: zip packas upp med Apples Compression, och OPF, nav och NCX läses med XMLParser. Readium valdes bort i fas 3 (7 november 2026): det drar in många beroenden som inte går att provbygga utan Mac, och appen behöver bara ryggrad, innehållsförteckning och resurser. Visningen sker i en egen navigator med pappersvikning (se 6.3).
+* **Textfiler** (txt, md, rtf, html): görs om till enkel HTML när boken öppnas och visas i samma navigator som EPUB.
 * **Haptik:** `Haptics`-klassen. Lätt knackning vid sidbyte och ordtryck. iPad saknar motor, anropen ignoreras där.
 * **Lagring:** böcker i appens `Documents/Böcker`, synliga i Filer-appen. Läsposition och inställningar lokalt.
 
@@ -155,14 +155,19 @@ Kvalitetsregler:
 
 ### 6.3 EPUB med pappersvikning (fas 3)
 
-Den svåraste delen av appen.
+Den svåraste delen av appen. Byggd 7 november 2026.
 
-* ReadiumStreamer öppnar boken: ryggrad (spine), innehållsförteckning, resurser.
-* Varje kapitel visas i en `WKWebView` med CSS-kolumner så att kapitlet delas i sidor lika stora som skärmen.
-* Varje sida i `UIPageViewController` är en ögonblicksbild (`takeSnapshot`) av rätt kolumn. När vikningen är klar ersätts bilden av den levande webbvyn så att text kan tryckas på.
-* Antal sidor per kapitel räknas i förväg och sparas per kombination av kapitel, typsnitt, storlek och skärmstorlek.
-* Högst 3 webbvyer samtidigt (förra, nuvarande, nästa) för att spara minne.
-* Läsposition sparas som Readium Locator (kapitel plus andel), så att den överlever byte av typsnitt.
+* EPUB packas upp en gång i appens cache (`Caches/Uppackade böcker`), och varje kapitel får en viewport-rad så att webbvyn lägger ut texten i sidans bredd. Kopieringsskyddade böcker (DRM) avvisas med ett meddelande, förvrängda teckensnitt går bra.
+* Varje kapitel visas i en `WKWebView` med CSS-kolumner på html-elementet, så att kapitlet delas i sidor lika stora som en sida. Sidan som syns väljs genom att flytta dokumentet i sidled med en transform, webbvyn rullar aldrig.
+* Webbvyerna ligger dolda bakom sidorna. Varje blad i `UIPageViewController` är en ögonblicksbild (`takeSnapshot`) av rätt kolumn, så vikningen bara flyttar bilder och ritandet sker i webbvyns egen process.
+* Bilden byts inte mot den levande webbvyn efter vikningen, som det först var tänkt. I stället slås ord upp och länkar följs i den dolda webbvyn, på samma ställe som fingret trycker på bilden (`caretRangeFromPoint`). Det ger samma funktion utan att vyer byts under fingret.
+* Antal sidor per kapitel mäts när kapitlet laddas och sparas per kombination av kapitel, typsnitt, storlek och skärmstorlek (`Caches/Sidantal`). När alla kapitel är mätta visas bokens sidnummer, annars sidan i kapitlet och hur långt in i boken man är.
+* Högst 3 webbvyer samtidigt (nuvarande, nästa, förra kapitel) och högst 5 sidbilder.
+* Läsposition sparas som kapitel plus andel av kapitlet, så att den överlever byte av typsnitt, storlek och skärmläge.
+* Typsnitt: bokens eget, Iowan, Charter, Georgia, Palatino, Avenir och San Francisco. Storlek från 80 till 200 procent av bokens egen. Gäller alla EPUB- och textböcker.
+* Uppslag i liggande på iPad: varje kapitel börjar på en vänstersida.
+* Länkar i boken (fotnoter, innehållssidor) hoppar dit och visar en Tillbaka-knapp. Webblänkar öppnas i Safari i appen.
+* Bygget kör ett simulatortest (`tools/simtest`): appen öppnar testböcker i en iPad-simulator, bläddrar, slår upp ett ord, byter typsnitt och tema och sparar bilder och logg i artefakten Simulatortest.
 
 ## 7. Bygge och installation
 
@@ -201,7 +206,7 @@ Varje fas är klar först när Edvin har testat den på iPaden.
 |---|---|
 | EPUB med pappersvikning är svårt | Bygg det som en isolerad navigator. Prototyp först, mät minne och bildfrekvens på iPaden. |
 | Framtida Xcode höjer lägsta iOS över 15 | Lås Xcode-versionen i workflowen med `xcode-select` på en version som stöder 15. |
-| Readium höjer lägsta iOS | Lås Readium på en version som stöder iOS 15. |
+| Ögonblicksbilderna av webbvyn är för långsamma på A8X | Sidorna görs i förväg, högst fem. Tiderna visas under Text i läsaren. Hjälper inte det: färre förritade sidor under vikningen, eller lägre upplösning. |
 | Gemini gratisnivå ändras | AI-knappen är ett tillägg. Allt annat fungerar utan den. |
 | Långsam utvecklingsloop utan Mac | Små steg, en sak per push. Skärmbilder från simulator i CI när det behövs. |
 
