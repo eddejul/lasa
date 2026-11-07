@@ -97,11 +97,13 @@ enum ReflowStyle {
 
     /// Funktionerna som läsaren anropar. Läggs in en gång per kapitel, efter att kapitlet laddats.
     static let script = #"""
+    if (window.lasa) {
+      return true;
+    }
     window.lasa = (function () {
       'use strict';
       var XHTML = 'http://www.w3.org/1999/xhtml';
       var root = document.documentElement;
-      var baseRoot = null;
       var offset = 0;
       var wordPattern = /[\p{L}\p{N}\p{M}]/u;
       var joiners = '-‐‑\'’­';
@@ -125,16 +127,18 @@ enum ReflowStyle {
           ', initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no');
       }
 
+      // Bokens egen grundstorlek mäts en gång, innan läsarens stil finns, och sparas på stilelementet.
+      // Annars skulle varje ny storlek räknas från den förra.
       function setStyle(css, scale) {
-        if (baseRoot === null) {
-          baseRoot = parseFloat(getComputedStyle(root).fontSize) || 16;
-        }
         var style = document.getElementById('lasa-style');
         if (!style) {
+          var base = parseFloat(getComputedStyle(root).fontSize) || 16;
           style = make('style');
           style.setAttribute('id', 'lasa-style');
+          style.setAttribute('data-base', String(base));
           container().appendChild(style);
         }
+        var baseRoot = parseFloat(style.getAttribute('data-base')) || 16;
         style.textContent = css.split('__ROOT__').join((baseRoot * scale).toFixed(2) + 'px');
       }
 
@@ -147,8 +151,8 @@ enum ReflowStyle {
               resolve();
             }
           }
-          requestAnimationFrame(function () { requestAnimationFrame(finish); });
-          setTimeout(finish, 150);
+          requestAnimationFrame(finish);
+          setTimeout(finish, 80);
         });
       }
 

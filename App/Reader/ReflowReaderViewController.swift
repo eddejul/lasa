@@ -47,6 +47,8 @@ final class ReflowReaderViewController: UIViewController {
     /// Används för läspositionen medan kapitlet mäts om.
     private var currentCount: Int?
     private let openedAt = CACurrentMediaTime()
+    private var loadedAt: CFTimeInterval?
+    private var firstMeasuredAt: CFTimeInterval?
     private var isShowingPages = false
     private var pendingJump: PendingJump?
 
@@ -176,6 +178,7 @@ final class ReflowReaderViewController: UIViewController {
 
         case .success(let content):
             self.content = content
+            loadedAt = CACurrentMediaTime()
             if location.chapter < 0 || location.chapter >= content.chapters.count {
                 location = ReflowLocation(chapter: 0, progression: 0)
             }
@@ -434,6 +437,9 @@ final class ReflowReaderViewController: UIViewController {
 
     /// Ett kapitel har mätts. Väntar läsaren på det kapitlet visas sidan nu.
     private func chapterMeasured(_ chapter: Int) {
+        if firstMeasuredAt == nil {
+            firstMeasuredAt = CACurrentMediaTime()
+        }
         if chapter == currentChapter, isShowingPages, pendingJump == nil,
            let count = renderer?.pageCount(of: chapter) {
             if let previous = currentCount, previous != count {
@@ -1076,8 +1082,11 @@ extension ReflowReaderViewController {
         SelfTest.log("Innehåll: " + content.toc.prefix(12).map { "\($0.title) (kap \($0.chapter + 1))" }.joined(separator: "; "))
 
         let firstShown = await waitUntilShown()
-        let openTime = Int(((CACurrentMediaTime() - openedAt) * 1000).rounded())
-        SelfTest.log("Första sidan: \(firstShown ? "ok efter \(openTime) ms från att läsaren öppnades" : "FEL, sidbilden kom inte")")
+        func since(_ time: CFTimeInterval?) -> Int {
+            Int((((time ?? CACurrentMediaTime()) - openedAt) * 1000).rounded())
+        }
+        SelfTest.log("Första sidan: \(firstShown ? "ok efter \(since(nil)) ms" : "FEL, sidbilden kom inte"). "
+                     + "Boken uppackad och läst efter \(since(loadedAt)) ms, första kapitlet mätt efter \(since(firstMeasuredAt)) ms.")
         logState("Start")
         SelfTest.saveScreen(view, name: "01-start")
 
