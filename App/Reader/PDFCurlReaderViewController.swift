@@ -1362,7 +1362,10 @@ extension PDFCurlReaderViewController {
            let shownRect = page.viewRect(forPageRect: rect) {
             let finger = CGPoint(x: shownRect.midX, y: shownRect.midY)
             let word = PDFCurlReaderViewController.word(on: pdfPage, at: finger, imageFrame: frame)
-            SelfTest.log("Ord under fingret vid \"kunskap\": \(word.map { text.substring(with: $0) } ?? "inget")")
+            let pagePoint = PDFPageGeometry.pagePoint(for: finger, imageFrame: frame, page: pdfPage)
+            let index = pagePoint.map { pdfPage.characterIndex(at: $0) } ?? -2
+            SelfTest.log("Ord under fingret vid \"kunskap\": \(word.map { text.substring(with: $0) } ?? "inget") "
+                         + "(ruta \(rect), punkt \(pagePoint.map { "\($0)" } ?? "ingen"), tecken \(index))")
         } else {
             SelfTest.log("FEL: hittade inte ordet kunskap på sidan")
         }
@@ -1394,6 +1397,8 @@ extension PDFCurlReaderViewController {
         await pause(0.6)
         SelfTest.saveScreen(view, name: "04-markeringslage")
         setMarkMode(false)
+        setChromeHidden(false, animated: false)
+        await pause(0.4)
 
         showSearch()
         if let search = await waitForPresented(BookSearchViewController.self) {
@@ -1419,6 +1424,7 @@ extension PDFCurlReaderViewController {
         if let container = await waitForPresented(ReaderContentsContainerViewController.self) {
             container.showTab(2)
             await pause(0.6)
+            SelfTest.log("Flikarna: \(container.visibleListCount) lista syns")
             SelfTest.saveScreen(view.window ?? view, name: "07-markeringar")
             container.showTab(1)
             await pause(0.4)

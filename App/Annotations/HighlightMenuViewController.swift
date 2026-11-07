@@ -81,7 +81,7 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
         updateSelection(highlight.color)
 
         var noteConfiguration = UIButton.Configuration.tinted()
-        noteConfiguration.title = highlight.hasNote ? "Ändra anteckning" : "Anteckning"
+        noteConfiguration.title = "Anteckning"
         noteConfiguration.image = UIImage(systemName: "square.and.pencil")
         noteConfiguration.imagePadding = 6
         noteConfiguration.cornerStyle = .medium

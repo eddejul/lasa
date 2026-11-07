@@ -1959,6 +1959,8 @@ extension ReflowReaderViewController {
         await pause(0.5)
         SelfTest.saveScreen(view, name: "03d-markeringslage")
         setMarkMode(false)
+        setChromeHidden(false, animated: false)
+        await pause(0.4)
 
         showSearch()
         if let search = await SelfTestHelpers.presented(BookSearchViewController.self, by: self) {
@@ -1987,6 +1989,7 @@ extension ReflowReaderViewController {
         if let container = await SelfTestHelpers.presented(ReaderContentsContainerViewController.self, by: self) {
             container.showTab(2)
             await pause(0.6)
+            SelfTest.log("Flikarna: \(container.visibleListCount) lista syns")
             SelfTest.saveScreen(view.window ?? view, name: "03g-markeringar")
             container.showTab(1)
             await pause(0.4)
