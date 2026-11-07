@@ -24,6 +24,7 @@ Pusha inte flera orelaterade ändringar i samma commit. Varje runda tar flera mi
 2. Push startar `Windows build` (bara när `windows/`, `tools/dictionary/` eller workflowfilen ändras). iOS-bygget hoppar över ändringar som bara rör `windows/`.
 3. Följ bygget: `gh run list --workflow "Windows build" --limit 1`, fel med `gh run view <id> --log-failed`. Samma regel om tre fel som ovan.
 4. När bygget är grönt: Edvin laddar ner artefakten `Lasa-windows` och kör filen som slutar på `-setup.exe` (osignerad: Mer info och Kör ändå).
+5. Synken på Windows (`windows/src/js/sync.js`) följer `docs/SYNK.md` och iPadens `App/Sync/SyncEngine.swift`. Ändras protokollet ska båda ändras. Provas med `windows/tests/e2e_sync.py` mot `windows/tests/mock_supabase.py`.
 
 ## Projektet
 

@@ -57,6 +57,7 @@ Så blev den (7 november 2026, detaljer i `windows/README.md`):
 * **EPUB och text:** foliate-js med CSS-kolumner, två kolumner i brett fönster. Textfiler görs om till HTML med samma regler som TextBookConverter.swift. Content-Security-Policy stoppar skript i EPUB-filer.
 * **Böcker** identifieras med SHA-256 av filens innehåll (gemener hex), samma id som synken i fas 6 ska använda. Sparade ord har kolumnerna `uuid` och `book_id` utöver iPadens.
 * **Bygget:** workflow `Windows build`, ordboken med samma cache som iOS-bygget, installationsfiler (NSIS och MSI) i artefakten `Lasa-windows`. Osignerade.
+* **Synk (fas 6):** läspositioner (PDF och EPUB, inte textfiler) och sparade ord enligt `docs/SYNK.md`, i `windows/src/js/sync.js`. Publik nyckel och förnyelsetoken i Windows Autentiseringshanteraren (crate keyring). Markeringar och bokmärken synkas inte till Windows.
 
 ## 4. Funktioner, i prioritetsordning
 
