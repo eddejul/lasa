@@ -11,6 +11,8 @@ DerivedData/
 # Ordboken byggs av skriptet, källfilerna laddas ner vid bygge
 tools/dictionary/sources/
 tools/dictionary/out/
+# Bygget i molnet lägger ordboken här innan appen byggs
+App/Resources/*.sqlite
 
 # Python
 __pycache__/
