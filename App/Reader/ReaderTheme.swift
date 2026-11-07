@@ -56,6 +56,7 @@ enum PageImageStyler {
         let format = UIGraphicsImageRendererFormat()
         format.scale = image.scale
         format.opaque = true
+        format.preferredRange = .standard
         let rect = CGRect(origin: .zero, size: image.size)
 
         return UIGraphicsImageRenderer(size: image.size, format: format).image { context in
@@ -71,10 +72,13 @@ enum PageImageStyler {
                 image.draw(in: rect, blendMode: .multiply, alpha: 1)
 
             case .dark:
-                // Vänd ljusheten men behåll färgtonen, så att diagram och bilder inte blir negativ.
+                // Sidan på vitt papper först, så att genomskinliga sidor också får mörkt papper.
                 cg.setFillColor(UIColor.white.cgColor)
                 cg.fill(rect)
-                image.draw(in: rect, blendMode: .difference, alpha: 1)
+                image.draw(in: rect)
+                // Vänd ljusheten men behåll färgtonen, så att diagram och bilder inte blir negativ.
+                cg.setBlendMode(.difference)
+                cg.fill(rect)
                 image.draw(in: rect, blendMode: .hue, alpha: 1)
 
                 // Mjukare kontrast: papperet blir mörkgrått (0,125 gånger 0,88 ger 0,11), texten ljusgrå.
