@@ -260,6 +260,7 @@ class Dictionary:
         def order(entry):
             return (entry["pos"] != preferred_pos if preferred_pos else False,
                     not entry["senses"] and not entry["translations"],
+                    not entry["translations"],
                     normalize(entry["lemma"]) != key,
                     EN_POS_ORDER.index(entry["pos"]) if entry["pos"] in EN_POS_ORDER else 99,
                     entry["lemma"])

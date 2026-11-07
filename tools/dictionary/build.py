@@ -428,37 +428,46 @@ def read_folkets_sv(path, stats):
     till en SALDO-betydelse. Det engelska ordet i en översättning ger dessutom en svensk översättning
     åt engelska ord som saknas i den engelsk-svenska delen.
     """
-    definitions = []
+    raw = defaultdict(list)  # (ord, ordklass) till [(SALDO-betydelser som uppslaget länkar till, definition)]
     reversed_pairs = []
-    seen = set()
-    rank = Counter()
     for word in iter_elements(path, {"word"}):
         value = html.unescape(word.get("value") or "").strip()
         folkets_class = word.get("class") or ""
         if not value or " " in value:
             continue
-        sense_id = ""
+        senses = []
         for see in word.findall("see"):
             if see.get("type") == "saldo":
                 parts = (see.get("value") or "").split("||")
-                if len(parts) >= 2 and parts[1]:
-                    sense_id = parts[1]
-                    break
+                if len(parts) >= 2 and parts[1] and parts[1] not in senses:
+                    senses.append(parts[1])
         pos = FOLKETS_SV_POS.get(folkets_class)
         if pos:
             for definition in word.findall("definition"):
                 text = html.unescape(definition.get("value") or "").strip()
-                key = (value, pos, sense_id, text)
-                if text and key not in seen:
-                    seen.add(key)
-                    definitions.append((value, pos, sense_id, rank[(value, pos)], text))
-                    rank[(value, pos)] += 1
+                if text:
+                    raw[(value, pos)].append((senses, text))
         english_pos = FOLKETS_SV_TO_EN.get(folkets_class)
         if english_pos:
             for translation in word.findall("translation"):
                 english = html.unescape(translation.get("value") or "").strip()
                 if is_single_token(english) and english.replace("-", "").replace("'", "").isalpha():
                     reversed_pairs.append((normalize(english), value, english_pos))
+
+    # Varje definition får den första av uppslagets betydelser som inte redan har en definition.
+    # Alla får inte bara den första länken, då föll till exempel "handling: intrig" bort.
+    definitions = []
+    for (value, pos), items in raw.items():
+        taken = set()
+        seen_texts = set()
+        for rank, (senses, text) in enumerate(items):
+            if text in seen_texts:
+                continue
+            seen_texts.add(text)
+            sense_id = next((s for s in senses if s not in taken), "")
+            if sense_id:
+                taken.add(sense_id)
+            definitions.append((value, pos, sense_id, rank, text))
     stats["folkets svenska definitioner"] = len(definitions)
     stats["folkets svenska definitioner med betydelse"] = sum(1 for d in definitions if d[2])
     stats["folkets omvända översättningar"] = len(reversed_pairs)

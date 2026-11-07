@@ -450,6 +450,7 @@ final class WordDictionary {
     private static func englishOrder(_ entry: WordEntry, key: String, preferred: String?) -> [Int] {
         [preferred.map { entry.pos == $0 ? 0 : 1 } ?? 0,
          entry.hasContent ? 0 : 1,
+         entry.translations.isEmpty ? 1 : 0,
          normalize(entry.lemma) == key ? 0 : 1,
          englishPosOrder.firstIndex(of: entry.pos) ?? 99]
     }
