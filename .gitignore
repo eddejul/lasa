@@ -1,0 +1,26 @@
+# Genereras av XcodeGen i molnet
+*.xcodeproj/
+*.xcworkspace/
+
+# Byggfiler
+build/
+DerivedData/
+*.ipa
+*.xcarchive
+
+# Ordboken byggs av skriptet, källfilerna laddas ner vid bygge
+tools/dictionary/sources/
+tools/dictionary/out/
+
+# Python
+__pycache__/
+.venv/
+
+# System
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Hemligheter får aldrig hamna här
+.env
+*.key

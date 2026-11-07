@@ -1,0 +1,86 @@
+name: iOS build
+
+# Bygger en osignerad .ipa på en Mac i molnet.
+# Sideloadly eller AltStore signerar den med ditt Apple-ID när du installerar.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Lämna tomt för byggserverns standard-Xcode.
+  # Sätt t.ex. /Applications/Xcode_26.6.app om en viss version behövs (lägsta iOS måste vara 15 eller lägre).
+  XCODE_APP: ""
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 40
+
+    steps:
+      - name: Hämta koden
+        uses: actions/checkout@v5
+
+      - name: Välj Xcode
+        run: |
+          if [ -n "$XCODE_APP" ] && [ -d "$XCODE_APP" ]; then
+            sudo xcode-select -s "$XCODE_APP"
+          fi
+          xcodebuild -version
+
+      - name: Installera XcodeGen
+        run: brew install xcodegen
+
+      - name: Generera Xcode-projektet
+        run: xcodegen generate
+
+      - name: Bygg utan signering
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild archive \
+            -project Lasa.xcodeproj \
+            -scheme Lasa \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Lasa.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build/xcodebuild.log
+
+      - name: Visa kompileringsfel
+        if: failure()
+        run: |
+          echo "Rader med fel i bygget:"
+          grep -n -E "error:|fatal error" build/xcodebuild.log | head -n 80 || echo "Inga rader med 'error:' hittades."
+
+      - name: Packa .ipa
+        run: |
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R build/Lasa.xcarchive/Products/Applications/Lasa.app build/Payload/
+          cd build
+          zip -qry Lasa-unsigned.ipa Payload
+          ls -lh Lasa-unsigned.ipa
+
+      - name: Ladda upp .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lasa-ipa
+          path: build/Lasa-unsigned.ipa
+          retention-days: 30
+
+      - name: Ladda upp bygglogg
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bygglogg
+          path: build/xcodebuild.log
+          retention-days: 7
+          if-no-files-found: ignore

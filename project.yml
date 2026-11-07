@@ -1,0 +1,41 @@
+name: Lasa
+
+options:
+  bundleIdPrefix: se.edvin
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  developmentLanguage: sv
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+
+targets:
+  Lasa:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: App
+    settings:
+      base:
+        PRODUCT_NAME: Lasa
+        PRODUCT_BUNDLE_IDENTIFIER: se.edvin.lasa
+        INFOPLIST_FILE: Config/Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: "NO"
+
+schemes:
+  Lasa:
+    build:
+      targets:
+        Lasa: all
+    run:
+      config: Debug
+    archive:
+      config: Release
