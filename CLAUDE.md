@@ -34,6 +34,7 @@ App/
   Library/     bibliotek, import, lagring
   Reader/      läsare, rendering, pappersvikning (PDF och, med Reflow i namnet, EPUB och text)
   Dictionary/  ordboken, ordet under fingret, ordrutan, sparade ord
+  Annotations/ (fas 4) markeringar, anteckningar, bokmärken, sökning och deras rutor och listor
   Support/     haptik och små hjälpare
   Resources/   lasa-ordbok.sqlite läggs här av bygget, checkas inte in
 Config/Info.plist
@@ -59,6 +60,16 @@ tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en 
 * Skripten i webbvyn (`ReflowStyle.script`) körs i en egen JavaScript-värld (`.defaultClient`) och anropas med `callAsyncJavaScript`.
 * Ordfunktionen i EPUB använder ordboken på ett enda ställe: `presentWord` i `ReflowReaderViewController.swift`. Hållgesten är densamma som i PDF (ordet närmast fingret, bubbla, rutan öppnas när man släpper). Ordet hittas i den dolda webbvyn med `lasa.wordAt`, ett uppslag i taget.
 * Simulatortestet (jobbet Simulatortest) bygger appen för en iPad-simulator och startar den med `-LasaSelfTest <fil>`. Läs loggen och bilderna i artefakten Simulatortest efter varje ändring i läsaren, innan Edvin får något att testa. Simulatorn kör en nyare iOS än iPaden, och iOS 26 nekar appen att vrida skärmen, så självtestet gör läsarens yta bred för att pröva uppslag. Tider och minne gäller en Mac, inte iPaden.
+
+## Markeringar, bokmärken och sök (fas 4)
+
+* Allt sparas i `markeringar.sqlite` under Application Support (`AnnotationStore`), böckerna känns igen på filnamnet som läspositionen. Inget raderas: borttaget får `deleted = 1` och ny ändringstid, för synken.
+* En markering är `section` plus ett teckenintervall i UTF-16. PDF: sidan och `PDFPage.string`. EPUB och text: kapitlet och kapitlets text (all text i body utom script och style). `text` sparas också, och skriptet letar upp markeringen via texten om platsen inte stämmer.
+* Markeringsläget (pennan): sidans vikning, menyn och ordfunktionen stängs av, och en `UILongPressGestureRecognizer` med tiden 0 följer fingret. Ett vanligt tryck på en markering öppnar `HighlightMenuViewController`.
+* PDF: markeringarna ritas som vyer ovanpå sidbilden i `PDFPageViewController` (ingen omritning av sidan). EPUB: `ReflowMarks.script` lägger span-element runt texten i den dolda webbvyn och sidan fotograferas om. `lasa.showPage` lämnar markeringarnas rutor, så att tryck på en markering hittas utan webbvyn.
+* Sökningen (`BookSearch`) går i bakgrunden: PDF med ett eget `PDFDocument`, EPUB i kapitelfilerna utan taggar. Sökträffen i EPUB letas upp i webbvyn med samma vikning (`FoldedText` i Swift, `fold` i skriptet), n:te träffen med texten runt som kontroll.
+* Bläddringsljudet räknas fram i appen (`PageTurnSound`), ingen ljudfil. Spelas när en vikning börjar.
+* Självtestet provar allt detta i alla testböcker, även en PDF (`test.pdf` från `make_books.py`).
 
 ## Ordboken (fas 2)
 

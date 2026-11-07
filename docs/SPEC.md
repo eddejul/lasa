@@ -169,6 +169,18 @@ Den svåraste delen av appen. Byggd 7 november 2026.
 * Länkar i boken (fotnoter, innehållssidor) hoppar dit och visar en Tillbaka-knapp. Webblänkar öppnas i Safari i appen.
 * Bygget kör ett simulatortest (`tools/simtest`): appen öppnar testböcker i en iPad-simulator, bläddrar, slår upp ett ord, byter typsnitt och tema och sparar bilder och logg i artefakten Simulatortest.
 
+### 6.4 Markeringar, anteckningar, bokmärken och sök (fas 4)
+
+Byggd 7 november 2026 på grenen `fas4`.
+
+* **Markera:** pennan i menyn startar markeringsläget. Sidan står still och fingret markerar det det drar över, ord för ord. En rad nere har färgerna (gul, grön, blå, rosa), bläddring och Klar. Ett tryck på ett ord markerar ordet. Långtryck för ordboken fungerar som förut utanför markeringsläget. Överlappande markeringar slås ihop.
+* **Markeringens ruta:** ett tryck på en markering visar färgerna, Anteckning, Kopiera och Ta bort. En markering med anteckning får ett streck under.
+* **Bokmärken:** knappen i menyn märker sidan man läser med ett rött band. I EPUB sparas bokmärket som kapitel och andel av kapitlet.
+* **Listor:** Innehåll har flikarna Innehåll, Bokmärken och Markeringar. Tryck för att hoppa dit, svep för att ta bort.
+* **Sök:** i hela boken, i bakgrunden, högst 500 träffar. Skiftläge, radbrytningar och avstavningar spelar ingen roll, men å, ä och ö skiljs från a och o. Träffen visas med en orange ram en kort stund.
+* **Bläddringsljud:** ett svagt prassel när en sida börjar vikas, på från början, kan stängas av i menyn Bakgrund.
+* Allt sparas i en egen databas och överlever omstart. Borttaget sparas som borttaget, så att synken i fas 6 kan föra det vidare.
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.
