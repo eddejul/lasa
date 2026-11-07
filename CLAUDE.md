@@ -80,6 +80,8 @@ tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en 
 * AI-knappen (`GeminiClient`) använder `generateContent` med `responseJsonSchema`. Modellen får bara välja bland ordbokens betydelser och ord, och ord den hittat på själv visas inte. Nyckeln ligger i nyckelringen, modellen är en inställning (från början `gemini-3.5-flash-lite`, gratis enligt Googles prissida 7 november 2026). Gratisnivåns data får användas av Google, det står i Inställningar.
 * Synken (`SyncEngine`, `SyncClient`) och protokollet beskrivs i `docs/SYNK.md`. Tabellerna i `tools/supabase/schema.sql`. Inga nycklar i koden: adressen i UserDefaults, nyckel och inloggning i nyckelringen.
 * Självtestet `-LasaSelfTest fas6` provar repetitionen, AI-tolkningen och synken mot `tools/simtest/mock_supabase.py`. Läs `fas6.log` och `mock-supabase.json` i artefakten Simulatortest.
+* Den osignerade appen i simulatorn kan inte skriva i nyckelringen (`SecItemAdd` svarar -34018). `Keychain` håller då värdet i minnet tills appen stängs, så självtestet fungerar ändå. På iPaden signerar Sideloadly appen och nyckelringen används.
+* Simulatorn kör iOS 26: popovers och vissa knappar ritas som glas och kommer inte med i självtestets egna bilder (`drawHierarchy`). Kontrollera sådant i loggen (till exempel antalet träffar) eller i skärmbilderna från `simctl`, inte i appens bilder.
 
 ## Ordboken (fas 2)
 
