@@ -41,10 +41,10 @@ tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
 
 ## Regler för läsaren
 
-* Bläddring sker med `UIPageViewController(transitionStyle: .pageCurl)`, ryggen till vänster, ensidigt. Byt inte övergång om inte Edvin ber om det.
-* Ingen rendering på huvudtråden under en pågående vikning. Förrendera grannsidor i bakgrunden.
-* Håll minnet nere: högst 5 renderade sidbilder, högst 3 webbvyer för EPUB.
-* Renderingsstorleken får bara bero på vyns storlek, inte på om menyraden syns.
+* Bläddring sker med `UIPageViewController(transitionStyle: .pageCurl)`. Stående: en sida, ryggen till vänster. Liggande på iPad: uppslag, ryggen i mitten, omslaget ensamt till höger. Edvin har godkänt vikningens känsla. Ändra den inte, och byt inte övergång, om han inte ber om det.
+* Ingen rendering på huvudtråden, varken under en vikning eller annars. Sidbilder kommer bara via `PDFPageRenderer`, som ritar i bakgrunden med ett eget `PDFDocument`. Läsarens dokument används bara på huvudtråden.
+* Håll minnet nere: högst 5 renderade sidbilder (även i uppslag), högst 3 webbvyer för EPUB.
+* Sidans placering och renderingsstorlek får bara bero på vyns storlek och läsarens fasta marginaler, aldrig på om menyraden eller statusfältet syns. Använd inte vyns `safeAreaInsets` för sidan, de ändras med menyraden.
 * Haptik går genom `Haptics.shared`. iPad har ingen vibrationsmotor, där händer inget, och det är förväntat.
 
 ## Ordboken (fas 2)

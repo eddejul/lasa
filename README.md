@@ -2,7 +2,7 @@
 
 Läsapp för iPad och iPhone med pappersvikning som i Apple Books, och en ordfunktion som visar synonymer när man trycker på ett ord. Hela planen finns i [docs/SPEC.md](docs/SPEC.md).
 
-**Status:** fas 0. Appen har ett bibliotek och läser PDF med pappersvikning.
+**Status:** fas 1. Appen läser PDF med pappersvikning, med uppslag i liggande läge på iPad, innehållsförteckning, Gå till sida, reglage, zoom och tre bakgrunder. Fas 0 är testad och godkänd på iPaden.
 
 ## Kom igång (en gång)
 
@@ -30,13 +30,13 @@ Med ett gratis Apple-ID slutar appen starta efter 7 dagar. Kör Sideloadly igen 
 
 Vill du slippa det: **AltStore** förnyar appen automatiskt när datorn (med AltServer igång) och iPaden är på samma wifi.
 
-## Testa fas 0
+## Testa fas 1
 
-* Dra från högra kanten: sidan ska vikas och följa fingret utan hack.
-* Tryck i höger eller vänster kant: bläddrar en sida.
-* Tryck i mitten: menyn och sidnumret visas och döljs.
-* Gå tillbaka och öppna boken igen: den ska öppnas på samma sida.
-* Vänd iPaden till liggande: sidan ska fortfarande vara skarp.
+* Tryck i mitten: menyn visas och sidan står still, den krymper inte.
+* Vänd iPaden till liggande: två sidor bredvid varandra, omslaget ensamt till höger. Bläddra och vänd tillbaka till stående.
+* Menyn: innehållsförteckningen hoppar till rätt kapitel, reglaget längst ner hoppar i boken, och sidnumret öppnar Gå till sida (prova bokens egna sidnummer).
+* Dubbeltryck mitt på en sida: den öppnas i zoom, nyp för att förstora. Klar stänger.
+* Bakgrund (den halvfyllda cirkeln i menyn): vitt, sepia och mörkt. Bilder i boken ska inte bli negativ i mörkt.
 
 Berätta för Claude Code vad som känns fel, till exempel om vikningen hackar eller om texten är suddig.
 

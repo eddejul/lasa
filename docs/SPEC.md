@@ -134,14 +134,19 @@ Kvalitetsregler:
 
 ### 6.1 PDF (fas 0 och 1)
 
-* `PDFPageRenderer` renderar sidor till `UIImage` på en egen kö, högst 5 bilder i minnet, förrenderar sidan före och två sidor efter.
-* Renderingsstorleken beror bara på skärmens storlek, inte på om menyraden syns. Då behöver inget renderas om när menyn döljs.
-* Dubbeltryck på en sida (fas 1): öppnar sidan i en zoombar `PDFView` för små tabeller och figurer.
+* `PDFPageRenderer` renderar sidor till `UIImage` på en egen kö med ett eget `PDFDocument`, högst 5 bilder i minnet. Sidan som ska visas går före förritningen, och förritning som inte längre behövs avbryts. Saknas bilden visas papperet tills den är klar, huvudtråden ritar aldrig.
+* Renderingsstorleken beror bara på vyns storlek och fasta marginaler, inte på om menyraden eller statusfältet syns. Sidan står still när menyn visas, och inget behöver ritas om.
+* Menyraden: innehållsförteckning (ur PDF:ens bokmärken), zoom och bakgrund. Nederkanten: reglage för att hoppa i boken och sidnumret, som öppnar Gå till sida.
+* Gå till sida tar bokens egna sidnummer (sidetiketter som "xii" eller "45") först, annars sidans plats i filen.
+* Zoom: dubbeltryck i mitten av sidan, eller knappen i menyn, öppnar sidan i en zoombar `PDFView` för små tabeller och figurer.
+* Bakgrund: vitt, sepia eller mörkt. Mörkt vänder ljusheten men behåller färgtonen, så att bilder inte blir negativ. Gäller alla böcker. Zoomvyn visar alltid originalfärgerna.
 * Skannade PDF:er utan textlager: ordfunktionen fungerar inte. Textigenkänning med Vision undersöks senare.
 
 ### 6.2 Känsla
 
-* Pappersvikning med `UIPageViewController(transitionStyle: .pageCurl)`, ryggen till vänster, ensidig.
+* Pappersvikning med `UIPageViewController(transitionStyle: .pageCurl)`. Edvin har godkänt känslan (7 november 2026).
+* Stående: en sida i taget, ryggen till vänster.
+* Liggande på iPad: uppslag med två sidor och ryggen i mitten, som i Apple Books (Edvins beslut 7 november 2026). Omslaget ligger ensamt till höger, sedan sida 2 och 3, 4 och 5 och så vidare, som i en tryckt bok. iPhone visar alltid en sida.
 * Menyraden döljs vid första sidbytet och visas med tryck i mitten av sidan.
 * Sidnummer nere i mitten, tonas bort tillsammans med menyn.
 * Mål: 60 bilder per sekund under vikningen på iPad Air 2. Ingen rendering på huvudtråden under en pågående vikning.
@@ -200,5 +205,4 @@ Varje fas är klar först när Edvin har testat den på iPaden.
 
 ## 10. Öppna frågor
 
-* Slutligt namn på appen.
-* Vill Edvin ha dubbelsidigt uppslag i liggande läge på iPaden (som Apple Books)? Fas 1 kör ensidigt i alla lägen.
+* Slutligt namn på appen. Edvin funderar och återkommer.
