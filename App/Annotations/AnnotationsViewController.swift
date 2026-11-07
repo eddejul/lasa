@@ -167,7 +167,7 @@ final class ReaderContentsContainerViewController: UIViewController {
     }
 
     /// Väljer flik med kod: 0 innehåll, 1 bokmärken, 2 markeringar.
-    func select(_ index: Int) {
+    func showTab(_ index: Int) {
         picker.selectedSegmentIndex = min(max(index, 0), 2)
         show(picker.selectedSegmentIndex)
     }
@@ -240,7 +240,7 @@ final class HighlightModeBar: UIView {
             button.tintColor = .black
             button.accessibilityLabel = option.title
             button.addAction(UIAction { [weak self] _ in
-                self?.select(option)
+                self?.markSelected(option)
                 self?.onColor?(option)
             }, for: .touchUpInside)
             NSLayoutConstraint.activate([
@@ -275,7 +275,7 @@ final class HighlightModeBar: UIView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             heightAnchor.constraint(equalToConstant: 44),
         ])
-        select(color)
+        markSelected(color)
     }
 
     required init?(coder: NSCoder) {
@@ -291,7 +291,7 @@ final class HighlightModeBar: UIView {
         return button
     }
 
-    private func select(_ selected: HighlightColor) {
+    private func markSelected(_ selected: HighlightColor) {
         for (color, button) in colorButtons {
             let isSelected = color == selected
             button.setImage(isSelected ? UIImage(systemName: "checkmark",

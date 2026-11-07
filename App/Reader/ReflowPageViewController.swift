@@ -26,6 +26,16 @@ final class ReflowPageViewController: UIViewController {
     private(set) var links: [ReflowLink] = []
     private(set) var hasImage = false
 
+    // Fas 4: markeringar, bokmärke och sökträffar.
+    private(set) var marks: [ReflowMarkRect] = []
+    private var previewViews: [UIView] = []
+    private let ribbon = UIImageView(image: UIImage(systemName: "bookmark.fill"))
+    var isBookmarked = false {
+        didSet {
+            ribbon.isHidden = !isBookmarked
+        }
+    }
+
     init(chapter: Int,
          slot: Int,
          page: Int?,
@@ -56,6 +66,12 @@ final class ReflowPageViewController: UIViewController {
         view.backgroundColor = paperColor
         imageView.contentMode = .scaleToFill
         view.addSubview(imageView)
+        ribbon.tintColor = .systemRed
+        ribbon.contentMode = .scaleAspectFit
+        ribbon.isHidden = !isBookmarked
+        ribbon.isAccessibilityElement = true
+        ribbon.accessibilityLabel = "Bokmärke"
+        view.addSubview(ribbon)
 
         if side != .single {
             // Svag skugga mot ryggen, som i en riktig bok.
@@ -71,6 +87,7 @@ final class ReflowPageViewController: UIViewController {
         super.viewDidLayoutSubviews()
         let bounds = view.bounds
         imageView.frame = bounds
+        ribbon.frame = CGRect(x: bounds.width - 46, y: -2, width: 20, height: 32)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let shadeWidth: CGFloat = 28
@@ -154,6 +171,62 @@ final class ReflowPageViewController: UIViewController {
     private func show(_ snapshot: ReflowSnapshot) {
         imageView.image = snapshot.image
         links = snapshot.links
+        marks = snapshot.marks
         hasImage = true
+        // En ny bild har markeringen inritad, så förhandsvisningen behövs inte längre.
+        clearPreview()
+    }
+
+    // MARK: Markeringar (fas 4)
+
+    /// Ber om en ny bild, till exempel när en markering har lagts till. Den gamla visas tills den nya är klar.
+    func reloadImage() {
+        guard isViewLoaded else { return }
+        loadImage()
+    }
+
+    /// Markeringen under en punkt i bladet.
+    func markID(at point: CGPoint) -> String? {
+        guard hasImage else { return nil }
+        let location = pagePoint(point)
+        return marks.last { $0.rect.insetBy(dx: -4, dy: -4).contains(location) }?.id
+    }
+
+    /// Visar vad som markeras medan fingret drar. Rutorna är i sidans koordinater.
+    func showPreview(_ rects: [CGRect], color: HighlightColor, dark: Bool) {
+        clearPreview()
+        for rect in rects {
+            let preview = UIView(frame: viewRect(rect).insetBy(dx: -1, dy: -1))
+            preview.backgroundColor = color.overlay(dark: dark)
+            preview.layer.cornerRadius = 2
+            preview.isUserInteractionEnabled = false
+            view.addSubview(preview)
+            previewViews.append(preview)
+        }
+    }
+
+    func clearPreview() {
+        previewViews.forEach { $0.removeFromSuperview() }
+        previewViews.removeAll()
+    }
+
+    /// Visar en sökträff eller en markering man hoppat till en kort stund. Rutorna är i sidans koordinater.
+    func flash(_ rects: [CGRect]) {
+        guard isViewLoaded else { return }
+        let boxes = rects.map { rect -> UIView in
+            let box = UIView(frame: viewRect(rect).insetBy(dx: -3, dy: -2))
+            box.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.25)
+            box.layer.borderColor = UIColor.systemOrange.cgColor
+            box.layer.borderWidth = 2
+            box.layer.cornerRadius = 4
+            box.isUserInteractionEnabled = false
+            view.addSubview(box)
+            return box
+        }
+        UIView.animate(withDuration: 0.6, delay: 2.2, options: [.allowUserInteraction]) {
+            boxes.forEach { $0.alpha = 0 }
+        } completion: { _ in
+            boxes.forEach { $0.removeFromSuperview() }
+        }
     }
 }

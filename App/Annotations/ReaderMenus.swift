@@ -71,3 +71,23 @@ enum AnnotationFormat {
         return String(cut) + " …"
     }
 }
+
+/// Hjälp för självtesten i simulatorn.
+@MainActor
+enum SelfTestHelpers {
+
+    /// Väntar på att en ruta har öppnats, högst fyra sekunder.
+    static func presented<T: UIViewController>(_ type: T.Type, by presenter: UIViewController) async -> T? {
+        for _ in 0..<40 {
+            if let navigation = presenter.presentedViewController as? UINavigationController,
+               let found = navigation.viewControllers.first as? T {
+                return found
+            }
+            if let found = presenter.presentedViewController as? T {
+                return found
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return nil
+    }
+}

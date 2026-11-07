@@ -17,6 +17,8 @@ struct ReflowLink {
 struct ReflowSnapshot {
     let image: UIImage
     let links: [ReflowLink]
+    /// Markeringarnas rutor på sidan (fas 4).
+    var marks: [ReflowMarkRect] = []
 }
 
 /// Ordet under fingret: ordet, texten före och efter i samma stycke, och ordets rutor i sidans koordinater.
@@ -59,6 +61,8 @@ final class ReflowRenderer {
     let book: ReflowableBook
     /// Ett kapitel har delats i sidor, eller fått ett nytt sidantal.
     var onChapterMeasured: ((Int) -> Void)?
+    /// Markeringarna i ett kapitel, som läggs in när kapitlet laddas (fas 4).
+    var marksProvider: ((Int) -> [[String: Any]])?
 
     /// Sant medan fingret viker en sida. Då görs bara bilder som syns just nu, ingen förritning.
     var isTurning = false {
@@ -424,10 +428,11 @@ final class ReflowRenderer {
             "scale": layout.typography.scale,
             "w": Double(layout.pageSize.width),
             "h": Double(layout.pageSize.height),
+            "marks": marksProvider?(chapter) ?? [],
         ]
-        view.call(ReflowStyle.script) { [weak self, weak view] _ in
+        view.call(ReflowMarks.installScript, ["css": ReflowMarks.css]) { [weak self, weak view] _ in
             guard let self = self, let view = view, self.isCurrent(job, on: view) else { return }
-            view.call("return await lasa.setup(css, scale, w, h);", arguments) { [weak self, weak view] value in
+            view.call(ReflowMarks.setupBody, arguments) { [weak self, weak view] value in
                 guard let self = self, let view = view, self.endJob(job, on: view) else { return }
                 guard view.chapter == chapter, key == self.layout?.key else {
                     self.pump()
@@ -497,13 +502,14 @@ final class ReflowRenderer {
             guard let self = self, let view = view, self.isCurrent(job, on: view) else { return }
             self.scriptTimes = Array((self.scriptTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(50))
             let links = ReflowValues.links(from: value)
+            let marks = ReflowMarks.markRects(from: value)
             let configuration = WKSnapshotConfiguration()
             configuration.afterScreenUpdates = true
             view.webView.takeSnapshot(with: configuration) { [weak self, weak view] image, _ in
                 guard let self = self, let view = view, self.endJob(job, on: view) else { return }
                 if let image = image, style == self.styleKey, view.chapter == page.chapter, view.styleKey == style {
                     self.snapshotTimes = Array((self.snapshotTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(50))
-                    self.store(ReflowSnapshot(image: image, links: links), for: page)
+                    self.store(ReflowSnapshot(image: image, links: links, marks: marks), for: page)
                 } else if image == nil {
                     self.failures += 1
                 }
@@ -711,5 +717,42 @@ final class ChapterView: NSObject, WKNavigationDelegate {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard state == .loading || state == .loaded else { return }
         onLoaded?(self, false)
+    }
+}
+
+// MARK: Markeringar och sökning (fas 4)
+
+extension ReflowRenderer {
+
+    /// Kör en funktionskropp i ett kapitels webbvy när kapitlet är klart, på samma sätt som orden under fingret.
+    /// Svaret är nil om kapitlet inte hann bli klart inom tio sekunder.
+    func evaluate(_ body: String, arguments: [String: Any], in chapter: Int, completion: @escaping (Any?) -> Void) {
+        let query = Query(chapter: chapter, body: body, arguments: arguments, deliver: completion)
+        queries.append(query)
+        pump()
+    }
+
+    /// Lägger in ett kapitels markeringar på nytt och kastar kapitlets sidbilder, så att de ritas om.
+    func reloadMarks(in chapter: Int, completion: @escaping () -> Void) {
+        guard views.contains(where: { $0.chapter == chapter && $0.state == .loaded }) else {
+            // Kapitlet är inte laddat: markeringarna läggs in när det laddas.
+            invalidate(chapter: chapter)
+            completion()
+            return
+        }
+        let marks = marksProvider?(chapter) ?? []
+        evaluate("return lasaMarks.apply(marks);", arguments: ["marks": marks], in: chapter) { [weak self] _ in
+            self?.invalidate(chapter: chapter)
+            completion()
+        }
+    }
+
+    /// Kastar ett kapitels färdiga sidbilder. De som syns görs om när bladen ber om dem.
+    func invalidate(chapter: Int) {
+        for page in Array(images.keys) where page.chapter == chapter {
+            images[page] = nil
+        }
+        recentlyUsed.removeAll { $0.chapter == chapter }
+        pump()
     }
 }

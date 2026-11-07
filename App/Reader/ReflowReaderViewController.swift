@@ -80,6 +80,19 @@ final class ReflowReaderViewController: UIViewController {
     private var typographyTask: Task<Void, Never>?
     private var selfTestStarted = false
 
+    // Fas 4: markeringar, anteckningar, bokmärken och sökning. Koden ligger sist i filen.
+    private var markMode = false
+    private var markDrag: UILongPressGestureRecognizer?
+    private var markTap: UITapGestureRecognizer?
+    private var markBar: HighlightModeBar?
+    private var markSelection: ReflowMarkSelection?
+    private var bookmarks: [Bookmark] = []
+    private var searchItem: UIBarButtonItem?
+    private var markItem: UIBarButtonItem?
+    private var bookmarkItem: UIBarButtonItem?
+    private var bookSearch: BookSearch?
+    private var lastQuery: String?
+
     init(book: Book) {
         self.book = book
         self.location = LibraryStore.shared.savedLocation(for: book) ?? ReflowLocation(chapter: 0, progression: 0)
@@ -194,6 +207,7 @@ final class ReflowReaderViewController: UIViewController {
             renderer.onChapterMeasured = { [weak self] chapter in
                 self?.chapterMeasured(chapter)
             }
+            installMarksProvider(on: renderer)
             self.renderer = renderer
             pendingJump = PendingJump(chapter: location.chapter, progression: location.progression, fragment: nil)
             bottomBar.slider.isEnabled = true
@@ -284,6 +298,10 @@ final class ReflowReaderViewController: UIViewController {
         for recognizer in controller.gestureRecognizers where recognizer is UITapGestureRecognizer {
             recognizer.delegate = self
         }
+        // Medan man markerar text står sidan still.
+        for recognizer in controller.gestureRecognizers {
+            recognizer.isEnabled = !markMode
+        }
     }
 
     // MARK: Sidor och uppslag
@@ -302,13 +320,15 @@ final class ReflowReaderViewController: UIViewController {
         case .single: side = .single
         case .spread: side = slot % 2 == 0 ? .left : .right
         }
-        return ReflowPageViewController(chapter: chapter,
-                                        slot: slot,
-                                        page: exists ? slot : nil,
-                                        side: side,
-                                        pageSize: layout.pageSize,
-                                        renderer: renderer,
-                                        paperColor: theme.paperColor)
+        let page = ReflowPageViewController(chapter: chapter,
+                                            slot: slot,
+                                            page: exists ? slot : nil,
+                                            side: side,
+                                            pageSize: layout.pageSize,
+                                            renderer: renderer,
+                                            paperColor: theme.paperColor)
+        page.isBookmarked = !bookmarksOnPage(page).isEmpty
+        return page
     }
 
     /// Bladen som visar ett visst blad: ett i stående, två i ett uppslag.
@@ -354,6 +374,7 @@ final class ReflowReaderViewController: UIViewController {
         spinner.stopAnimating()
         saveLocation()
         updatePageLabel()
+        updateBookmarkState()
         keepNeighbours()
         startSelfTestIfNeeded()
     }
@@ -424,6 +445,7 @@ final class ReflowReaderViewController: UIViewController {
         currentCount = renderer?.pageCount(of: first.chapter)
         saveLocation()
         updatePageLabel()
+        updateBookmarkState()
         keepNeighbours()
         turnsSinceLink += 1
         if turnsSinceLink >= 3 {
@@ -525,7 +547,14 @@ final class ReflowReaderViewController: UIViewController {
                                           menu: themeMenu())
         themeButton.accessibilityLabel = "Bakgrund"
 
-        navigationItem.rightBarButtonItems = [themeButton, text, contents]
+        let annotationItems = ReaderMenus.annotationItems(target: self,
+                                                          search: #selector(showSearch),
+                                                          mark: #selector(toggleMarkMode),
+                                                          bookmark: #selector(toggleBookmark))
+        searchItem = annotationItems[0]
+        markItem = annotationItems[1]
+        bookmarkItem = annotationItems[2]
+        navigationItem.rightBarButtonItems = [themeButton, text] + annotationItems + [contents]
         contentsItem = contents
         typographyItem = text
         themeItem = themeButton
@@ -571,6 +600,7 @@ final class ReflowReaderViewController: UIViewController {
         linkTap = link
         chromeTap = chrome
         wordPress = press
+        setUpMarkGestures()
     }
 
     @objc private func toggleChrome() {
@@ -685,7 +715,10 @@ final class ReflowReaderViewController: UIViewController {
             self?.jump(to: ReflowLocation(chapter: targets[row].chapter, progression: 0),
                        fragment: targets[row].fragment)
         }
-        let navigation = UINavigationController(rootViewController: contents)
+        let container = ReaderContentsContainerViewController(contents: contents,
+                                                             annotations: makeAnnotationsList(),
+                                                             initial: 0)
+        let navigation = UINavigationController(rootViewController: container)
         navigation.modalPresentationStyle = .popover
         navigation.popoverPresentationController?.barButtonItem = contentsItem
         present(navigation, animated: true)
@@ -735,7 +768,10 @@ final class ReflowReaderViewController: UIViewController {
                 self?.setTheme(option)
             }
         }
-        return UIMenu(title: "Bakgrund", children: actions)
+        let sound = ReaderMenus.soundSection { [weak self] in
+            self?.themeItem?.menu = self?.themeMenu()
+        }
+        return UIMenu(title: "Bakgrund", children: actions + [sound])
     }
 
     private func setTheme(_ newTheme: ReaderTheme) {
@@ -1131,6 +1167,7 @@ extension ReflowReaderViewController: UIPageViewControllerDataSource, UIPageView
     func pageViewController(_ pageViewController: UIPageViewController,
                             willTransitionTo pendingViewControllers: [UIViewController]) {
         Haptics.shared.prepareForPageTurn()
+        PageTurnSound.shared.play()
         renderer?.isTurning = true
         // Skydd om vikningen aldrig rapporterar att den är klar: då ska förritning och hopp inte stå still.
         turnToken += 1
@@ -1172,6 +1209,20 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
             if let back = backButton, touched.isDescendant(of: back) {
                 return false
             }
+            if let bar = markBar, touched.isDescendant(of: bar) {
+                return false
+            }
+        }
+        if gestureRecognizer === markDrag {
+            return markMode
+        }
+        let onMark = markHit(at: touch.location(in: view)) != nil
+        if gestureRecognizer === markTap {
+            return !markMode && onMark
+        }
+        if onMark, gestureRecognizer is UITapGestureRecognizer {
+            // Ett tryck på en markering öppnar markeringens ruta, inte menyn, länken eller nästa sida.
+            return false
         }
         if gestureRecognizer === wordPress {
             return true
@@ -1264,6 +1315,7 @@ extension ReflowReaderViewController {
         SelfTest.saveScreen(view, name: "02-fyra-sidor")
 
         await selfTestWord(name: "03-ord")
+        await selfTestAnnotations()
 
         let isFull = SelfTest.bookName?.lowercased().hasSuffix(".epub") == true
         if isFull, content.toc.count > 2 {
@@ -1412,5 +1464,541 @@ extension ReflowReaderViewController {
             }
         }
         SelfTest.log("FEL: hittade inget ord på sidan")
+    }
+}
+
+// MARK: Markeringar, anteckningar, bokmärken och sökning (fas 4)
+
+/// Det fingret drar över medan man markerar. Punkterna är i sidans koordinater i renderaren.
+fileprivate struct ReflowMarkSelection {
+    let page: ReflowPageViewController
+    let address: ReflowPage
+    let start: CGPoint
+    var last: CGPoint
+    let startScreen: CGPoint
+    var moved = false
+    /// Markeringen fingret började på, om det var ett tryck på en markering.
+    let tappedMark: String?
+    var range: ReflowTextRange?
+    /// En fråga till webbvyn pågår, och fingret har flyttat sig sedan den skickades.
+    var querying = false
+    var pending = false
+    /// Fingret har lyfts: markeringen sparas när svaret kommer.
+    var ended = false
+}
+
+extension ReflowReaderViewController {
+
+    fileprivate var bookKey: String {
+        AnnotationStore.key(for: book)
+    }
+
+    fileprivate func setUpMarkGestures() {
+        let drag = UILongPressGestureRecognizer(target: self, action: #selector(handleMarkDrag(_:)))
+        drag.minimumPressDuration = 0
+        drag.allowableMovement = .greatestFiniteMagnitude
+        drag.delegate = self
+        drag.isEnabled = false
+        view.addGestureRecognizer(drag)
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleMarkTap(_:)))
+        tap.delegate = self
+        view.addGestureRecognizer(tap)
+
+        markDrag = drag
+        markTap = tap
+        PageTurnSound.shared.prepare()
+        bookmarksChanged()
+    }
+
+    /// Renderaren lägger in kapitlets markeringar när kapitlet laddas.
+    fileprivate func installMarksProvider(on renderer: ReflowRenderer) {
+        let key = bookKey
+        renderer.marksProvider = { chapter in
+            ReflowMarks.arguments(for: AnnotationStore.shared.highlights(book: key, section: chapter))
+        }
+    }
+
+    /// Markeringarna i ett kapitel har ändrats: lägg in dem igen och rita om sidorna.
+    fileprivate func reloadMarks(inChapter chapter: Int) {
+        renderer?.reloadMarks(in: chapter) { [weak self] in
+            guard let self = self else { return }
+            for page in self.visiblePages where page.chapter == chapter {
+                page.reloadImage()
+            }
+            self.keepNeighbours()
+        }
+    }
+
+    fileprivate func markHit(at point: CGPoint) -> (page: ReflowPageViewController, id: String)? {
+        for page in visiblePages where !page.isBlank {
+            let local = page.view.convert(point, from: view)
+            if page.view.bounds.contains(local), let id = page.markID(at: local) {
+                return (page, id)
+            }
+        }
+        return nil
+    }
+
+    fileprivate func chapterName(_ chapter: Int) -> String {
+        content?.title(ofChapter: chapter) ?? "Avsnitt \(chapter + 1)"
+    }
+
+    // MARK: Markera med fingret
+
+    @objc fileprivate func toggleMarkMode() {
+        setMarkMode(!markMode)
+    }
+
+    /// Markeringsläget: sidan står still, och fingret markerar det det drar över.
+    fileprivate func setMarkMode(_ on: Bool) {
+        guard on != markMode else { return }
+        markMode = on
+        for recognizer in pageController?.gestureRecognizers ?? [] {
+            recognizer.isEnabled = !on
+        }
+        chromeTap?.isEnabled = !on
+        linkTap?.isEnabled = !on
+        wordPress?.isEnabled = !on
+        markDrag?.isEnabled = on
+        if on {
+            setChromeHidden(true, animated: true)
+            let bar = HighlightModeBar(color: ReaderSettings.highlightColor)
+            bar.onColor = { color in
+                ReaderSettings.highlightColor = color
+            }
+            bar.onTurn = { [weak self] forward in
+                PageTurnSound.shared.play()
+                self?.turn(forward: forward)
+            }
+            bar.onDone = { [weak self] in
+                self?.setMarkMode(false)
+            }
+            ReaderMenus.installModeBar(bar, in: view)
+            markBar = bar
+        } else {
+            markSelection?.page.clearPreview()
+            markSelection = nil
+            markBar?.removeFromSuperview()
+            markBar = nil
+        }
+    }
+
+    @objc fileprivate func handleMarkDrag(_ press: UILongPressGestureRecognizer) {
+        let point = press.location(in: view)
+        switch press.state {
+        case .began:
+            markSelection = nil
+            guard let page = visiblePages.first(where: { candidate in
+                !candidate.isBlank && candidate.hasImage
+                    && candidate.view.bounds.contains(candidate.view.convert(point, from: view))
+            }), let number = page.page else { return }
+            let local = page.view.convert(point, from: view)
+            let pagePoint = page.pagePoint(local)
+            let tapped = page.markID(at: local)
+            markSelection = ReflowMarkSelection(page: page,
+                                                address: ReflowPage(chapter: page.chapter, page: number),
+                                                start: pagePoint,
+                                                last: pagePoint,
+                                                startScreen: point,
+                                                tappedMark: tapped)
+            if tapped == nil {
+                requestMarkRange()
+            }
+
+        case .changed:
+            guard var selection = markSelection else { return }
+            if !selection.moved, hypot(point.x - selection.startScreen.x, point.y - selection.startScreen.y) > 6 {
+                selection.moved = true
+            }
+            var local = selection.page.view.convert(point, from: view)
+            let bounds = selection.page.view.bounds
+            local.x = min(max(local.x, 1), bounds.width - 1)
+            local.y = min(max(local.y, 1), bounds.height - 1)
+            selection.last = selection.page.pagePoint(local)
+            markSelection = selection
+            if selection.moved {
+                requestMarkRange()
+            }
+
+        case .ended:
+            guard var selection = markSelection else { return }
+            if !selection.moved, let id = selection.tappedMark {
+                markSelection = nil
+                presentMarkMenu(id: id, at: point)
+                return
+            }
+            selection.ended = true
+            markSelection = selection
+            requestMarkRange()
+
+        default:
+            markSelection?.page.clearPreview()
+            markSelection = nil
+        }
+    }
+
+    /// Frågar webbvyn vad som ligger mellan punkterna. En fråga i taget, den senaste punkten vinner.
+    fileprivate func requestMarkRange() {
+        guard var selection = markSelection, let renderer = renderer else { return }
+        if selection.querying {
+            selection.pending = true
+            markSelection = selection
+            return
+        }
+        selection.querying = true
+        selection.pending = false
+        markSelection = selection
+        let address = selection.address
+        let arguments: [String: Any] = [
+            "index": address.page,
+            "x1": Double(selection.start.x), "y1": Double(selection.start.y),
+            "x2": Double(selection.last.x), "y2": Double(selection.last.y),
+        ]
+        renderer.evaluate("return lasaMarks.select(index, x1, y1, x2, y2);", arguments: arguments,
+                          in: address.chapter) { [weak self] value in
+            self?.markRangeArrived(ReflowMarks.textRange(from: value), for: address)
+        }
+    }
+
+    fileprivate func markRangeArrived(_ range: ReflowTextRange?, for address: ReflowPage) {
+        guard var selection = markSelection, selection.address == address else { return }
+        selection.querying = false
+        if let range = range {
+            selection.range = range
+            selection.page.showPreview(range.rects, color: ReaderSettings.highlightColor, dark: theme.isDark)
+        }
+        markSelection = selection
+        if selection.pending {
+            requestMarkRange()
+            return
+        }
+        guard selection.ended else { return }
+        markSelection = nil
+        guard let range = selection.range else {
+            selection.page.clearPreview()
+            return
+        }
+        createHighlight(chapter: address.chapter, range: range)
+    }
+
+    fileprivate func createHighlight(chapter: Int, range: ReflowTextRange) {
+        guard !range.text.isEmpty else { return }
+        let highlight = AnnotationStore.shared.addHighlight(book: bookKey, section: chapter, start: range.start,
+                                                            length: range.length, text: range.text,
+                                                            color: ReaderSettings.highlightColor)
+        if highlight.start != range.start || highlight.length != range.length {
+            // Den nya markeringen slogs ihop med en gammal: hämta texten för hela intervallet.
+            renderer?.evaluate("return lasaMarks.text(start, length);",
+                               arguments: ["start": highlight.start, "length": highlight.length],
+                               in: chapter) { value in
+                guard let text = value as? String, !text.isEmpty,
+                      var current = AnnotationStore.shared.highlight(id: highlight.id) else { return }
+                current.text = text
+                AnnotationStore.shared.update(current)
+            }
+        }
+        reloadMarks(inChapter: chapter)
+        Haptics.shared.wordTapped()
+    }
+
+    // MARK: Rutan för en markering
+
+    @objc fileprivate func handleMarkTap(_ tap: UITapGestureRecognizer) {
+        let point = tap.location(in: view)
+        guard let hit = markHit(at: point) else { return }
+        presentMarkMenu(id: hit.id, at: point)
+    }
+
+    fileprivate func presentMarkMenu(id: String, at point: CGPoint) {
+        guard presentedViewController == nil, let highlight = AnnotationStore.shared.highlight(id: id) else { return }
+        let menu = HighlightMenuViewController(highlight: highlight)
+        menu.onColor = { [weak self] color in
+            guard var changed = AnnotationStore.shared.highlight(id: id) else { return }
+            changed.color = color
+            ReaderSettings.highlightColor = color
+            AnnotationStore.shared.update(changed)
+            self?.reloadMarks(inChapter: changed.section)
+        }
+        menu.onNote = { [weak self] in
+            self?.editNote(highlightID: id)
+        }
+        menu.onDelete = { [weak self] in
+            guard let current = AnnotationStore.shared.highlight(id: id) else { return }
+            AnnotationStore.shared.delete(current)
+            self?.reloadMarks(inChapter: current.section)
+        }
+        HighlightMenuViewController.present(menu, from: self, sourceView: view,
+                                            sourceRect: CGRect(x: point.x - 1, y: point.y - 10, width: 2, height: 20))
+    }
+
+    fileprivate func editNote(highlightID id: String) {
+        guard let highlight = AnnotationStore.shared.highlight(id: id) else { return }
+        NoteEditorViewController.present(quote: highlight.text, note: highlight.note, from: self) { [weak self] note in
+            guard var current = AnnotationStore.shared.highlight(id: id) else { return }
+            current.note = note
+            AnnotationStore.shared.update(current)
+            self?.reloadMarks(inChapter: current.section)
+        }
+    }
+
+    // MARK: Bokmärken
+
+    fileprivate func bookmarksChanged() {
+        bookmarks = AnnotationStore.shared.bookmarks(book: bookKey)
+        for page in visiblePages {
+            page.isBookmarked = !bookmarksOnPage(page).isEmpty
+        }
+        updateBookmarkState()
+    }
+
+    /// Bokmärkena som hamnar på en sida, med kapitlets nuvarande sidantal.
+    fileprivate func bookmarksOnPage(_ page: ReflowPageViewController) -> [Bookmark] {
+        guard let number = page.page, let count = renderer?.pageCount(of: page.chapter), count > 0 else { return [] }
+        let low = Double(number) / Double(count)
+        let high = Double(number + 1) / Double(count)
+        return bookmarks.filter { $0.section == page.chapter && $0.progression >= low && $0.progression < high }
+    }
+
+    fileprivate func updateBookmarkState() {
+        let marked = visiblePages.contains { !bookmarksOnPage($0).isEmpty }
+        for page in visiblePages {
+            page.isBookmarked = !bookmarksOnPage(page).isEmpty
+        }
+        bookmarkItem?.image = UIImage(systemName: marked ? "bookmark.fill" : "bookmark")
+        bookmarkItem?.accessibilityValue = marked ? "Sidan har ett bokmärke" : "Inget bokmärke"
+    }
+
+    /// Bokmärker sidan man läser, eller tar bort bokmärket om sidan redan har ett.
+    @objc fileprivate func toggleBookmark() {
+        let shown = visiblePages.filter { !$0.isBlank }
+        let existing = shown.flatMap { bookmarksOnPage($0) }
+        if existing.isEmpty {
+            guard let page = shown.first, let number = page.page else { return }
+            let count = max(renderer?.pageCount(of: page.chapter) ?? 1, 1)
+            let progression = (Double(number) + 0.5) / Double(count)
+            let fraction = content?.fraction(at: ReflowLocation(chapter: page.chapter, progression: progression)) ?? 0
+            let label = "\(chapterName(page.chapter)), \(Int((fraction * 100).rounded())) % av boken"
+            AnnotationStore.shared.addBookmark(book: bookKey, section: page.chapter, progression: progression, label: label)
+            Haptics.shared.wordTapped()
+        } else {
+            existing.forEach { AnnotationStore.shared.delete($0) }
+        }
+        bookmarksChanged()
+    }
+
+    // MARK: Listan med bokmärken och markeringar
+
+    fileprivate func makeAnnotationsList() -> AnnotationsViewController {
+        let list = AnnotationsViewController(kind: .highlights)
+        list.rows = { [weak self] kind in
+            self?.annotationRows(kind) ?? []
+        }
+        list.onSelect = { [weak self] kind, id in
+            self?.dismiss(animated: true)
+            self?.openAnnotation(kind, id: id)
+        }
+        list.onDelete = { [weak self] kind, id in
+            self?.deleteAnnotation(kind, id: id)
+        }
+        return list
+    }
+
+    fileprivate func annotationRows(_ kind: AnnotationsViewController.Kind) -> [AnnotationsViewController.Row] {
+        switch kind {
+        case .bookmarks:
+            return AnnotationStore.shared.bookmarks(book: bookKey).map { bookmark in
+                AnnotationsViewController.Row(id: bookmark.id, title: bookmark.label,
+                                              detail: AnnotationFormat.date(bookmark.created), note: nil, color: nil)
+            }
+        case .highlights:
+            return AnnotationStore.shared.highlights(book: bookKey).map { highlight in
+                AnnotationsViewController.Row(id: highlight.id, title: highlight.text,
+                                              detail: chapterName(highlight.section),
+                                              note: highlight.hasNote ? highlight.note : nil,
+                                              color: highlight.color)
+            }
+        }
+    }
+
+    fileprivate func openAnnotation(_ kind: AnnotationsViewController.Kind, id: String) {
+        switch kind {
+        case .bookmarks:
+            guard let bookmark = AnnotationStore.shared.bookmarks(book: bookKey).first(where: { $0.id == id }) else { return }
+            hideBackButton()
+            jump(to: ReflowLocation(chapter: bookmark.section, progression: bookmark.progression))
+        case .highlights:
+            guard let highlight = AnnotationStore.shared.highlight(id: id) else { return }
+            reveal(chapter: highlight.section, body: "return lasaMarks.reveal(start, length);",
+                   arguments: ["start": highlight.start, "length": highlight.length])
+        }
+    }
+
+    fileprivate func deleteAnnotation(_ kind: AnnotationsViewController.Kind, id: String) {
+        switch kind {
+        case .bookmarks:
+            if let bookmark = AnnotationStore.shared.bookmarks(book: bookKey).first(where: { $0.id == id }) {
+                AnnotationStore.shared.delete(bookmark)
+            }
+            bookmarksChanged()
+        case .highlights:
+            if let highlight = AnnotationStore.shared.highlight(id: id) {
+                AnnotationStore.shared.delete(highlight)
+                reloadMarks(inChapter: highlight.section)
+            }
+        }
+    }
+
+    /// Visar sidan där ett textintervall står och markerar det en kort stund. Webbvyn letar upp sidan.
+    fileprivate func reveal(chapter: Int, body: String, arguments: [String: Any]) {
+        guard let renderer = renderer else { return }
+        hideBackButton()
+        spinner.startAnimating()
+        renderer.setWindow(center: chapter)
+        renderer.evaluate(body, arguments: arguments, in: chapter) { [weak self] value in
+            guard let self = self else { return }
+            self.spinner.stopAnimating()
+            guard let range = ReflowMarks.textRange(from: value) else {
+                self.jump(to: ReflowLocation(chapter: chapter, progression: 0))
+                return
+            }
+            self.pendingJump = nil
+            self.show(chapter: chapter, page: range.page)
+            let rects = range.rects
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                self?.visiblePages.first { $0.chapter == chapter && $0.page == range.page }?.flash(rects)
+            }
+        }
+    }
+
+    // MARK: Sök
+
+    @objc fileprivate func showSearch() {
+        guard presentedViewController == nil, let content = content else { return }
+        let search = bookSearch ?? BookSearch(source: .chapters(content.chapters.map { $0.url }))
+        bookSearch = search
+        let controller = BookSearchViewController(search: search, query: lastQuery) { [weak self] section in
+            self?.chapterName(section) ?? "Avsnitt \(section + 1)"
+        }
+        controller.onQueryChange = { [weak self] query in
+            self?.lastQuery = query
+        }
+        controller.onSelect = { [weak self] hit, query in
+            self?.lastQuery = query
+            self?.dismiss(animated: true)
+            self?.reveal(chapter: hit.section, body: "return lasaMarks.find(query, occurrence, context);",
+                         arguments: ["query": query, "occurrence": hit.occurrence, "context": hit.snippet])
+        }
+        let navigation = UINavigationController(rootViewController: controller)
+        navigation.modalPresentationStyle = .popover
+        navigation.popoverPresentationController?.barButtonItem = searchItem
+        present(navigation, animated: true)
+    }
+
+    // MARK: Självtestet för fas 4
+
+    fileprivate func selfTestAnnotations() async {
+        let saved = AnnotationStore.shared.totalCounts()
+        SelfTest.log("Sparat från tidigare starter: \(saved.highlights) markeringar, \(saved.notes) anteckningar, "
+                     + "\(saved.bookmarks) bokmärken")
+        guard let renderer = renderer,
+              let page = visiblePages.first(where: { !$0.isBlank && $0.hasImage }),
+              let number = page.page else {
+            SelfTest.log("FEL: ingen sida att markera på")
+            return
+        }
+        let size = page.view.bounds.size
+        let a = page.pagePoint(CGPoint(x: size.width * 0.25, y: size.height * 0.30))
+        let b = page.pagePoint(CGPoint(x: size.width * 0.70, y: size.height * 0.36))
+        let arguments: [String: Any] = ["index": number, "x1": Double(a.x), "y1": Double(a.y),
+                                        "x2": Double(b.x), "y2": Double(b.y)]
+        let range: ReflowTextRange? = await withCheckedContinuation { continuation in
+            renderer.evaluate("return lasaMarks.select(index, x1, y1, x2, y2);", arguments: arguments,
+                              in: page.chapter) { value in
+                continuation.resume(returning: ReflowMarks.textRange(from: value))
+            }
+        }
+        guard let range = range else {
+            SelfTest.log("FEL: markeringen gav inget textintervall")
+            return
+        }
+        SelfTest.log("Markering: \"\(range.text)\" (\(range.length) tecken, \(range.rects.count) rutor)")
+        page.showPreview(range.rects, color: ReaderSettings.highlightColor, dark: theme.isDark)
+        createHighlight(chapter: page.chapter, range: range)
+        await pause(1.5)
+        _ = await waitUntilShown()
+        let shown = visiblePages.first { $0.chapter == page.chapter && $0.page == number }
+        SelfTest.log("Sidbilden har \(shown?.marks.count ?? 0) markeringsrutor")
+        SelfTest.saveScreen(view, name: "03b-markering")
+
+        if let highlight = AnnotationStore.shared.highlights(book: bookKey, section: page.chapter).last {
+            var noted = highlight
+            noted.note = "Testanteckning från självtestet."
+            AnnotationStore.shared.update(noted)
+            reloadMarks(inChapter: page.chapter)
+            await pause(1.2)
+            _ = await waitUntilShown()
+            if let current = visiblePages.first(where: { $0.chapter == page.chapter && $0.page == number }),
+               let rect = current.marks.first?.rect {
+                let shownRect = current.viewRect(rect)
+                let center = view.convert(CGPoint(x: shownRect.midX, y: shownRect.midY), from: current.view)
+                SelfTest.log("Tryck på markeringen hittar: \(markHit(at: center) != nil ? "en markering" : "FEL, ingen")")
+                presentMarkMenu(id: noted.id, at: center)
+                await pause(0.8)
+                SelfTest.saveScreen(view.window ?? view, name: "03c-markeringsmeny")
+                dismiss(animated: false)
+                await pause(0.4)
+            }
+        }
+
+        toggleBookmark()
+        await pause(0.3)
+        SelfTest.log("Bokmärke: \(bookmarkItem?.accessibilityValue ?? "inget"), \(bookmarks.count) i boken")
+        setMarkMode(true)
+        await pause(0.5)
+        SelfTest.saveScreen(view, name: "03d-markeringslage")
+        setMarkMode(false)
+
+        showSearch()
+        if let search = await SelfTestHelpers.presented(BookSearchViewController.self, by: self) {
+            search.searchNow("kunskap")
+            for _ in 0..<80 where search.searching {
+                await pause(0.1)
+            }
+            SelfTest.log("Sökning efter kunskap: \(search.hitCount) träffar")
+            SelfTest.saveScreen(view.window ?? view, name: "03e-sok")
+            if let hit = search.firstHit {
+                search.onSelect?(hit, "kunskap")
+                await pause(1.5)
+                _ = await waitUntilShown()
+                logState("Första sökträffen (\(chapterName(hit.section)))")
+                SelfTest.saveScreen(view, name: "03f-traff")
+            }
+        } else {
+            SelfTest.log("FEL: sökrutan öppnades inte")
+        }
+        if presentedViewController != nil {
+            dismiss(animated: false)
+            await pause(0.4)
+        }
+
+        showContents()
+        if let container = await SelfTestHelpers.presented(ReaderContentsContainerViewController.self, by: self) {
+            container.showTab(2)
+            await pause(0.6)
+            SelfTest.saveScreen(view.window ?? view, name: "03g-markeringar")
+            container.showTab(1)
+            await pause(0.4)
+            SelfTest.saveScreen(view.window ?? view, name: "03h-bokmarken")
+        } else {
+            SelfTest.log("FEL: innehållet öppnades inte")
+        }
+        if presentedViewController != nil {
+            dismiss(animated: false)
+            await pause(0.4)
+        }
+        let after = AnnotationStore.shared.totalCounts()
+        SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
     }
 }

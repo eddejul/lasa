@@ -1417,10 +1417,10 @@ extension PDFCurlReaderViewController {
 
         showContents()
         if let container = await waitForPresented(ReaderContentsContainerViewController.self) {
-            container.select(2)
+            container.showTab(2)
             await pause(0.6)
             SelfTest.saveScreen(view.window ?? view, name: "07-markeringar")
-            container.select(1)
+            container.showTab(1)
             await pause(0.4)
             SelfTest.saveScreen(view.window ?? view, name: "08-bokmarken")
         } else {

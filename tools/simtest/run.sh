@@ -37,7 +37,7 @@ mkdir -p "$DATA/Documents/Böcker"
 cp "$BOOKS"/* "$DATA/Documents/Böcker/"
 
 status=0
-for BOOK in test.epub test.md test.txt test.rtf; do
+for BOOK in test.epub test.md test.txt test.rtf test.pdf; do
   STEM="${BOOK//./-}"
   echo "== $BOOK"
   rm -f "$DATA/Documents/selftest/$STEM.klar"

@@ -81,6 +81,20 @@ enum ReflowMarks {
                                rects: rects)
     }
 
+    /// Båda skripten i en körning: läsarens (`ReflowStyle.script`) och markeringarnas. Argument: `css`.
+    static var installScript: String {
+        "(function () {\n" + ReflowStyle.script + "\n})();\n" + script
+    }
+
+    /// Delar kapitlet i sidor och lägger in markeringarna. Argument som `lasa.setup` plus `marks`.
+    static let setupBody = """
+        var result = await lasa.setup(css, scale, w, h);
+        if (window.lasaMarks) {
+          lasaMarks.apply(marks || []);
+        }
+        return result;
+        """
+
     /// Läggs in efter `ReflowStyle.script`, en gång per kapitel. Argument: `css`.
     static let script = #"""
     if (window.lasaMarks) {
@@ -553,7 +567,13 @@ enum ReflowMarks {
         }
         var start = folded.map[chosen];
         var end = folded.map[chosen + wanted.length - 1] + 1;
-        var range = rangeFor(start, end);
+        return reveal(start, end - start);
+      }
+
+      // Sidan i kapitlet där ett intervall börjar, och intervallets rutor på den sidan.
+      function reveal(start, length) {
+        ensure();
+        var range = rangeFor(start, start + Math.max(length, 1));
         if (!range) {
           return null;
         }
@@ -562,7 +582,7 @@ enum ReflowMarks {
         var r = first.length ? first[0] : range.getBoundingClientRect();
         var page = Math.max(0, Math.floor((r.left + 1) / lasa.pageWidth()));
         lasa.ensurePage(page);
-        return { start: start, length: end - start, text: clean(range.toString()), page: page, rects: rectsOf(range) };
+        return { start: start, length: length, text: clean(range.toString()), page: page, rects: rectsOf(range) };
       }
 
       // Sidbilden får också markeringarnas rutor, så att ett tryck på en markering kan hittas utan webbvyn.
@@ -577,7 +597,8 @@ enum ReflowMarks {
         return result;
       };
 
-      return { installStyle: installStyle, apply: apply, select: select, text: text, find: find, visible: visible };
+      return { installStyle: installStyle, apply: apply, select: select, text: text, find: find, reveal: reveal,
+               visible: visible };
     })();
     lasaMarks.installStyle(css);
     return true;

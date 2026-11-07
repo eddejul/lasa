@@ -383,7 +383,15 @@ enum ReflowStyle {
         return page;
       }
 
-      return { setup: setup, restyle: restyle, showPage: showPage, wordAt: wordAt, pageOf: pageOf, measure: measure };
+      function ensurePage(index) {
+        var target = index * pageWidth();
+        if (offset !== target) {
+          setOffset(target);
+        }
+      }
+
+      return { setup: setup, restyle: restyle, showPage: showPage, wordAt: wordAt, pageOf: pageOf, measure: measure,
+               ensurePage: ensurePage, setOffset: setOffset, pageWidth: pageWidth };
     })();
     return true;
     """#

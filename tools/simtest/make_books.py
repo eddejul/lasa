@@ -1,5 +1,6 @@
 """Skapar testböcker för simulatortestet: en EPUB 3 med innehållsförteckning, fotnot, bild och ett
-engelskt kapitel, samt samma sorts text som txt (Windows-1252, radbruten), Markdown och RTF.
+engelskt kapitel, samt samma sorts text som txt (Windows-1252, radbruten), Markdown, RTF och en PDF
+med textlager (fas 4: markeringar, bokmärken och sökning).
 
 All text är skriven för testet och fri att använda.
 
@@ -272,6 +273,70 @@ def make_rtf(path, rng):
     path.write_text("\n".join(body), encoding="ascii")
 
 
+def pdf_string(text):
+    """En textsträng i PDF:ens innehåll, i Windows-1252 som typsnittets kodning (WinAnsiEncoding)."""
+    out = []
+    for byte in text.encode("cp1252"):
+        if byte in b"\\()":
+            out.append("\\" + chr(byte))
+        elif 32 <= byte < 127:
+            out.append(chr(byte))
+        else:
+            out.append(f"\\{byte:03o}")
+    return "(" + "".join(out) + ")"
+
+
+def make_pdf(path, rng):
+    """En liten PDF med textlager: åtta A4-sidor med rubrik och stycken, svenska och engelska.
+    Sida 2 har ordet kunskap avstavat över en radbrytning, för sökningen."""
+    pages = []
+    for number in range(1, 9):
+        pool = ENGLISH if number == 6 else SWEDISH
+        lines = []
+        for paragraph in paragraphs(pool, 7, rng, 3, 5):
+            lines += wrap(paragraph, 74) + [""]
+        if number == 2:
+            lines = ["Den som söker kun-", "skap måste läsa noga och pröva det hon läser.", ""] + lines
+        pages.append((f"Kapitel {number}", lines[:46]))
+
+    objects = []
+
+    def add(body):
+        objects.append(body)
+        return len(objects)
+
+    catalog = add(None)
+    page_tree = add(None)
+    regular = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    bold = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    kids = []
+    for title, lines in pages:
+        content = [f"BT /F2 18 Tf 60 780 Td {pdf_string(title)} Tj ET", "BT /F1 12 Tf 15 TL 60 748 Td"]
+        for line in lines:
+            content.append(f"{pdf_string(line)} Tj T*")
+        content.append("ET")
+        stream = "\n".join(content).encode("latin-1")
+        contents = add(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+        kids.append(add(("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 595 842] "
+                         "/Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %d 0 R >>"
+                         % (page_tree, regular, bold, contents)).encode("ascii")))
+    objects[catalog - 1] = ("<< /Type /Catalog /Pages %d 0 R >>" % page_tree).encode("ascii")
+    objects[page_tree - 1] = ("<< /Type /Pages /Kids [%s] /Count %d >>"
+                              % (" ".join(f"{kid} 0 R" for kid in kids), len(kids))).encode("ascii")
+
+    data = bytearray(b"%PDF-1.4\n%\xe5\xe4\xf6\n")
+    offsets = []
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(data))
+        data += b"%d 0 obj\n" % index + body + b"\nendobj\n"
+    xref = len(data)
+    data += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        data += b"%010d 00000 n \n" % offset
+    data += b"trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, catalog, xref)
+    path.write_bytes(bytes(data))
+
+
 def main():
     folder = Path(sys.argv[1] if len(sys.argv) > 1 else "build/testbooks")
     folder.mkdir(parents=True, exist_ok=True)
@@ -280,6 +345,7 @@ def main():
     make_txt(folder / "test.txt", rng)
     make_md(folder / "test.md", rng)
     make_rtf(folder / "test.rtf", rng)
+    make_pdf(folder / "test.pdf", rng)
     for item in sorted(folder.iterdir()):
         print(item.name, item.stat().st_size)
 
