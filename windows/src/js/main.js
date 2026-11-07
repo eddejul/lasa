@@ -124,6 +124,11 @@ async function start() {
   applyTheme(settings.theme);
   setAboutHandler(() => openModal('Om ordboken', renderAbout));
   setUpDrop();
+  // Webbvyns egen högerklicksmeny (Uppdatera, Spara som och liknande) passar inte i appen.
+  // Högerklick på ett ord i en bok slår upp ordet, det sköter läsarna själva.
+  document.addEventListener('contextmenu', (event) => {
+    if (!event.target.closest?.('input, textarea')) event.preventDefault();
+  });
   const { error } = await checkDictionary();
   if (error) toast(error, 10);
   await showTab('library');

@@ -132,7 +132,10 @@ export class ReflowReader {
   onLoad({ doc }) {
     this.applyFontSize(doc);
     doc.addEventListener('dblclick', (event) => this.handleWord(doc, event));
-    doc.addEventListener('contextmenu', (event) => this.handleWord(doc, event));
+    doc.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      this.handleWord(doc, event);
+    });
     doc.addEventListener('keydown', (event) => this.onKey?.(event));
     doc.addEventListener('wheel', (event) => this.onWheel?.(event), { passive: false });
     doc.addEventListener('mousedown', (event) => this.onPointerDown?.(event));
