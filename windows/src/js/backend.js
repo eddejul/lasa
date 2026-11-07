@@ -1,0 +1,67 @@
+// Anropen till Rust-delen. I appen går de genom Tauri, i en vanlig webbläsare (provkörning med
+// windows/dev/server.py) genom HTTP till /api/<kommando> med samma namn och argument.
+
+const tauri = globalThis.__TAURI__?.core ?? null;
+
+export const inTauri = Boolean(tauri);
+
+async function http(command, args) {
+  const response = await fetch(`/api/${command}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args ?? {}),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function invoke(command, args = {}) {
+  return tauri ? tauri.invoke(command, args) : http(command, args);
+}
+
+/** Ordboken: rader som listor. */
+export const dictionaryDb = {
+  all: (sql, params = []) => invoke('dict_query', { sql, params }),
+};
+
+/** En av användarens databaser: 'ord' (sparade ord) eller 'bibliotek'. */
+export function userDb(db) {
+  return {
+    all: (sql, params = []) => invoke('user_query', { db, sql, params }),
+    run: (sql, params = []) => invoke('user_execute', { db, sql, params }),
+    batch: (sql) => invoke('user_batch', { db, sql }),
+  };
+}
+
+export async function storeBookFile(id, ext, bytes) {
+  if (tauri) {
+    return tauri.invoke('library_store', bytes, { headers: { 'x-id': id, 'x-ext': ext } });
+  }
+  const response = await fetch('/api/library_store', {
+    method: 'POST', headers: { 'x-id': id, 'x-ext': ext }, body: bytes,
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return null;
+}
+
+export async function readBookFile(id, ext) {
+  if (tauri) {
+    const data = await tauri.invoke('library_read', { id, ext });
+    return data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data);
+  }
+  const response = await fetch('/api/library_read', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ext }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+export async function deleteBookFile(id, ext) {
+  return invoke('library_delete', { id, ext });
+}
+
+/** Öppnar en adress i den vanliga webbläsaren (svenska.se, källorna under Om ordboken). */
+export async function openUrl(url) {
+  if (tauri) return tauri.invoke('plugin:opener|open_url', { url });
+  return http('open_url', { url });
+}

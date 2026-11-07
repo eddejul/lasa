@@ -329,7 +329,7 @@ export class Dictionary {
   /** Slår upp ett ord ur texten. Finns det bara i ett språk blir det det språket, finns det i båda
    *  avgör meningen (guess), och oavgjort blir svenska. Samma flöde som WordDictionary.lookup på iPaden.
    *  Svaret säger också om ordet finns i det andra språket, så att rutan kan erbjuda ett byte. */
-  async lookup(word, { sentence = '', language = null, hidden = new Set(), guess = null } = {}) {
+  async lookup(word, { sentence = '', language = null, hidden = new Set(), guess = null, preferredPos = null } = {}) {
     const key = normalize(word);
     if (!key) return null;
     const [inSwedish, inEnglish] = await this.has(word);
@@ -339,7 +339,7 @@ export class Dictionary {
       else if (inEnglish) chosen = 'en';
       else chosen = 'sv';
     }
-    const result = chosen === 'en' ? await this.lookupEn(word, hidden) : await this.lookupSv(word, hidden);
+    const result = chosen === 'en' ? await this.lookupEn(word, hidden, preferredPos) : await this.lookupSv(word, hidden);
     if (!result) return null;
     result.otherLanguageAvailable = chosen === 'en' ? inSwedish : inEnglish;
     return result;

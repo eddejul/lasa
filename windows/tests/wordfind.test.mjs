@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { wordInPageText, sentenceAround, reflowCandidates } from '../src/js/wordfind.js';
-import { guessLanguage } from '../src/js/language.js';
+import { englishPos, guessLanguage } from '../src/js/language.js';
 import { normalize } from '../src/js/lookup.js';
 
 const page = 'Första raden. Detta är kun-\nskap om saker, som e-post\noch kurs- och studieplan. Sista\n\nNytt stycke.';
@@ -47,6 +47,12 @@ test('språket efter meningen', () => {
   assert.equal(guessLanguage('She went to the library to find a book about the town.'), 'en');
   assert.equal(guessLanguage('Hon gick till biblioteket för att hitta en bok.'), 'sv');
   assert.equal(guessLanguage('glass'), 'sv');
+});
+
+test('engelsk ordklass efter ordet före', () => {
+  assert.equal(englishPos('We attribute the change to the weather.', 3), 'v');
+  assert.equal(englishPos('The attribute is missing.', 4), 'n');
+  assert.equal(englishPos('Bridges are old.', 0), null);
 });
 
 test('normalisering som i lookup.py', () => {

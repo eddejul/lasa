@@ -22,6 +22,24 @@ const ENGLISH = new Set((
 
 const WORD = /[\p{L}']+/gu;
 
+// Ordet före säger ofta vilken ordklass ett engelskt ord har: "the attribute" är ett substantiv,
+// "to attribute" ett verb. iPaden använder Apples ordklasstaggare (NLTagger), här räcker en kort lista.
+const BEFORE_NOUN = new Set((
+  'the a an this that these those my your his her its our their some any no every each another whose'
+).split(' '));
+const BEFORE_VERB = new Set((
+  'to will would can could should must may might shall do does did not never i you we they he she it who'
+).split(' '));
+
+/** Ordklassen (n eller v) som ordet troligen har i meningen, eller null. start: var ordet börjar. */
+export function englishPos(sentence, start) {
+  const before = String(sentence).slice(0, Math.max(0, start)).toLowerCase().match(/([\p{L}']+)[^\p{L}']*$/u);
+  if (!before) return null;
+  if (BEFORE_NOUN.has(before[1])) return 'n';
+  if (BEFORE_VERB.has(before[1])) return 'v';
+  return null;
+}
+
 export function guessLanguage(sentence) {
   let swedish = 0;
   let english = 0;
