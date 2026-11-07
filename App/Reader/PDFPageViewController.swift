@@ -1,3 +1,4 @@
+import PDFKit
 import UIKit
 
 /// Ett blad i pappersvikningen. Visar en färdigritad bild av en PDF-sida, eller ett tomt blad.
@@ -25,6 +26,35 @@ final class PDFPageViewController: UIViewController {
     private var paperColor: UIColor
     private var contentInsets: UIEdgeInsets
 
+    /// En markering på sidan (fas 4). Rutorna är i sidans koordinater.
+    struct Mark {
+        let id: String
+        let rects: [CGRect]
+        let color: HighlightColor
+        let hasNote: Bool
+    }
+
+    /// Sidan i läsarens dokument, för att räkna om markeringarnas rutor. Används bara på huvudtråden.
+    var pdfPage: PDFPage?
+    var isBookmarked = false {
+        didSet {
+            guard isBookmarked != oldValue else { return }
+            overlaysDirty = true
+            if isViewLoaded {
+                view.setNeedsLayout()
+            }
+        }
+    }
+    private var marks: [Mark] = []
+    private var darkMarks = false
+    private let marksView = UIView()
+    private let ribbon = UIImageView(image: UIImage(systemName: "bookmark.fill"))
+    private var previewViews: [UIView] = []
+    private var flashRects: [CGRect] = []
+    private var flashViews: [UIView] = []
+    private var overlaysDirty = true
+    private var overlayFrame: CGRect = .null
+
     init(pageIndex: Int,
          side: Side,
          renderer: PDFPageRenderer,
@@ -51,6 +81,14 @@ final class PDFPageViewController: UIViewController {
         view.backgroundColor = paperColor
         imageView.contentMode = .scaleToFill
         view.addSubview(imageView)
+        marksView.isUserInteractionEnabled = false
+        view.addSubview(marksView)
+        ribbon.tintColor = .systemRed
+        ribbon.contentMode = .scaleAspectFit
+        ribbon.isHidden = true
+        ribbon.isAccessibilityElement = true
+        ribbon.accessibilityLabel = "Bokmärke"
+        view.addSubview(ribbon)
 
         if side != .single {
             // Svag skugga mot ryggen, som i en riktig bok.
@@ -65,6 +103,7 @@ final class PDFPageViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         layoutImage()
+        layoutOverlays()
     }
 
     /// Var sidbilden ligger i bladet. Nil när bilden inte är ritad än, då går det inte att slå upp ord.
@@ -89,6 +128,115 @@ final class PDFPageViewController: UIViewController {
     func clearHighlight() {
         highlightViews.forEach { $0.removeFromSuperview() }
         highlightViews.removeAll()
+    }
+
+    // MARK: Markeringar och bokmärke (fas 4)
+
+    func setMarks(_ marks: [Mark], dark: Bool) {
+        self.marks = marks
+        darkMarks = dark
+        overlaysDirty = true
+        if isViewLoaded {
+            view.setNeedsLayout()
+        }
+    }
+
+    /// En ruta i sidans koordinater omräknad till bladet, när sidbilden finns.
+    func viewRect(forPageRect rect: CGRect) -> CGRect? {
+        guard let frame = imageFrame, let page = pdfPage else { return nil }
+        return PDFPageGeometry.viewRect(for: rect, imageFrame: frame, page: page)
+    }
+
+    /// Markeringen under en punkt i bladet.
+    func markID(at point: CGPoint) -> String? {
+        for mark in marks.reversed() {
+            for rect in mark.rects {
+                if let shown = viewRect(forPageRect: rect), shown.insetBy(dx: -4, dy: -4).contains(point) {
+                    return mark.id
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Visar vad som markeras medan fingret drar. Rutorna är i sidans koordinater.
+    func showPreview(_ rects: [CGRect], color: HighlightColor) {
+        clearPreview()
+        for rect in rects {
+            guard let shown = viewRect(forPageRect: rect) else { continue }
+            let preview = UIView(frame: shown.insetBy(dx: -1.5, dy: -1))
+            preview.backgroundColor = color.overlay(dark: darkMarks).withAlphaComponent(0.5)
+            preview.layer.cornerRadius = 2
+            preview.isUserInteractionEnabled = false
+            view.addSubview(preview)
+            previewViews.append(preview)
+        }
+    }
+
+    func clearPreview() {
+        previewViews.forEach { $0.removeFromSuperview() }
+        previewViews.removeAll()
+    }
+
+    /// Visar en sökträff eller en markering man hoppat till en kort stund. Rutorna är i sidans koordinater.
+    func flash(_ rects: [CGRect]) {
+        flashRects = rects
+        overlaysDirty = true
+        if isViewLoaded {
+            view.setNeedsLayout()
+        }
+    }
+
+    private func layoutOverlays() {
+        let frame = imageFrame ?? .null
+        guard overlaysDirty || frame != overlayFrame else { return }
+        overlaysDirty = false
+        overlayFrame = frame
+        marksView.frame = view.bounds
+        marksView.subviews.forEach { $0.removeFromSuperview() }
+        guard !frame.isNull, let page = pdfPage else {
+            ribbon.isHidden = true
+            return
+        }
+        for mark in marks {
+            for rect in mark.rects {
+                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: frame, page: page)
+                let fill = UIView(frame: shown.insetBy(dx: -1.5, dy: -1))
+                fill.backgroundColor = mark.color.overlay(dark: darkMarks)
+                fill.layer.cornerRadius = 2
+                marksView.addSubview(fill)
+                if mark.hasNote {
+                    let line = UIView(frame: CGRect(x: shown.minX, y: shown.maxY + 0.5, width: shown.width, height: 2))
+                    line.backgroundColor = mark.color.solid
+                    marksView.addSubview(line)
+                }
+            }
+        }
+        ribbon.isHidden = !isBookmarked
+        ribbon.frame = CGRect(x: frame.maxX - 34, y: frame.minY - 3, width: 20, height: 30)
+
+        if !flashRects.isEmpty {
+            let rects = flashRects
+            flashRects = []
+            flashViews.forEach { $0.removeFromSuperview() }
+            flashViews = rects.map { rect in
+                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: frame, page: page).insetBy(dx: -3, dy: -2)
+                let box = UIView(frame: shown)
+                box.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.25)
+                box.layer.borderColor = UIColor.systemOrange.cgColor
+                box.layer.borderWidth = 2
+                box.layer.cornerRadius = 4
+                box.isUserInteractionEnabled = false
+                view.addSubview(box)
+                return box
+            }
+            let boxes = flashViews
+            UIView.animate(withDuration: 0.6, delay: 2.2, options: [.allowUserInteraction]) {
+                boxes.forEach { $0.alpha = 0 }
+            } completion: { _ in
+                boxes.forEach { $0.removeFromSuperview() }
+            }
+        }
     }
 
     /// Nytt tema eller ny storlek. Den gamla bilden visas tills den nya är ritad.

@@ -43,6 +43,22 @@ final class PDFCurlReaderViewController: UIViewController {
     private var seenTopInset: CGFloat = 0
     private var contentInsets: UIEdgeInsets = .zero
 
+    // Fas 4: markeringar, anteckningar, bokmärken och sökning. Koden ligger sist i filen.
+    private var markMode = false
+    private var markDrag: UILongPressGestureRecognizer?
+    private var markTap: UITapGestureRecognizer?
+    private var markBar: HighlightModeBar?
+    private var markSelection: PDFMarkSelection?
+    private var marksCache: [Int: [PDFPageViewController.Mark]] = [:]
+    private var bookmarks: [Bookmark] = []
+    private var bookmarkedPages: Set<Int> = []
+    private var searchItem: UIBarButtonItem?
+    private var markItem: UIBarButtonItem?
+    private var bookmarkItem: UIBarButtonItem?
+    private lazy var bookSearch = BookSearch(source: .pdf(book.url))
+    private var lastQuery: String?
+    private var selfTestStarted = false
+
     init?(book: Book) {
         guard let document = PDFDocument(url: book.url),
               !document.isLocked,
@@ -83,6 +99,12 @@ final class PDFCurlReaderViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         applyThemeToChrome()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        PageTurnSound.shared.prepare()
+        startSelfTestIfNeeded()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -190,6 +212,10 @@ final class PDFCurlReaderViewController: UIViewController {
         for recognizer in controller.gestureRecognizers where recognizer is UITapGestureRecognizer {
             recognizer.delegate = self
         }
+        // Medan man markerar text står sidan still.
+        for recognizer in controller.gestureRecognizers {
+            recognizer.isEnabled = !markMode
+        }
     }
 
     // MARK: Sidor och uppslag
@@ -227,11 +253,13 @@ final class PDFCurlReaderViewController: UIViewController {
         case .single: side = .single
         case .spread: side = index % 2 != 0 ? .left : .right
         }
-        return PDFPageViewController(pageIndex: index,
-                                     side: side,
-                                     renderer: renderer,
-                                     paperColor: theme.paperColor,
-                                     contentInsets: contentInsets)
+        let page = PDFPageViewController(pageIndex: index,
+                                         side: side,
+                                         renderer: renderer,
+                                         paperColor: theme.paperColor,
+                                         contentInsets: contentInsets)
+        configureAnnotations(page)
+        return page
     }
 
     private var visiblePages: [PDFPageViewController] {
@@ -271,6 +299,7 @@ final class PDFCurlReaderViewController: UIViewController {
             controller.setViewControllers(pages(showing: index), direction: .forward, animated: false)
         }
         updatePageLabel()
+        updateBookmarkState()
         keepNeighbours()
     }
 
@@ -302,7 +331,14 @@ final class PDFCurlReaderViewController: UIViewController {
                                           menu: themeMenu())
         themeButton.accessibilityLabel = "Bakgrund"
 
-        navigationItem.rightBarButtonItems = [themeButton, zoom, contents]
+        let annotationItems = ReaderMenus.annotationItems(target: self,
+                                                          search: #selector(showSearch),
+                                                          mark: #selector(toggleMarkMode),
+                                                          bookmark: #selector(toggleBookmark))
+        searchItem = annotationItems[0]
+        markItem = annotationItems[1]
+        bookmarkItem = annotationItems[2]
+        navigationItem.rightBarButtonItems = [themeButton, zoom] + annotationItems + [contents]
         contentsItem = contents
         themeItem = themeButton
     }
@@ -347,6 +383,7 @@ final class PDFCurlReaderViewController: UIViewController {
         zoomTap = zoom
         chromeTap = chrome
         wordPress = press
+        setUpMarkGestures()
     }
 
     @objc private func toggleChrome() {
@@ -426,7 +463,10 @@ final class PDFCurlReaderViewController: UIViewController {
                 self?.showGoToPage()
             }
         }
-        let navigation = UINavigationController(rootViewController: outline)
+        let container = ReaderContentsContainerViewController(contents: outline,
+                                                             annotations: makeAnnotationsList(),
+                                                             initial: 0)
+        let navigation = UINavigationController(rootViewController: container)
         navigation.modalPresentationStyle = .popover
         navigation.popoverPresentationController?.barButtonItem = contentsItem
         present(navigation, animated: true)
@@ -734,7 +774,10 @@ final class PDFCurlReaderViewController: UIViewController {
                 self?.setTheme(option)
             }
         }
-        return UIMenu(title: "Bakgrund", children: actions)
+        let sound = ReaderMenus.soundSection { [weak self] in
+            self?.themeItem?.menu = self?.themeMenu()
+        }
+        return UIMenu(title: "Bakgrund", children: actions + [sound])
     }
 
     private func setTheme(_ newTheme: ReaderTheme) {
@@ -746,6 +789,7 @@ final class PDFCurlReaderViewController: UIViewController {
         applyThemeToChrome()
         renderer.configure(size: renderSize(for: view.bounds.size, mode: mode), scale: displayScale, theme: newTheme)
         refreshVisiblePages()
+        refreshAllMarks()
         keepNeighbours()
     }
 
@@ -779,6 +823,7 @@ extension PDFCurlReaderViewController: UIPageViewControllerDataSource, UIPageVie
     func pageViewController(_ pageViewController: UIPageViewController,
                             willTransitionTo pendingViewControllers: [UIViewController]) {
         Haptics.shared.prepareForPageTurn()
+        PageTurnSound.shared.play()
     }
 
     func pageViewController(_ pageViewController: UIPageViewController,
@@ -789,6 +834,7 @@ extension PDFCurlReaderViewController: UIPageViewControllerDataSource, UIPageVie
         currentIndex = index
         LibraryStore.shared.savePageIndex(currentIndex, for: book)
         updatePageLabel()
+        updateBookmarkState()
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
         keepNeighbours()
@@ -800,8 +846,22 @@ extension PDFCurlReaderViewController: UIPageViewControllerDataSource, UIPageVie
 extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        // Reglaget och sidnumret har egna tryck.
+        // Reglaget och sidnumret har egna tryck, liksom raden som visas medan man markerar.
         if let touched = touch.view, touched.isDescendant(of: bottomBar) {
+            return false
+        }
+        if let bar = markBar, let touched = touch.view, touched.isDescendant(of: bar) {
+            return false
+        }
+        if gestureRecognizer === markDrag {
+            return markMode
+        }
+        let onMark = markHit(at: touch.location(in: view)) != nil
+        if gestureRecognizer === markTap {
+            return !markMode && onMark
+        }
+        if onMark, gestureRecognizer is UITapGestureRecognizer {
+            // Ett tryck på en markering öppnar markeringens ruta, inte menyn eller nästa sida.
             return false
         }
         let width = max(view.bounds.width, 1)
@@ -821,5 +881,578 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         true
+    }
+}
+
+// MARK: Markeringar, anteckningar, bokmärken och sökning (fas 4)
+
+/// Det fingret drar över medan man markerar.
+fileprivate struct PDFMarkSelection {
+    let page: PDFPageViewController
+    let pdfPage: PDFPage
+    /// Ordet där fingret började, eller nil om det inte var på ett ord.
+    let anchor: NSRange?
+    var current: NSRange?
+    let startPoint: CGPoint
+    var moved: Bool
+    /// Markeringen fingret började på, om det var ett tryck på en markering.
+    let tappedMark: String?
+
+    var range: NSRange? {
+        guard let anchor = anchor else { return nil }
+        return PDFTextRanges.span(from: anchor, to: current ?? anchor)
+    }
+}
+
+extension PDFCurlReaderViewController {
+
+    fileprivate var bookKey: String {
+        AnnotationStore.key(for: book)
+    }
+
+    fileprivate func setUpMarkGestures() {
+        let drag = UILongPressGestureRecognizer(target: self, action: #selector(handleMarkDrag(_:)))
+        drag.minimumPressDuration = 0
+        drag.allowableMovement = .greatestFiniteMagnitude
+        drag.delegate = self
+        drag.isEnabled = false
+        view.addGestureRecognizer(drag)
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleMarkTap(_:)))
+        tap.delegate = self
+        view.addGestureRecognizer(tap)
+
+        markDrag = drag
+        markTap = tap
+        bookmarksChanged()
+    }
+
+    // MARK: Markeringarna på sidorna
+
+    fileprivate func marks(forPage index: Int) -> [PDFPageViewController.Mark] {
+        if let cached = marksCache[index] {
+            return cached
+        }
+        guard let page = document.page(at: index) else { return [] }
+        let marks = AnnotationStore.shared.highlights(book: bookKey, section: index).map { highlight in
+            PDFPageViewController.Mark(id: highlight.id,
+                                       rects: PDFTextRanges.rects(on: page, range: NSRange(location: highlight.start,
+                                                                                            length: highlight.length)),
+                                       color: highlight.color,
+                                       hasNote: highlight.hasNote)
+        }
+        marksCache[index] = marks
+        return marks
+    }
+
+    fileprivate func configureAnnotations(_ page: PDFPageViewController) {
+        guard !page.isBlank else { return }
+        page.pdfPage = document.page(at: page.pageIndex)
+        page.setMarks(marks(forPage: page.pageIndex), dark: theme.isDark)
+        page.isBookmarked = bookmarkedPages.contains(page.pageIndex)
+    }
+
+    fileprivate func refreshMarks(onPage index: Int) {
+        marksCache[index] = nil
+        for page in visiblePages where page.pageIndex == index {
+            page.setMarks(marks(forPage: index), dark: theme.isDark)
+        }
+    }
+
+    fileprivate func refreshAllMarks() {
+        marksCache.removeAll()
+        for page in visiblePages where !page.isBlank {
+            page.setMarks(marks(forPage: page.pageIndex), dark: theme.isDark)
+        }
+    }
+
+    fileprivate func markHit(at point: CGPoint) -> (page: PDFPageViewController, id: String)? {
+        for page in visiblePages where !page.isBlank {
+            let local = page.view.convert(point, from: view)
+            if page.view.bounds.contains(local), let id = page.markID(at: local) {
+                return (page, id)
+            }
+        }
+        return nil
+    }
+
+    fileprivate func pageName(_ index: Int) -> String {
+        "Sida \(printedLabel(for: index) ?? String(index + 1))"
+    }
+
+    // MARK: Markera med fingret
+
+    @objc fileprivate func toggleMarkMode() {
+        setMarkMode(!markMode)
+    }
+
+    /// Markeringsläget: sidan står still, och fingret markerar det det drar över.
+    fileprivate func setMarkMode(_ on: Bool) {
+        guard on != markMode else { return }
+        markMode = on
+        for recognizer in pageController?.gestureRecognizers ?? [] {
+            recognizer.isEnabled = !on
+        }
+        chromeTap?.isEnabled = !on
+        zoomTap?.isEnabled = !on
+        wordPress?.isEnabled = !on
+        markDrag?.isEnabled = on
+        if on {
+            setChromeHidden(true, animated: true)
+            let bar = HighlightModeBar(color: ReaderSettings.highlightColor)
+            bar.onColor = { color in
+                ReaderSettings.highlightColor = color
+            }
+            bar.onTurn = { [weak self] forward in
+                self?.turnPage(forward: forward)
+            }
+            bar.onDone = { [weak self] in
+                self?.setMarkMode(false)
+            }
+            ReaderMenus.installModeBar(bar, in: view)
+            markBar = bar
+        } else {
+            markSelection?.page.clearPreview()
+            markSelection = nil
+            markBar?.removeFromSuperview()
+            markBar = nil
+        }
+    }
+
+    @objc fileprivate func handleMarkDrag(_ press: UILongPressGestureRecognizer) {
+        let point = press.location(in: view)
+        switch press.state {
+        case .began:
+            markSelection = nil
+            guard let page = pageView(at: point),
+                  let pdfPage = document.page(at: page.pageIndex),
+                  let frame = page.imageFrame else { return }
+            let local = page.view.convert(point, from: view)
+            let tapped = page.markID(at: local)
+            let word = PDFCurlReaderViewController.word(on: pdfPage, at: local, imageFrame: frame)
+            if word == nil, tapped == nil, !PDFWordFinder.pageHasText(pdfPage) {
+                showToast("Sidan har ingen text att markera. Den är troligen skannad.")
+            }
+            markSelection = PDFMarkSelection(page: page, pdfPage: pdfPage, anchor: word, current: word,
+                                             startPoint: point, moved: false, tappedMark: tapped)
+            if tapped == nil {
+                showMarkPreview()
+            }
+
+        case .changed:
+            guard var selection = markSelection, selection.anchor != nil,
+                  let frame = selection.page.imageFrame else { return }
+            if !selection.moved, hypot(point.x - selection.startPoint.x, point.y - selection.startPoint.y) > 6 {
+                selection.moved = true
+            }
+            var local = selection.page.view.convert(point, from: view)
+            local.x = min(max(local.x, frame.minX + 1), frame.maxX - 1)
+            local.y = min(max(local.y, frame.minY + 1), frame.maxY - 1)
+            if let word = PDFCurlReaderViewController.word(on: selection.pdfPage, at: local, imageFrame: frame) {
+                selection.current = word
+            }
+            markSelection = selection
+            showMarkPreview()
+
+        case .ended:
+            guard let selection = markSelection else { return }
+            markSelection = nil
+            selection.page.clearPreview()
+            if !selection.moved, let id = selection.tappedMark {
+                presentMarkMenu(id: id, at: point)
+                return
+            }
+            if let range = selection.range {
+                createHighlight(onPage: selection.page.pageIndex, pdfPage: selection.pdfPage, range: range)
+            }
+
+        default:
+            markSelection?.page.clearPreview()
+            markSelection = nil
+        }
+    }
+
+    /// Ordet närmast en punkt i bladets vy.
+    fileprivate static func word(on pdfPage: PDFPage, at local: CGPoint, imageFrame: CGRect) -> NSRange? {
+        guard let pagePoint = PDFPageGeometry.pagePoint(for: local, imageFrame: imageFrame, page: pdfPage) else { return nil }
+        let tolerance = fingerTolerance * PDFPageGeometry.pageUnitsPerPoint(imageFrame: imageFrame, page: pdfPage)
+        return PDFTextRanges.word(on: pdfPage, at: pagePoint, tolerance: tolerance)
+    }
+
+    fileprivate func showMarkPreview() {
+        guard let selection = markSelection, let range = selection.range else { return }
+        selection.page.showPreview(PDFTextRanges.rects(on: selection.pdfPage, range: range),
+                                   color: ReaderSettings.highlightColor)
+    }
+
+    @discardableResult
+    fileprivate func createHighlight(onPage index: Int, pdfPage: PDFPage, range: NSRange) -> Highlight? {
+        let text = PDFTextRanges.text(on: pdfPage, range: range)
+        guard !text.isEmpty else { return nil }
+        let highlight = AnnotationStore.shared.addHighlight(book: bookKey, section: index, start: range.location,
+                                                            length: range.length, text: text,
+                                                            color: ReaderSettings.highlightColor) { start, length in
+            PDFTextRanges.text(on: pdfPage, range: NSRange(location: start, length: length))
+        }
+        refreshMarks(onPage: index)
+        Haptics.shared.wordTapped()
+        return highlight
+    }
+
+    /// Viker fram nästa eller förra sidan med kod, som ett tryck i kanten.
+    fileprivate func turnPage(forward: Bool) {
+        guard let controller = pageController else { return }
+        let target: Int
+        switch mode {
+        case .single:
+            target = currentIndex + (forward ? 1 : -1)
+            guard target >= 0, target < renderer.pageCount else { return }
+        case .spread:
+            let left = Self.leftPageIndex(ofSpreadContaining: currentIndex)
+            let lastLeft = Self.leftPageIndex(ofSpreadContaining: renderer.pageCount - 1)
+            target = left + (forward ? 2 : -2)
+            guard target >= firstIndex, target <= lastLeft else { return }
+        }
+        PageTurnSound.shared.play()
+        controller.setViewControllers(pages(showing: target), direction: forward ? .forward : .reverse, animated: true) { [weak self] _ in
+            guard let self = self, let index = self.visibleIndices.first else { return }
+            self.currentIndex = index
+            LibraryStore.shared.savePageIndex(index, for: self.book)
+            self.updatePageLabel()
+            self.updateBookmarkState()
+            self.keepNeighbours()
+        }
+    }
+
+    // MARK: Rutan för en markering
+
+    @objc fileprivate func handleMarkTap(_ tap: UITapGestureRecognizer) {
+        let point = tap.location(in: view)
+        guard let hit = markHit(at: point) else { return }
+        presentMarkMenu(id: hit.id, at: point)
+    }
+
+    fileprivate func presentMarkMenu(id: String, at point: CGPoint) {
+        guard presentedViewController == nil, let highlight = AnnotationStore.shared.highlight(id: id) else { return }
+        let menu = HighlightMenuViewController(highlight: highlight)
+        menu.onColor = { [weak self] color in
+            guard var changed = AnnotationStore.shared.highlight(id: id) else { return }
+            changed.color = color
+            ReaderSettings.highlightColor = color
+            AnnotationStore.shared.update(changed)
+            self?.refreshMarks(onPage: changed.section)
+        }
+        menu.onNote = { [weak self] in
+            self?.editNote(highlightID: id)
+        }
+        menu.onDelete = { [weak self] in
+            guard let current = AnnotationStore.shared.highlight(id: id) else { return }
+            AnnotationStore.shared.delete(current)
+            self?.refreshMarks(onPage: current.section)
+        }
+        HighlightMenuViewController.present(menu, from: self, sourceView: view,
+                                            sourceRect: CGRect(x: point.x - 1, y: point.y - 10, width: 2, height: 20))
+    }
+
+    fileprivate func editNote(highlightID id: String) {
+        guard let highlight = AnnotationStore.shared.highlight(id: id) else { return }
+        NoteEditorViewController.present(quote: highlight.text, note: highlight.note, from: self) { [weak self] note in
+            guard var current = AnnotationStore.shared.highlight(id: id) else { return }
+            current.note = note
+            AnnotationStore.shared.update(current)
+            self?.refreshMarks(onPage: current.section)
+        }
+    }
+
+    // MARK: Bokmärken
+
+    fileprivate func bookmarksChanged() {
+        bookmarks = AnnotationStore.shared.bookmarks(book: bookKey)
+        bookmarkedPages = Set(bookmarks.map(\.section))
+        for page in visiblePages {
+            page.isBookmarked = bookmarkedPages.contains(page.pageIndex)
+        }
+        updateBookmarkState()
+    }
+
+    fileprivate func updateBookmarkState() {
+        let shown = visibleIndices.isEmpty ? [currentIndex] : visibleIndices
+        let marked = shown.contains { bookmarkedPages.contains($0) }
+        bookmarkItem?.image = UIImage(systemName: marked ? "bookmark.fill" : "bookmark")
+        bookmarkItem?.accessibilityValue = marked ? "Sidan har ett bokmärke" : "Inget bokmärke"
+    }
+
+    /// Bokmärker sidan man läser, eller tar bort bokmärket om sidan redan har ett.
+    @objc fileprivate func toggleBookmark() {
+        let shown = visibleIndices.isEmpty ? [currentIndex] : visibleIndices
+        let existing = bookmarks.filter { shown.contains($0.section) }
+        if existing.isEmpty {
+            let index = shown.first ?? currentIndex
+            let text = AnnotationFormat.excerpt(PDFTextRanges.clean(document.page(at: index)?.string ?? ""))
+            let label = text.isEmpty ? pageName(index) : "\(pageName(index)): \(text)"
+            AnnotationStore.shared.addBookmark(book: bookKey, section: index, progression: 0, label: label)
+            Haptics.shared.wordTapped()
+        } else {
+            existing.forEach { AnnotationStore.shared.delete($0) }
+        }
+        bookmarksChanged()
+    }
+
+    // MARK: Listan med bokmärken och markeringar
+
+    fileprivate func makeAnnotationsList() -> AnnotationsViewController {
+        let list = AnnotationsViewController(kind: .highlights)
+        list.rows = { [weak self] kind in
+            self?.annotationRows(kind) ?? []
+        }
+        list.onSelect = { [weak self] kind, id in
+            self?.dismiss(animated: true)
+            self?.openAnnotation(kind, id: id)
+        }
+        list.onDelete = { [weak self] kind, id in
+            self?.deleteAnnotation(kind, id: id)
+        }
+        return list
+    }
+
+    fileprivate func annotationRows(_ kind: AnnotationsViewController.Kind) -> [AnnotationsViewController.Row] {
+        switch kind {
+        case .bookmarks:
+            return AnnotationStore.shared.bookmarks(book: bookKey).map { bookmark in
+                AnnotationsViewController.Row(id: bookmark.id, title: bookmark.label,
+                                              detail: AnnotationFormat.date(bookmark.created), note: nil, color: nil)
+            }
+        case .highlights:
+            return AnnotationStore.shared.highlights(book: bookKey).map { highlight in
+                AnnotationsViewController.Row(id: highlight.id, title: highlight.text,
+                                              detail: pageName(highlight.section),
+                                              note: highlight.hasNote ? highlight.note : nil,
+                                              color: highlight.color)
+            }
+        }
+    }
+
+    fileprivate func openAnnotation(_ kind: AnnotationsViewController.Kind, id: String) {
+        switch kind {
+        case .bookmarks:
+            guard let bookmark = AnnotationStore.shared.bookmarks(book: bookKey).first(where: { $0.id == id }) else { return }
+            jump(to: bookmark.section)
+        case .highlights:
+            guard let highlight = AnnotationStore.shared.highlight(id: id) else { return }
+            jump(to: highlight.section)
+            flash(NSRange(location: highlight.start, length: highlight.length), onPage: highlight.section)
+        }
+    }
+
+    fileprivate func deleteAnnotation(_ kind: AnnotationsViewController.Kind, id: String) {
+        switch kind {
+        case .bookmarks:
+            if let bookmark = AnnotationStore.shared.bookmarks(book: bookKey).first(where: { $0.id == id }) {
+                AnnotationStore.shared.delete(bookmark)
+            }
+            bookmarksChanged()
+        case .highlights:
+            if let highlight = AnnotationStore.shared.highlight(id: id) {
+                AnnotationStore.shared.delete(highlight)
+                refreshMarks(onPage: highlight.section)
+            }
+        }
+    }
+
+    fileprivate func flash(_ range: NSRange, onPage index: Int) {
+        guard let pdfPage = document.page(at: index) else { return }
+        let rects = PDFTextRanges.rects(on: pdfPage, range: range)
+        visiblePages.first { $0.pageIndex == index }?.flash(rects)
+    }
+
+    // MARK: Sök
+
+    @objc fileprivate func showSearch() {
+        guard presentedViewController == nil else { return }
+        let controller = BookSearchViewController(search: bookSearch, query: lastQuery) { [weak self] section in
+            self?.pageName(section) ?? "Sida \(section + 1)"
+        }
+        controller.onQueryChange = { [weak self] query in
+            self?.lastQuery = query
+        }
+        controller.onSelect = { [weak self] hit, query in
+            self?.lastQuery = query
+            self?.dismiss(animated: true)
+            self?.jump(to: hit.section)
+            self?.flash(NSRange(location: hit.start, length: hit.length), onPage: hit.section)
+        }
+        let navigation = UINavigationController(rootViewController: controller)
+        navigation.modalPresentationStyle = .popover
+        navigation.popoverPresentationController?.barButtonItem = searchItem
+        present(navigation, animated: true)
+    }
+}
+
+// MARK: Självtestet för PDF (fas 4)
+
+extension PDFCurlReaderViewController {
+
+    fileprivate func startSelfTestIfNeeded() {
+        guard SelfTest.isActive, !selfTestStarted, SelfTest.bookName?.lowercased().hasSuffix(".pdf") == true else { return }
+        selfTestStarted = true
+        Task { @MainActor [weak self] in
+            await self?.runSelfTest()
+        }
+    }
+
+    fileprivate func pause(_ seconds: Double) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    fileprivate func waitForImages() async -> Bool {
+        for _ in 0..<150 {
+            if !visiblePages.isEmpty, visiblePages.allSatisfy({ $0.isBlank || $0.imageFrame != nil }) {
+                return true
+            }
+            await pause(0.1)
+        }
+        return false
+    }
+
+    fileprivate func waitForPresented<T: UIViewController>(_ type: T.Type) async -> T? {
+        for _ in 0..<40 {
+            if let navigation = presentedViewController as? UINavigationController,
+               let found = navigation.viewControllers.first as? T {
+                return found
+            }
+            if let found = presentedViewController as? T {
+                return found
+            }
+            await pause(0.1)
+        }
+        return nil
+    }
+
+    fileprivate func dismissPresented() async {
+        guard presentedViewController != nil else { return }
+        dismiss(animated: false)
+        await pause(0.5)
+    }
+
+    fileprivate func runSelfTest() async {
+        let saved = AnnotationStore.shared.totalCounts()
+        SelfTest.log("PDF med \(document.pageCount) sidor. Sparat från tidigare starter: \(saved.highlights) markeringar, "
+                     + "\(saved.notes) anteckningar, \(saved.bookmarks) bokmärken")
+        let shown = await waitForImages()
+        SelfTest.log("Första sidan: \(shown ? "ok" : "FEL, sidbilden kom inte")")
+        SelfTest.saveScreen(view, name: "01-start")
+
+        turnPage(forward: true)
+        await pause(1.5)
+        _ = await waitForImages()
+        SelfTest.log("Efter en sida: \(bottomBar.pageButton.title(for: .normal) ?? "")")
+
+        // Ordet under en punkt, som när fingret börjar markera.
+        guard let page = visiblePages.first(where: { !$0.isBlank }),
+              let pdfPage = document.page(at: page.pageIndex),
+              let frame = page.imageFrame,
+              let string = pdfPage.string else {
+            SelfTest.log("FEL: ingen sida med text")
+            SelfTest.finish()
+            return
+        }
+        let text = string as NSString
+        let target = text.range(of: "kunskap", options: [.caseInsensitive])
+        if target.location != NSNotFound, let rect = PDFTextRanges.rects(on: pdfPage, range: target).first,
+           let shownRect = page.viewRect(forPageRect: rect) {
+            let finger = CGPoint(x: shownRect.midX, y: shownRect.midY)
+            let word = PDFCurlReaderViewController.word(on: pdfPage, at: finger, imageFrame: frame)
+            SelfTest.log("Ord under fingret vid \"kunskap\": \(word.map { text.substring(with: $0) } ?? "inget")")
+        } else {
+            SelfTest.log("FEL: hittade inte ordet kunskap på sidan")
+        }
+
+        // Markera en mening och ge den en anteckning.
+        let sentenceEnd = text.range(of: ".", options: [], range: NSRange(location: 0, length: text.length))
+        let length = sentenceEnd.location == NSNotFound ? min(40, text.length) : sentenceEnd.location + 1
+        if let highlight = createHighlight(onPage: page.pageIndex, pdfPage: pdfPage, range: NSRange(location: 0, length: length)) {
+            var noted = highlight
+            noted.note = "Testanteckning från självtestet."
+            AnnotationStore.shared.update(noted)
+            refreshMarks(onPage: page.pageIndex)
+            SelfTest.log("Markering: \"\(highlight.text)\"")
+        } else {
+            SelfTest.log("FEL: markeringen skapades inte")
+        }
+        await pause(0.6)
+        SelfTest.saveScreen(view, name: "02-markering")
+
+        toggleBookmark()
+        await pause(0.4)
+        SelfTest.log("Bokmärke: knappen visar \(bookmarkItem?.accessibilityValue ?? "inget"), "
+                     + "\(bookmarks.count) bokmärken i boken")
+        setChromeHidden(false, animated: false)
+        await pause(0.4)
+        SelfTest.saveScreen(view, name: "03-bokmarke")
+
+        setMarkMode(true)
+        await pause(0.6)
+        SelfTest.saveScreen(view, name: "04-markeringslage")
+        setMarkMode(false)
+
+        showSearch()
+        if let search = await waitForPresented(BookSearchViewController.self) {
+            search.searchNow("kunskap")
+            for _ in 0..<80 where search.searching {
+                await pause(0.1)
+            }
+            SelfTest.log("Sökning efter kunskap: \(search.hitCount) träffar")
+            SelfTest.saveScreen(view.window ?? view, name: "05-sok")
+            if let hit = search.firstHit {
+                search.onSelect?(hit, "kunskap")
+                await pause(1.0)
+                _ = await waitForImages()
+                SelfTest.log("Första träffen på \(pageName(hit.section)), läsaren visar \(bottomBar.pageButton.title(for: .normal) ?? "")")
+                SelfTest.saveScreen(view, name: "06-traff")
+            }
+        } else {
+            SelfTest.log("FEL: sökrutan öppnades inte")
+        }
+        await dismissPresented()
+
+        showContents()
+        if let container = await waitForPresented(ReaderContentsContainerViewController.self) {
+            container.select(2)
+            await pause(0.6)
+            SelfTest.saveScreen(view.window ?? view, name: "07-markeringar")
+            container.select(1)
+            await pause(0.4)
+            SelfTest.saveScreen(view.window ?? view, name: "08-bokmarken")
+        } else {
+            SelfTest.log("FEL: innehållet öppnades inte")
+        }
+        await dismissPresented()
+
+        if let highlight = AnnotationStore.shared.highlights(book: bookKey).first {
+            jump(to: highlight.section)
+            _ = await waitForImages()
+            if let page = visiblePages.first(where: { $0.pageIndex == highlight.section }),
+               let pdfPage = document.page(at: highlight.section),
+               let rect = PDFTextRanges.rects(on: pdfPage, range: NSRange(location: highlight.start, length: highlight.length)).first,
+               let shownRect = page.viewRect(forPageRect: rect) {
+                let point = view.convert(CGPoint(x: shownRect.midX, y: shownRect.midY), from: page.view)
+                SelfTest.log("Tryck på markeringen hittar: \(markHit(at: point)?.id == highlight.id ? "rätt markering" : "FEL")")
+                presentMarkMenu(id: highlight.id, at: point)
+                await pause(0.8)
+                SelfTest.saveScreen(view.window ?? view, name: "09-markeringsmeny")
+                await dismissPresented()
+            }
+        }
+
+        let savedTheme = theme
+        setTheme(.dark)
+        await pause(0.8)
+        _ = await waitForImages()
+        SelfTest.saveScreen(view, name: "10-morkt")
+        setTheme(savedTheme)
+
+        let after = AnnotationStore.shared.totalCounts()
+        SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
+        SelfTest.finish()
     }
 }
