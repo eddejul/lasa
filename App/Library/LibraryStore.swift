@@ -106,6 +106,8 @@ final class LibraryStore {
     func delete(_ book: Book) throws {
         try FileManager.default.removeItem(at: book.url)
         defaults.removeObject(forKey: positionKey(for: book))
+        defaults.removeObject(forKey: locationKey(for: book))
+        ReflowableBookLoader.removeCaches(for: book)
     }
 
     // MARK: Läsposition
@@ -120,5 +122,23 @@ final class LibraryStore {
 
     private func positionKey(for book: Book) -> String {
         "position.\(book.url.lastPathComponent)"
+    }
+
+    // MARK: Läsposition i EPUB och textfiler
+
+    /// Kapitel och andel av kapitlet, så att platsen överlever byte av typsnitt och storlek.
+    func savedLocation(for book: Book) -> ReflowLocation? {
+        guard let text = defaults.string(forKey: locationKey(for: book)) else { return nil }
+        let parts = text.split(separator: "|")
+        guard parts.count == 2, let chapter = Int(parts[0]), let progression = Double(parts[1]) else { return nil }
+        return ReflowLocation(chapter: chapter, progression: progression)
+    }
+
+    func saveLocation(_ location: ReflowLocation, for book: Book) {
+        defaults.set("\(location.chapter)|\(location.progression)", forKey: locationKey(for: book))
+    }
+
+    private func locationKey(for book: Book) -> String {
+        "location.\(book.url.lastPathComponent)"
     }
 }

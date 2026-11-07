@@ -6,6 +6,7 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
 
     private static let cellID = "book"
     private var books: [Book] = []
+    private var didStartSelfTest = false
 
     init() {
         super.init(style: .insetGrouped)
@@ -46,6 +47,19 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         reload()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // Bara i simulatortestet i bygget: öppna testboken direkt.
+        guard let name = SelfTest.bookName, !didStartSelfTest else { return }
+        didStartSelfTest = true
+        if let book = books.first(where: { $0.url.lastPathComponent == name }) {
+            open(book)
+        } else {
+            SelfTest.log("FEL: hittade inte \(name) i biblioteket")
+            SelfTest.finish()
+        }
+    }
+
     func reload() {
         books = LibraryStore.shared.allBooks()
         guard isViewLoaded else { return }
@@ -65,8 +79,7 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
             }
             navigationController?.pushViewController(reader, animated: true)
         case .epub, .text:
-            showMessage(title: "Kommer snart",
-                        message: "EPUB och textfiler kommer i fas 3. Just nu läser appen PDF.")
+            navigationController?.pushViewController(ReflowReaderViewController(book: book), animated: true)
         case .other:
             showMessage(title: "Okänt format",
                         message: "Appen kan inte öppna den här filtypen.")
@@ -85,6 +98,9 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         var types: [UTType] = [.pdf, .plainText, .rtf, .html]
         if let epub = UTType(filenameExtension: "epub") {
             types.append(epub)
+        }
+        if let markdown = UTType(filenameExtension: "md", conformingTo: .plainText) {
+            types.append(markdown)
         }
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
         picker.allowsMultipleSelection = true

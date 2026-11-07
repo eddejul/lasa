@@ -146,3 +146,44 @@ jobs:
           path: build/xcodebuild.log
           retention-days: 7
           if-no-files-found: ignore
+
+  # Kör appen i en iPad-simulator med testböcker (EPUB, Markdown, txt, RTF). Appens självtest bläddrar,
+  # slår upp ett ord, byter typsnitt och tema och sparar bilder och en logg i artefakten Simulatortest.
+  # Simulatorn har en nyare iOS än iPaden, så det som beror på iOS 15 testas fortfarande på iPaden.
+  simulator:
+    name: Simulatortest
+    needs: dictionary
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Hämta koden
+        uses: actions/checkout@v5
+
+      - name: Hämta ordboken
+        uses: actions/download-artifact@v4
+        with:
+          name: ordbok
+          path: App/Resources
+
+      - name: Välj Xcode
+        run: |
+          if [ -n "$XCODE_APP" ] && [ -d "$XCODE_APP" ]; then
+            sudo xcode-select -s "$XCODE_APP"
+          fi
+          xcodebuild -version
+
+      - name: Installera XcodeGen
+        run: brew install xcodegen
+
+      - name: Kör självtestet i simulatorn
+        run: bash tools/simtest/run.sh
+
+      - name: Ladda upp resultatet
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Simulatortest
+          path: build/simtest
+          retention-days: 14
+          if-no-files-found: ignore
