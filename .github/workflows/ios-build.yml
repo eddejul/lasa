@@ -1,11 +1,11 @@
 name: iOS build
 
-# Bygger en osignerad .ipa på en Mac i molnet.
+# Bygger ordboken på Linux och en osignerad .ipa på en Mac i molnet.
 # Sideloadly eller AltStore signerar den med ditt Apple-ID när du installerar.
 
 on:
   push:
-    branches: [main]
+    branches: [main, "fas*"]
   workflow_dispatch:
 
 concurrency:
@@ -18,13 +18,69 @@ env:
   XCODE_APP: "/Applications/Xcode_26.6.app"
 
 jobs:
+  dictionary:
+    name: Ordboken
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Hämta koden
+        uses: actions/checkout@v5
+
+      # Källfilerna (cirka 380 MB) laddas ner en gång och sparas, så att Språkbankens och KTH:s
+      # servrar inte belastas vid varje bygge. Höj v1 när en källa i build.py byts.
+      - name: Källfiler från förra gången
+        uses: actions/cache@v4
+        with:
+          path: tools/dictionary/sources
+          key: ordbok-kallor-v1
+
+      # Databasen byggs bara om när skripten eller testlistan ändras.
+      - name: Färdig ordbok från förra gången
+        id: database
+        uses: actions/cache@v4
+        with:
+          path: tools/dictionary/out
+          key: ordbok-db-${{ hashFiles('tools/dictionary/*.py', 'tools/dictionary/testwords.txt') }}
+
+      - name: Bygg ordboken
+        if: steps.database.outputs.cache-hit != 'true'
+        run: python3 tools/dictionary/build.py
+
+      - name: Sammanfattning av testlistan
+        run: |
+          sed -n '/^Svenska:/,/^Uppslag/p' tools/dictionary/out/testrapport.txt
+          ls -lh tools/dictionary/out/
+
+      - name: Ladda upp ordboken till appbygget
+        uses: actions/upload-artifact@v4
+        with:
+          name: ordbok
+          path: tools/dictionary/out/lasa-ordbok.sqlite
+          retention-days: 7
+
+      - name: Ladda upp testrapporten
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ordbok-testrapport
+          path: tools/dictionary/out/testrapport.txt
+          retention-days: 30
+
   build:
+    name: Appen
+    needs: dictionary
     runs-on: macos-26
     timeout-minutes: 40
 
     steps:
       - name: Hämta koden
         uses: actions/checkout@v5
+
+      - name: Hämta ordboken
+        uses: actions/download-artifact@v4
+        with:
+          name: ordbok
+          path: App/Resources
 
       - name: Välj Xcode
         run: |
@@ -37,7 +93,9 @@ jobs:
         run: brew install xcodegen
 
       - name: Generera Xcode-projektet
-        run: xcodegen generate
+        run: |
+          ls -lh App/Resources
+          xcodegen generate
 
       - name: Bygg utan signering
         run: |
@@ -59,6 +117,10 @@ jobs:
         run: |
           echo "Rader med fel i bygget:"
           grep -n -E "error:|fatal error" build/xcodebuild.log | head -n 80 || echo "Inga rader med 'error:' hittades."
+
+      - name: Kontrollera att ordboken finns i appen
+        run: |
+          ls -lh build/Lasa.xcarchive/Products/Applications/Lasa.app/lasa-ordbok.sqlite
 
       - name: Packa .ipa
         run: |
