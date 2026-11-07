@@ -1,14 +1,15 @@
 // Läsa för Windows: start, flikarna Bibliotek, Sparade ord och Om ordboken, och läsaren.
 
 import { renderAbout } from './about.js';
-import { checkDictionary } from './context.js';
+import { checkDictionary, dictionary } from './context.js';
 import { ACCEPT_ATTRIBUTE, importFiles, renderLibrary } from './library.js';
 import { setAboutHandler } from './popup.js';
-import { applyTheme, closeReader, openReader } from './reader.js';
+import { closeReader, openReader } from './reader.js';
 import { renderSavedWords } from './savedwords.js';
 import { renderSettings } from './settings.js';
 import { getBook, openStore, settings } from './store.js';
 import { syncSoon, syncState } from './sync.js';
+import { applyTheme } from './theme.js';
 import { el, replace, toast } from './ui.js';
 
 const app = document.getElementById('app');
@@ -118,6 +119,20 @@ function setUpDrop() {
   });
 }
 
+/** Slår upp några ord i bakgrunden efter start, så att ordboksfilen och frågorna är varma och första
+ *  dubbelklicket går lika fort som de följande. Inget sparas och inget visas. */
+function warmDictionary() {
+  setTimeout(async () => {
+    for (const [word, language] of [['undersökningen', 'sv'], ['sprang', 'sv'], ['went', 'en'], ['libraries', 'en']]) {
+      try {
+        await dictionary.lookup(word, { language });
+      } catch {
+        return;
+      }
+    }
+  }, 400);
+}
+
 async function start() {
   try {
     await openStore();
@@ -135,6 +150,7 @@ async function start() {
   });
   const { error } = await checkDictionary();
   if (error) toast(error, 10);
+  else warmDictionary();
   // Efter en synk visas hämtade ord direkt om Sparade ord är öppet.
   window.addEventListener('lasa-sync', () => {
     if (!syncState.running && currentTab === 'saved') {

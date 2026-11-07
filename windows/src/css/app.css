@@ -268,6 +268,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .theme-choice.theme-white { background: #ffffff; color: #1d1d1f; }
 .theme-choice.theme-sepia { background: #f4ecd8; color: #3b2f23; }
 .theme-choice.theme-dark { background: #1c1c1c; color: #d2d2d2; }
+.theme-choice.theme-system { background: linear-gradient(90deg, #ffffff 0 50%, #1c1c1c 50% 100%); color: #6e6e73; font-weight: 600; }
+.theme-choices { flex-wrap: wrap; }
 .theme-choice.selected { border-color: var(--accent); }
 
 .size-row { display: flex; align-items: center; gap: 12px; justify-content: center; margin: 6px 0 12px; }
@@ -371,7 +373,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 /* Rutor över allt */
 
 #modal-layer { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
-#modal-layer > * { pointer-events: auto; }
+#modal-layer > *:not(.toast-stack) { pointer-events: auto; }
 
 .modal-backdrop {
   position: fixed;
@@ -409,18 +411,44 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .text-input { width: 100%; padding: 8px 10px; font: inherit; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 
-.toast {
+.toast-stack {
   position: fixed;
   left: 50%;
   bottom: 70px;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(560px, calc(100% - 32px));
+  pointer-events: none !important;
+}
+
+.toast {
   background: var(--text);
   color: var(--bg);
   padding: 10px 16px;
   border-radius: 10px;
-  max-width: min(560px, calc(100% - 32px));
+  max-width: 100%;
   box-shadow: var(--shadow);
-  pointer-events: none !important;
+  pointer-events: auto;
+  cursor: default;
+  line-height: 1.4;
+}
+
+.status-box { cursor: progress; }
+
+/* Medan en bok öppnas */
+.reader-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 16px;
+  background: var(--stage);
+  z-index: 4;
 }
 
 #drop-overlay {

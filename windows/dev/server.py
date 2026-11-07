@@ -32,7 +32,7 @@ TYPES = {
     ".bcmap": "application/octet-stream", ".icc": "application/octet-stream", ".txt": "text/plain; charset=utf-8",
     ".md": "text/plain; charset=utf-8",
 }
-BOOK_NAME = re.compile(r"^[0-9a-f]{64}\.(pdf|epub|txt|md)$")
+BOOK_NAME = re.compile(r"^[0-9a-f]{64}\.(pdf|epub|txt|md|rtf|html)$")
 
 
 class Backend:

@@ -8,10 +8,12 @@ pdfjs.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.mjs';
 
 export { pdfjs };
 
-/** Öppnar en PDF. bytes kopieras, eftersom pdf.js lämnar över bufferten till arbetaren. */
-export function openPdf(bytes) {
+/** Öppnar en PDF. pdf.js lämnar över bufferten till arbetaren, så att den inte går att använda efteråt.
+ *  keep: kopiera först, för den som behöver byten själv efteråt. Utan kopia ligger en stor bok bara en
+ *  gång i minnet. */
+export function openPdf(bytes, { keep = false } = {}) {
   return pdfjs.getDocument({
-    data: bytes.slice(),
+    data: keep ? bytes.slice() : bytes,
     cMapUrl: base + 'cmaps/',
     cMapPacked: true,
     standardFontDataUrl: base + 'standard_fonts/',

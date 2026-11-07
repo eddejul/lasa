@@ -1,6 +1,7 @@
-// Textfiler (txt och md) blir enkla HTML-kapitel som visas i samma läsare som EPUB (foliate-js).
+// Textfiler (txt, md och rtf) blir enkla HTML-kapitel som visas i samma läsare som EPUB (foliate-js).
 // Samma regler som App/Books/TextBookConverter.swift på iPaden: kapitel vid rubriker, annars ungefär
-// var 60 000:e tecken, och radbruten text (som i Projekt Runeberg) slås ihop till stycken.
+// var 60 000:e tecken, och radbruten text (som i Projekt Runeberg) slås ihop till stycken. En html-fil
+// blir ett enda kapitel, som på iPaden, men utan skript (de tas bort innan filen visas).
 
 const MAX_CHAPTER_CHARACTERS = 60000;
 
@@ -22,6 +23,142 @@ export function decodeText(bytes) {
     }
   }
   return text.startsWith('﻿') ? text.slice(1) : text;
+}
+
+// RTF: samma läsare som App/Books/RTFText.swift. Formatering tas bort, stycken behålls.
+
+const RTF_SKIPPED = new Set([
+  'fonttbl', 'colortbl', 'stylesheet', 'info', 'pict', 'header', 'footer', 'headerl', 'headerr',
+  'footerl', 'footerr', 'footnote', 'listtable', 'listoverridetable', 'rsidtbl', 'generator',
+  'xmlnstbl', 'themedata', 'colorschememapping', 'datastore', 'latentstyles', 'filetbl', 'revtbl',
+]);
+const RTF_SYMBOLS = {
+  emdash: '\u2014', endash: '\u2013', lquote: '\u2018', rquote: '\u2019', ldblquote: '\u201C',
+  rdblquote: '\u201D', bullet: '\u2022',
+};
+const cp1252 = new TextDecoder('windows-1252');
+const isRtfLetter = (byte) => (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a);
+
+/** Texten i en RTF-fil. */
+export function rtfPlainText(bytes) {
+  let output = '';
+  let pending = [];
+  const skipStack = [false];
+  let unicodeSkip = 1;
+  let skipAfterUnicode = 0;
+  let index = 0;
+  const skipped = () => skipStack[skipStack.length - 1] === true;
+  const flush = () => {
+    if (!pending.length) return;
+    output += cp1252.decode(Uint8Array.from(pending));
+    pending = [];
+  };
+  const emit = (text) => {
+    if (skipped()) return;
+    flush();
+    output += text;
+  };
+  const emitByte = (byte) => {
+    if (skipped()) return;
+    if (skipAfterUnicode > 0) {
+      skipAfterUnicode -= 1;
+      return;
+    }
+    pending.push(byte);
+  };
+  const ascii = (from, to) => String.fromCharCode(...bytes.subarray(from, to));
+  while (index < bytes.length) {
+    const byte = bytes[index];
+    if (byte === 0x7b) { // {
+      skipStack.push(skipStack[skipStack.length - 1] ?? false);
+      index += 1;
+    } else if (byte === 0x7d) { // }
+      if (skipStack.length > 1) skipStack.pop();
+      index += 1;
+    } else if (byte === 0x5c) { // \
+      index += 1;
+      if (index >= bytes.length) break;
+      const next = bytes[index];
+      const hex = next === 0x27 && index + 2 < bytes.length ? parseInt(ascii(index + 1, index + 3), 16) : NaN;
+      if (next === 0x27 && /^[0-9a-fA-F]{2}$/.test(ascii(index + 1, index + 3)) && !Number.isNaN(hex)) {
+        emitByte(hex);
+        index += 3;
+      } else if (next === 0x2a) { // \* betyder att gruppen kan hoppas över
+        skipStack[skipStack.length - 1] = true;
+        index += 1;
+      } else if (isRtfLetter(next)) {
+        let end = index;
+        while (end < bytes.length && isRtfLetter(bytes[end])) end += 1;
+        const word = ascii(index, end);
+        let numberEnd = end;
+        if (numberEnd < bytes.length && bytes[numberEnd] === 0x2d) numberEnd += 1;
+        while (numberEnd < bytes.length && bytes[numberEnd] >= 0x30 && bytes[numberEnd] <= 0x39) numberEnd += 1;
+        const digits = ascii(end, numberEnd);
+        const parameter = /^-?\d+$/.test(digits) ? parseInt(digits, 10) : null;
+        index = numberEnd;
+        if (index < bytes.length && bytes[index] === 0x20) index += 1;
+        if (RTF_SKIPPED.has(word)) {
+          skipStack[skipStack.length - 1] = true;
+          continue;
+        }
+        if (['par', 'line', 'sect', 'page'].includes(word)) emit('\n');
+        else if (word === 'tab') emit('\t');
+        else if (word === 'uc') unicodeSkip = parameter ?? 1;
+        else if (word === 'u') {
+          if (parameter !== null) {
+            let code = parameter;
+            if (code < 0) code += 65536;
+            if (code >= 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)) emit(String.fromCodePoint(code));
+            skipAfterUnicode = unicodeSkip;
+          }
+        } else if (RTF_SYMBOLS[word]) emit(RTF_SYMBOLS[word]);
+      } else {
+        // \\, \{ och \} är tecknen själva. \~ är hårt mellanslag.
+        if (next === 0x7e) emit('\u00a0');
+        else if (next === 0x2d) emit('\u00ad');
+        else if (next === 0x5f) emit('\u2011');
+        else if (next === 0x0a || next === 0x0d) emit('\n');
+        else emitByte(next);
+        index += 1;
+      }
+    } else if (byte === 0x0a || byte === 0x0d) {
+      index += 1;
+    } else {
+      emitByte(byte);
+      index += 1;
+    }
+  }
+  flush();
+  return output;
+}
+
+// HTML
+
+/** En html-fil utan skript, ramar, formulär och händelseattribut, som en hel sida. */
+export function sanitizeHtml(text) {
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  doc.querySelectorAll('script, noscript, iframe, frame, frameset, object, embed, applet, base, form, '
+    + 'link:not([rel="stylesheet"]), meta[http-equiv]').forEach((node) => node.remove());
+  for (const element of doc.querySelectorAll('*')) {
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith('on') || (/(^|:)(href|src|action|formaction|srcdoc)$/.test(name) && /^(javascript|vbscript|data:text\/html)/.test(value))
+        || name === 'srcdoc') {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+  return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
+}
+
+/** Titeln i en html-fil, eller tom text. */
+export function htmlTitle(bytes) {
+  try {
+    return new DOMParser().parseFromString(decodeText(bytes), 'text/html').title.trim();
+  } catch {
+    return '';
+  }
 }
 
 export function escapeHtml(text) {
@@ -225,7 +362,7 @@ function markdownBlocks(text) {
 
 /** Gör om en textfil till kapitel och innehållsförteckning. */
 export function convertText(bytes, { title, ext, language = 'sv' }) {
-  const text = decodeText(bytes);
+  const text = ext === 'rtf' ? rtfPlainText(bytes) : decodeText(bytes);
   const blocks = ext === 'md' ? markdownBlocks(text) : plainBlocks(text);
   const chapters = [];
   const toc = [];
@@ -262,7 +399,9 @@ export function convertText(bytes, { title, ext, language = 'sv' }) {
 
 /** En bok i den form som foliate-js läser (samma gränssnitt som dess EPUB-objekt). */
 export function makeTextBook(bytes, { title, ext }) {
-  const { chapters, toc } = convertText(bytes, { title, ext });
+  const { chapters, toc } = ext === 'html'
+    ? { chapters: [{ html: sanitizeHtml(decodeText(bytes)), size: Math.max(bytes.length, 1) }], toc: [] }
+    : convertText(bytes, { title, ext });
   const urls = [];
   const sections = chapters.map((chapter, index) => ({
     id: `kapitel-${index + 1}`,

@@ -6,6 +6,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::types::{Value as SqlValue, ValueRef};
@@ -13,6 +14,7 @@ use rusqlite::{params_from_iter, Connection, OpenFlags};
 use serde_json::Value;
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::path::BaseDirectory;
+use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 struct AppState {
@@ -141,7 +143,7 @@ fn user_batch(state: State<'_, AppState>, db: String, sql: String) -> Result<(),
 
 fn book_path(state: &AppState, id: &str, ext: &str) -> Result<PathBuf, String> {
     let valid_id = id.len() == 64 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-    let valid_ext = matches!(ext, "pdf" | "epub" | "txt" | "md");
+    let valid_ext = matches!(ext, "pdf" | "epub" | "txt" | "md" | "rtf" | "html");
     if !valid_id || !valid_ext {
         return Err("Ogiltigt namn på bokfilen.".to_string());
     }
@@ -263,10 +265,23 @@ fn open_dictionary(app: &tauri::App) -> Result<Mutex<Connection>, String> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|error| format!("{}: {error}", path.display()))?;
+    // Filen läses via minnesavbildning (128 MB räcker för hela ordboken), så att uppslagen inte behöver
+    // läsa från disken var för sig. Gränssnittet slår upp några ord efter start, så att första
+    // dubbelklicket går lika fort som resten.
     connection
-        .execute_batch("PRAGMA query_only = ON;")
+        .execute_batch("PRAGMA query_only = ON; PRAGMA mmap_size = 134217728; PRAGMA cache_size = -16000;")
         .map_err(|error| error.to_string())?;
     Ok(Mutex::new(connection))
+}
+
+/// Fönstret startar dolt (se tauri.conf.json) och visas när sidan har laddats och temat är satt, så att
+/// det inte blinkar vitt i mörkt tema. Visas bara en gång.
+static WINDOW_SHOWN: AtomicBool = AtomicBool::new(false);
+
+fn show_main_window_once(show: impl FnOnce()) {
+    if !WINDOW_SHOWN.swap(true, Ordering::SeqCst) {
+        show();
+    }
 }
 
 fn main() {
@@ -286,7 +301,28 @@ fn main() {
                 library: Mutex::new(library),
                 books,
             });
+            // Om sidan av någon anledning inte säger att den laddats visas fönstret ändå efter fyra sekunder.
+            if let Some(window) = app.get_webview_window("main") {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(4));
+                    show_main_window_once(|| {
+                        let _ = window.maximize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    });
+                });
+            }
             Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                let window = webview.window();
+                show_main_window_once(|| {
+                    let _ = window.maximize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                });
+            }
         })
         .invoke_handler(tauri::generate_handler![
             dict_query,

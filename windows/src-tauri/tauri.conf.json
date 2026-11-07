@@ -18,6 +18,7 @@
         "minHeight": 480,
         "center": true,
         "maximized": true,
+        "visible": false,
         "dragDropEnabled": false
       }
     ],

@@ -91,12 +91,34 @@ export function promptDialog({ title, message, value = '', placeholder = '', con
   });
 }
 
-/** Ett kort meddelande nere i fönstret som försvinner av sig själv. */
-export function toast(message, seconds = 4) {
-  const layer = document.getElementById('modal-layer');
-  const box = el('div', { class: 'toast', role: 'status' }, message);
-  layer.append(box);
-  setTimeout(() => box.remove(), seconds * 1000);
+/** Ett kort meddelande nere i fönstret som försvinner av sig själv. Längre meddelanden (fel) står kvar
+ *  längre, och ett klick på meddelandet tar bort det direkt. Flera meddelanden läggs på varandra. */
+export function toast(message, seconds = null) {
+  const text = String(message);
+  const time = seconds ?? Math.min(12, Math.max(4, text.length / 18));
+  const box = el('div', { class: 'toast', role: 'status', title: 'Klicka för att stänga' }, text);
+  box.addEventListener('click', () => box.remove());
+  toastStack().append(box);
+  setTimeout(() => box.remove(), time * 1000);
+}
+
+function toastStack() {
+  let stack = document.getElementById('toast-stack');
+  if (!stack) {
+    stack = el('div', { id: 'toast-stack', class: 'toast-stack' });
+    document.getElementById('modal-layer').append(stack);
+  }
+  return stack;
+}
+
+/** Ett meddelande som står kvar medan något pågår ("Lägger till 3 av 7"). set byter texten, close tar bort det. */
+export function statusBox(message = '') {
+  const box = el('div', { class: 'toast status-box', role: 'status', dataset: { testid: 'status-box' } }, message);
+  toastStack().append(box);
+  return {
+    set(text) { box.textContent = text; },
+    close() { box.remove(); },
+  };
 }
 
 export function formatDate(seconds) {

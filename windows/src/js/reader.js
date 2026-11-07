@@ -2,24 +2,16 @@
 // Själva sidorna ritas av PdfReader (PDF) eller ReflowReader (EPUB och text).
 
 import { readBookFile } from './backend.js';
+import { bookErrorMessage } from './bookerrors.js';
 import { closeWordPopup, isWordPopupOpen, showWordPopup } from './popup.js';
 import { PdfReader } from './pdfreader.js';
 import { FONTS, ReflowReader, SIZES } from './reflowreader.js';
 import { markOpened, savePosition, setSetting, settings } from './store.js';
 import { syncSoon } from './sync.js';
+import { THEMES, applyTheme, resolvedTheme, setThemeListener } from './theme.js';
 import { el, promptDialog, replace, toast } from './ui.js';
 
-const THEMES = [
-  { id: 'white', title: 'Vitt' },
-  { id: 'sepia', title: 'Sepia' },
-  { id: 'dark', title: 'Mörkt' },
-];
-
 let active = null;
-
-export function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-}
 
 export async function closeReader() {
   if (!active) return;
@@ -33,8 +25,8 @@ export async function closeReader() {
 /** Öppnar en bok i `container`. onBack går tillbaka till biblioteket. */
 export async function openReader(container, book, { onBack, onSavedWords, onAbout }) {
   await closeReader();
-  const bytes = await readBookFile(book.id, book.ext);
   const stage = el('div', { class: 'reader-stage', tabindex: '-1' });
+  const loading = el('div', { class: 'reader-loading', dataset: { testid: 'reader-loading' } }, 'Öppnar boken ...');
   const label = el('button', { class: 'page-label', title: book.format === 'pdf' ? 'Gå till sida' : null }, '');
   const slider = el('input', { type: 'range', class: 'page-slider', min: '0', max: '1000', value: '0', 'aria-label': 'Plats i boken' });
   const panel = el('div', { class: 'reader-panel', hidden: true });
@@ -57,7 +49,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   ];
   const view = el('div', { class: 'reader' },
     toolbar,
-    el('div', { class: 'reader-body' }, stage, arrows, panel),
+    el('div', { class: 'reader-body' }, stage, loading, arrows, panel),
     el('footer', { class: 'reader-bottom' }, slider, label));
   replace(container, view);
 
@@ -237,10 +229,11 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
         onclick: async () => {
           await setSetting('theme', theme.id);
           applyTheme(theme.id);
-          reader.setSettings?.({ theme: theme.id });
+          reader.setSettings?.({ theme: resolvedTheme() });
           togglePanel(null);
         } }, theme.title))),
-      el('p', { class: 'muted' }, 'Gäller alla böcker. Mörkt vänder ljusheten på PDF-sidor men behåller färgerna.'));
+      el('p', { class: 'muted' }, 'Gäller alla böcker. Mörkt vänder ljusheten på PDF-sidor men behåller färgerna. '
+        + 'Följ systemet blir ljust eller mörkt som Windows.'));
     } else if (name === 'zoom') {
       const fits = [
         { id: 'auto', title: 'Automatiskt', note: 'Hela sidan om texten blir läsbar, annars en sida i läsbar storlek som du rullar i.' },
@@ -295,20 +288,27 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   active = {
     async close() {
       document.removeEventListener('keydown', onKey);
+      setThemeListener(null);
       closeWordPopup();
       await save();
       reader.destroy();
     },
   };
+  // Följ systemet: när Windows byter mellan ljust och mörkt följer EPUB-sidorna med.
+  setThemeListener((theme) => reader.setSettings?.({ theme }));
 
   await markOpened(book.id);
   try {
+    // Bokfilen läses först nu, så att läsaren och Öppnar boken syns direkt.
+    const bytes = await readBookFile(book.id, book.ext);
     if (book.format === 'pdf') await reader.open(bytes, book.position);
-    else await reader.open(bytes, book.position, { ext: book.ext, title: book.title, settings: { ...settings } });
+    else await reader.open(bytes, book.position, { ext: book.ext, title: book.title, settings: { ...settings, theme: resolvedTheme() } });
   } catch (error) {
     console.error(error);
-    replace(stage, el('div', { class: 'empty' }, el('p', {}, 'Boken kunde inte öppnas.'), el('p', { class: 'muted' }, String(error?.message ?? error))));
+    replace(stage, el('div', { class: 'empty', dataset: { testid: 'open-error' } },
+      el('p', {}, 'Boken kunde inte öppnas.'), el('p', { class: 'muted' }, bookErrorMessage(error, book.title))));
   }
+  loading.remove();
   // Boken har öppnats: platsen nu är utgångsläget, och först en flytt härifrån sparas.
   baseline = positionKey(location?.position);
   stage.focus({ preventScroll: true });

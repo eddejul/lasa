@@ -100,7 +100,7 @@ jobs:
       - name: lookup.js mot lookup.py över testlistan, och ordreglerna
         run: |
           node --no-warnings windows/tests/parity.mjs build/ordbok/lasa-ordbok.sqlite tools/dictionary/testwords.txt python3
-          node --test windows/tests/wordfind.test.mjs
+          node --test windows/tests/wordfind.test.mjs windows/tests/textbook.test.mjs
 
   build:
     name: Appen för Windows
