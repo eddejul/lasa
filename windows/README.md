@@ -67,21 +67,51 @@ Oavgjort blir svenska, som på iPaden. För engelska ord avgör ordet före vilk
 
 Ett avstavat ord över en radbrytning i en PDF ("kun-" och "skap") slås ihop till "kunskap", som på iPaden.
 
+## Synk med iPaden (fas 6)
+
+Läspositioner och sparade ord synkas med iPaden via ditt eget Supabase-projekt (gratisnivån). Hur projektet
+skapas, och hur synken fungerar, står i [docs/SYNK.md](../docs/SYNK.md). Böckerna själva synkas inte: lägg
+samma fil i Läsa på båda ställena. Böckerna känns igen på filens innehåll (SHA-256), inte på namnet.
+
+1. Fliken **Inställningar**, Synk med iPaden.
+2. Fyll i projektets adress (`https://...supabase.co`), den publika nyckeln (börjar med `sb_publishable_`,
+   eller den äldre anon-nyckeln, aldrig secret-nyckeln), e-post och lösenord. Samma som på iPaden.
+3. Klicka **Logga in**. Läsa synkar direkt, och statusen visar vad som skickades och hämtades.
+
+Lösenordet sparas aldrig. Den publika nyckeln och inloggningen (förnyelsetoken) sparas i Windows
+Autentiseringshanteraren (Kontrollpanelen, Autentiseringshanteraren, Windows-autentiseringsuppgifter, namn
+som börjar med `sync-` och slutar med `se.edvin.lasa`). Logga ut tar bort inloggningen.
+
+* Läsa synkar när appen startar, när du stänger en bok (högst en gång i minuten) och med **Synka nu**.
+  Utan inställningar händer ingenting.
+* Den nyaste ändringen vinner, rad för rad. En nyare position från iPaden gäller nästa gång boken öppnas.
+  Är boken öppen när synken kommer hoppar den inte, och den skriver inte över iPadens position om du inte
+  bläddrar.
+* PDF synkar sidan. EPUB synkar kapitlet och hur långt in i kapitlet du är, så på andra enheten hamnar du
+  på samma ställe i kapitlet men inte alltid exakt samma rad. Textfiler (txt, md) synkar inte positionen,
+  eftersom iPaden delar dem i kapitel på sitt eget sätt.
+* Ett ord som tas bort i Sparade ord tas bort på iPaden också. Repetitionen från iPaden följer med orden
+  oförändrad (Windows-appen repeterar inte).
+* Markeringar och bokmärken synkas inte till datorn än, och iPadens rader rörs inte.
+
 ## Var allt sparas
 
 I mappen `%APPDATA%\se.edvin.lasa`:
 
 * `Böcker\` med bokfilerna. Varje fil heter efter sitt id, som är SHA-256 av filens innehåll (64 tecken).
   Samma id används på iPaden i fas 6, så att böckerna kan kännas igen mellan enheterna.
-* `bibliotek.sqlite`: biblioteket, läspositioner och inställningar.
+* `bibliotek.sqlite`: biblioteket, läspositioner (med ändringstid för synken) och inställningar, även
+  synkens adress och e-post.
 * `anvandarord.sqlite`: sparade ord och dolda synonympar. Tabellen `saved_words` har samma kolumner som på
-  iPaden, plus `uuid` och `book_id` för synken i fas 6.
+  iPaden, plus `uuid` och `book_id`, `deleted` för borttagna ord och iPadens repetition.
 
 Ordboken (`lasa-ordbok.sqlite`) ligger bland programfilerna och ändras aldrig.
 
 ## Kända brister
 
-* Markeringar, anteckningar, bokmärken, sök i boken och synk finns inte än (fas 4 och 6).
+* Markeringar, anteckningar, bokmärken, sök i boken, repetition, uppläsning och AI-knappen finns inte på
+  datorn än. Synken tar bara läspositioner och sparade ord.
+* Synken är provad mot en låtsas-Supabase, inte mot ett riktigt Supabase-projekt.
 * Skannade PDF:er utan textlager: sidorna visas, men ord går inte att slå upp. Appen säger till.
 * Språkgissningen och den engelska ordklassen är enklare än iPadens, som använder Apples språkverktyg.
   Knappen Visa som engelska eller svenska rättar fel språk.
@@ -101,8 +131,10 @@ windows/
     js/pdfreader.js   PDF med pdf.js
     js/reflowreader.js EPUB och text med foliate-js
     js/popup.js       ordrutan
+    js/sync.js        synken med iPaden (som App/Sync/SyncEngine.swift), js/settings.js inställningarna
     vendor/           pdf.js och foliate-js med licenser, se vendor/VENDOR.md
-  src-tauri/          Rust-delen: ordboken (dict_query), användarens databaser, bokfilerna
+  src-tauri/          Rust-delen: ordboken (dict_query), användarens databaser, bokfilerna, synkens
+                      hemligheter i Autentiseringshanteraren (secret_get, secret_set)
   dev/server.py       kör gränssnittet i en vanlig webbläsare utan Tauri
   tests/              paritetstest, enhetstester och provkörning i Chrome
   tools/              vendor.mjs (kopierar pdf.js), make_icons.py (ikonen)
@@ -126,6 +158,11 @@ Content-Security-Policy som appen.
   `python windows/tests/e2e.py --books <mapp> --out <mapp för bilder>`: lägger till böcker, bläddrar,
   slår upp ord, provar teman, zoom, Sparade ord, läspositionen efter omladdning och att skript i EPUB
   stoppas, i huvudlös Chrome mot `dev/server.py` med tom datamapp.
+* `python windows/tests/e2e_sync.py --books <mapp> --out <mapp>` (också mot `dev/server.py` med tom
+  datamapp): startar `tests/mock_supabase.py` på port 8956 med ett frö, loggar in, synkar och kontrollerar
+  vad som hamnar i appen och på servern, att en andra synk skickar och hämtar noll rader, att borttaget blir
+  `deleted = true`, att en öppen bok inte hoppar och att markeringar aldrig rörs. Provservern låter sidan
+  anropa 127.0.0.1 (bara den, appen får bara anropa `https://*.supabase.co`).
 
 **Bygget:** workflow `Windows build` (`.github/workflows/windows-build.yml`) körs vid push till `main`
 och `fas*` när något under `windows/`, `tools/dictionary/` eller själva workflowfilen ändras. Ordboken
