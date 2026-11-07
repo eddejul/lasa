@@ -2,7 +2,7 @@
 
 Läsapp för iPad och iPhone med pappersvikning som i Apple Books, och en ordfunktion som visar synonymer när man trycker på ett ord. Hela planen finns i [docs/SPEC.md](docs/SPEC.md).
 
-**Status:** fas 1. Appen läser PDF med pappersvikning, med uppslag i liggande läge på iPad, innehållsförteckning, Gå till sida, reglage, zoom och tre bakgrunder. Fas 0 är testad och godkänd på iPaden.
+**Status:** fas 2 byggs på grenen `fas2`: ordboken. Fas 1 (uppslag i liggande läge, innehållsförteckning, Gå till sida, reglage, zoom och tre bakgrunder) testas på iPaden. Fas 0 är testad och godkänd.
 
 ## Kom igång (en gång)
 
@@ -40,6 +40,16 @@ Vill du slippa det: **AltStore** förnyar appen automatiskt när datorn (med Alt
 
 Berätta för Claude Code vad som känns fel, till exempel om vikningen hackar eller om texten är suddig.
 
-## Licenser för ordboken (fas 2)
+## Testa fas 2
 
-Ordboken bygger på Swesaurus och SALDO (Språkbanken, Göteborgs universitet), Open English WordNet och Folkets lexikon (KTH). Detaljer i specen.
+* Håll fingret stilla på ett ord i en PDF en kort stund. Ordet markeras och en ruta visar grundform, ordklass och synonymer per betydelse. Ett vanligt tryck i mitten visar fortfarande menyn.
+* Prova en böjd form (till exempel "sprang" eller "svårigheter") och ett ord som är avstavat över två rader.
+* Prova ett engelskt ord: rutan ska visa svensk översättning och engelska synonymer med definition.
+* Tryck på en betydelse för att se synonymerna en och en. Svep åt vänster på en synonym för Fel synonym. Visa i SO och SAOL öppnar svenska.se.
+* I biblioteket, knappen uppe till vänster: Sparade ord (orden du slagit upp, med meningen) och Om ordboken (källor och hur snabbt uppslagen gick).
+
+Testrapporten för ordboken (150 ord ur kurslitteraturen och appens svar) finns som artefakten **Ordbok-testrapport** i samma körning som appen.
+
+## Licenser för ordboken
+
+Ordboken bygger på Folkets synonymlexikon och Folkets lexikon (KTH), Swesaurus och SALDO (Språkbanken, Göteborgs universitet) och Open English WordNet. Detaljer i `tools/dictionary/README.md` och under Om ordboken i appen.

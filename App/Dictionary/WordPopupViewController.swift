@@ -176,7 +176,7 @@ final class WordPopupViewController: UITableViewController {
                         rows.append(.noSynonyms)
                     }
                 } else {
-                    rows += entry.senses.indices.map { .sense(index, $0) }
+                    rows += entry.senses.indices.map { Row.sense(index, $0) }
                 }
                 sections.append(rows)
             }
