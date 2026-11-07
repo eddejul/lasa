@@ -21,10 +21,20 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         openIncoming(connectionOptions.urlContexts)
     }
 
-    /// Synkar när appen kommer fram, om synken är inställd (fas 6).
+    /// Synkar när appen kommer fram, om synken är inställd (fas 6), och sparar dagens säkerhetskopia (G1).
     func sceneDidBecomeActive(_ scene: UIScene) {
         guard !SelfTest.isActive else { return }
         SyncEngine.shared.syncSoon()
+        Backup.makeDailyIfNeeded()
+    }
+
+    /// Dagens säkerhetskopia om den inte redan finns, innan iOS pausar appen.
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        guard !SelfTest.isActive else { return }
+        let task = BackgroundTask(name: "Säkerhetskopia")
+        Backup.makeDailyIfNeeded { _ in
+            task.end()
+        }
     }
 
     /// "Öppna i Läsa" från Filer eller en annan app medan appen redan är igång.

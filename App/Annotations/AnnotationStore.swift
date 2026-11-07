@@ -171,6 +171,16 @@ final class AnnotationStore {
         (try? db?.userVersion()) ?? -1
     }
 
+    /// Ersätter allt med en säkerhetskopia (G1). En äldre kopia uppdateras till dagens version.
+    func restore(from url: URL) throws {
+        guard let db = db else {
+            throw SQLiteDatabase.Failure(description: "Markeringarnas databas gick inte att öppna")
+        }
+        try db.replaceContents(with: url)
+        try db.migrate(Self.migrations)
+        NotificationCenter.default.post(name: Self.didChange, object: nil)
+    }
+
     /// Kör en skrivning i en transaktion: allt eller inget. Går det inte säger appen till.
     @discardableResult
     private func write(_ what: String, _ body: (SQLiteDatabase) throws -> Void) -> Bool {

@@ -1,6 +1,6 @@
 import UIKit
 
-/// Inställningar (fas 6): bläddringsljud, nyckeln till AI-knappen och synken.
+/// Inställningar (fas 6): bläddringsljud, nyckeln till AI-knappen, synken och säkerhetskopian (G1).
 /// Hemligheter sparas i nyckelringen, aldrig i filer.
 final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
@@ -17,6 +17,9 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         case syncNow
         case syncStatus
         case syncSignOut
+        case backupStatus
+        case backupNow
+        case backupRestore
     }
 
     private struct Section {
@@ -30,6 +33,8 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     private var geminiStatus: String?
     private var syncBusy = false
     private var syncMessage: String?
+    private var backupBusy = false
+    private var backupMessage: String?
 
     init() {
         super.init(style: .insetGrouped)
@@ -70,6 +75,10 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
                         + "Google AI Studio (aistudio.google.com, Get API key). Nyckeln sparas bara i iPadens nyckelring. "
                         + "Meningen och ordet skickas till Google, och på gratisnivån får Google använda det för att "
                         + "förbättra sina tjänster. Utan nyckel syns ingen AI-knapp."),
+            Section(title: "Säkerhetskopia", rows: [.backupStatus, .backupNow, .backupRestore],
+                    footer: "En kopia sparas varje dag i Filer under \(Self.filesLocation), Säkerhetskopia, och de "
+                        + "sju senaste sparas. Den har markeringar, anteckningar, sparade ord och läspositioner. "
+                        + "Kopiorna försvinner om appen tas bort, så flytta gärna en till iCloud Drive."),
             Section(title: "Synk med Windows-appen", rows: syncRows,
                     footer: "Läsposition, markeringar, bokmärken och sparade ord synkas via ditt eget Supabase-projekt "
                         + "(gratisnivån). Böckerna känns igen på innehållet, så samma fil måste finnas på båda ställena. "
@@ -174,11 +183,43 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         case .syncSignOut:
             content.text = "Logga ut"
             content.textProperties.color = .systemRed
+        case .backupStatus:
+            content = UIListContentConfiguration.subtitleCell()
+            content.text = "Senaste kopian"
+            if let latest = Backup.copies().first {
+                content.secondaryText = Self.backupDate(latest.date)
+            } else {
+                content.secondaryText = "Ingen kopia än."
+            }
+            if let message = backupMessage {
+                content.secondaryText = (content.secondaryText ?? "") + "\n" + message
+            }
+            content.secondaryTextProperties.numberOfLines = 0
+            cell.selectionStyle = .none
+        case .backupNow:
+            content.text = backupBusy ? "Sparar …" : "Spara en kopia nu"
+            content.textProperties.color = view.tintColor
+        case .backupRestore:
+            content.text = "Återställ från säkerhetskopia"
+            content.textProperties.color = view.tintColor
         default:
             break
         }
         cell.contentConfiguration = content
         return cell
+    }
+
+    /// Var appens mapp syns i Filer.
+    private static var filesLocation: String {
+        let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        return "På min \(device), \(AppExpiry.appName)"
+    }
+
+    static func backupDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "sv_SE")
+        formatter.dateFormat = "d MMMM yyyy 'kl.' HH.mm"
+        return formatter.string(from: date)
     }
 
     private func field(_ indexPath: IndexPath, title: String, text: String, placeholder: String, secure: Bool,
@@ -210,9 +251,81 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
             SyncClient.shared.signOut()
             syncMessage = nil
             rebuild()
+        case .backupNow:
+            backupNow()
+        case .backupRestore:
+            chooseBackup(from: tableView.cellForRow(at: indexPath))
         default:
             break
         }
+    }
+
+    // MARK: Säkerhetskopian (G1)
+
+    private func backupNow() {
+        guard !backupBusy else { return }
+        backupBusy = true
+        backupMessage = nil
+        rebuild()
+        Backup.make { [weak self] result in
+            guard let self = self else { return }
+            self.backupBusy = false
+            if case .failure(let error) = result {
+                self.backupMessage = "Kopian kunde inte sparas: \(error.localizedDescription)"
+            }
+            self.rebuild()
+        }
+    }
+
+    private func chooseBackup(from cell: UITableViewCell?) {
+        let copies = Backup.copies()
+        guard !copies.isEmpty else {
+            showAlert(title: "Ingen säkerhetskopia", message: "Det finns ingen kopia att återställa från än.")
+            return
+        }
+        let sheet = UIAlertController(title: "Återställ från säkerhetskopia",
+                                      message: "Välj vilken kopia du vill gå tillbaka till.",
+                                      preferredStyle: .actionSheet)
+        for copy in copies {
+            sheet.addAction(UIAlertAction(title: Self.backupDate(copy.date), style: .default) { [weak self] _ in
+                self?.confirmRestore(copy)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = cell ?? view
+            popover.sourceRect = cell?.bounds ?? CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+        }
+        present(sheet, animated: true)
+    }
+
+    private func confirmRestore(_ copy: Backup.Copy) {
+        let alert = UIAlertController(
+            title: "Återställ från \(Self.backupDate(copy.date))?",
+            message: "Markeringar, anteckningar, sparade ord och läspositioner ersätts med kopians. Det du har nu "
+                + "sparas först som en ny kopia, så att du kan gå tillbaka.",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Återställ", style: .destructive) { [weak self] _ in
+            self?.restore(copy)
+        })
+        present(alert, animated: true)
+    }
+
+    private func restore(_ copy: Backup.Copy) {
+        do {
+            try Backup.restore(copy)
+            backupMessage = "Återställt från \(Self.backupDate(copy.date))."
+            rebuild()
+        } catch {
+            showAlert(title: "Kunde inte återställa", message: error.localizedDescription)
+        }
+    }
+
+    private func showAlert(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 
     // MARK: Fälten

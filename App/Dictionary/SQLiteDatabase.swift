@@ -123,6 +123,38 @@ final class SQLiteDatabase {
         return (start, version)
     }
 
+    /// SQLite:s backup från en anslutning till en annan, hela databasen i ett steg (G1).
+    static func backup(from source: OpaquePointer?, to destination: OpaquePointer?) throws {
+        guard let backup = sqlite3_backup_init(destination, "main", source, "main") else {
+            throw Failure(description: destination.map { String(cString: sqlite3_errmsg($0)) } ?? "okänt fel")
+        }
+        let result = sqlite3_backup_step(backup, -1)
+        sqlite3_backup_finish(backup)
+        guard result == SQLITE_DONE else {
+            throw Failure(description: "kopieringen svarade \(result): "
+                          + (destination.map { String(cString: sqlite3_errmsg($0)) } ?? "okänt fel"))
+        }
+    }
+
+    /// Ersätter hela databasen med innehållet i en annan databasfil, till exempel en säkerhetskopia.
+    func replaceContents(with url: URL) throws {
+        guard depth == 0 else {
+            throw Failure(description: "Kan inte ersätta databasen mitt i en transaktion")
+        }
+        var source: OpaquePointer?
+        defer { sqlite3_close(source) }
+        guard sqlite3_open_v2(url.path, &source, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+            throw Failure(description: "Kopian gick inte att öppna: "
+                          + (source.map { String(cString: sqlite3_errmsg($0)) } ?? "okänt fel"))
+        }
+        // De förberedda satserna kan peka på tabeller som byts ut.
+        for statement in statements.values {
+            sqlite3_finalize(statement)
+        }
+        statements.removeAll()
+        try Self.backup(from: source, to: handle)
+    }
+
     /// Kör `body` i en transaktion: allt sparas, eller inget om något kastar ett fel.
     /// En transaktion inuti en annan blir en del av den yttre.
     func transaction<T>(_ body: () throws -> T) throws -> T {

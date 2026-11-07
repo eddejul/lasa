@@ -28,3 +28,22 @@ final class PaddedLabel: UILabel {
                                             bottom: -insets.bottom, right: -insets.right))
     }
 }
+
+/// En uppgift som iOS låter köra klart en kort stund efter att appen gått till bakgrunden.
+@MainActor
+final class BackgroundTask {
+
+    private var identifier = UIBackgroundTaskIdentifier.invalid
+
+    init(name: String) {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            self?.end()
+        }
+    }
+
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+    }
+}

@@ -46,6 +46,7 @@ enum Fas6SelfTest {
         navigation.popToRootViewController(animated: false)
 
         testDatabases()
+        await testExpiryAndBackup(library: library)
 
         // AI-svaret: tolkningen av ett svar från Gemini, och att påhittade ord rensas bort.
         if let lookup = WordDictionary.shared?.lookup("vacker", sentence: "Alla var överens om att den var vacker.") {
@@ -118,6 +119,62 @@ enum Fas6SelfTest {
             SelfTest.log("FEL: databastestet: \(error)")
         }
         SelfTest.log("Fel vid sparning hittills: \(SaveProblems.count)")
+    }
+
+    /// G1: utgångsdatumet ur profilen, raden i biblioteket, och en säkerhetskopia som sparas och återställs.
+    private static func testExpiryAndBackup(library: UIViewController) async {
+        // Profilen är en signerad fil med en plist i mitten. Här en påhittad med skräp runt plisten.
+        let expiry = Date(timeIntervalSince1970: 1_900_000_000)
+        var fake = Data([0x30, 0x82, 0x0A, 0x00]) + Data("signerat".utf8)
+        if let plist = try? PropertyListSerialization.data(fromPropertyList: ["ExpirationDate": expiry, "Name": "Test"],
+                                                            format: .xml, options: 0) {
+            fake.append(plist)
+        }
+        fake.append(Data([0x00, 0xA0, 0x82, 0x01]))
+        let parsed = AppExpiry.parse(fake)
+        SelfTest.log("Profilens utgångsdatum: \(parsed == expiry ? "läses rätt" : "FEL, \(String(describing: parsed))")")
+        SelfTest.log("Profil i appen i simulatorn: \(AppExpiry.profileExpirationDate == nil ? "ingen (rätt)" : "FEL, finns")")
+
+        let now = Date()
+        SelfTest.log("Varning tre dagar före: "
+                     + (AppExpiry.warning(expiring: now.addingTimeInterval(3 * 86_400), now: now) ?? "ingen (rätt)"))
+        AppExpiry.overrideDate = now.addingTimeInterval(30 * 3600)
+        SelfTest.log("Varning 30 timmar före: \(AppExpiry.warning() ?? "FEL, ingen")")
+        let libraryList = library as? LibraryViewController
+        libraryList?.reload()
+        await pause(0.8)
+        SelfTest.saveScreen(library.navigationController?.view ?? library.view, name: "06-utgang")
+        AppExpiry.overrideDate = nil
+        libraryList?.reload()
+
+        // Säkerhetskopian: spara, ändra, återställ.
+        let positionKey = "position.kopieprov.pdf"
+        UserWords.shared.save(word: "kopieprov", lemma: "kopieprov", language: .swedish,
+                              sentence: "Ett ord för säkerhetskopian.", book: "test", pageIndex: 1)
+        UserDefaults.standard.set(7, forKey: positionKey)
+        let made: Result<Backup.Copy, Error> = await withCheckedContinuation { continuation in
+            Backup.make { continuation.resume(returning: $0) }
+        }
+        guard case .success(let copy) = made else {
+            SelfTest.log("FEL: säkerhetskopian sparades inte")
+            return
+        }
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: copy.url.path)) ?? []
+        SelfTest.log("Säkerhetskopia \(copy.url.lastPathComponent): \(files.sorted().joined(separator: ", "))")
+        UserWords.shared.delete(lemma: "kopieprov", language: .swedish)
+        UserDefaults.standard.set(1, forKey: positionKey)
+        do {
+            try Backup.restore(copy)
+            let back = UserWords.shared.isSaved(lemma: "kopieprov", language: .swedish)
+            let position = UserDefaults.standard.integer(forKey: positionKey)
+            SelfTest.log("Återställning: ordet \(back ? "är tillbaka" : "FEL, saknas"), läsposition \(position) "
+                         + "(ska vara 7), \(Backup.copies().count) kopior, databaserna version "
+                         + "\(AnnotationStore.shared.schemaVersion) och \(UserWords.shared.schemaVersion)")
+        } catch {
+            SelfTest.log("FEL: återställningen: \(error.localizedDescription)")
+        }
+        UserDefaults.standard.removeObject(forKey: positionKey)
+        UserWords.shared.delete(lemma: "kopieprov", language: .swedish)
     }
 
     private static func testSync(navigation: UINavigationController) async {

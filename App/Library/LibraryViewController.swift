@@ -81,6 +81,55 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         guard isViewLoaded else { return }
         tableView.reloadData()
         updateEmptyState()
+        updateExpiryBanner()
+    }
+
+    // MARK: Appen går ut (G1)
+
+    private var expiryText: String?
+
+    /// En rad överst två dagar innan appen går ut: Läsa går ut torsdag kl. 14, förnya i Sideloadly.
+    private func updateExpiryBanner() {
+        let text = AppExpiry.warning()
+        guard text != expiryText || (text != nil && tableView.tableHeaderView == nil) else { return }
+        expiryText = text
+        guard let text = text else {
+            tableView.tableHeaderView = nil
+            return
+        }
+        let label = PaddedLabel()
+        label.insets = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
+        label.text = text
+        label.numberOfLines = 0
+        label.font = .preferredFont(forTextStyle: .subheadline)
+        label.textColor = .label
+        label.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.18)
+        label.layer.cornerRadius = 12
+        label.layer.masksToBounds = true
+        label.accessibilityTraits = .staticText
+        let container = UIView()
+        container.addSubview(label)
+        tableView.tableHeaderView = container
+        layoutExpiryBanner()
+    }
+
+    private func layoutExpiryBanner() {
+        guard let container = tableView.tableHeaderView, let label = container.subviews.first as? UILabel else { return }
+        let width = tableView.bounds.width
+        let side = max(tableView.layoutMargins.left, 16)
+        let labelWidth = max(width - side * 2, 100)
+        let height = label.sizeThatFits(CGSize(width: labelWidth, height: .greatestFiniteMagnitude)).height
+        label.frame = CGRect(x: side, y: 8, width: labelWidth, height: ceil(height))
+        let total = ceil(height) + 12
+        if container.frame.width != width || container.frame.height != total {
+            container.frame = CGRect(x: 0, y: 0, width: width, height: total)
+            tableView.tableHeaderView = container
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutExpiryBanner()
     }
 
     // MARK: Öppna
