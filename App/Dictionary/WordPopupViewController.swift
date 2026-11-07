@@ -100,6 +100,15 @@ final class WordPopupViewController: UITableViewController {
         case switchLanguage
         case unsave
         case about
+        /// AI-knappen (fas 6): knappen, väntan, svaret eller felet.
+        case ai
+    }
+
+    private enum AIState {
+        case idle
+        case loading
+        case done(WordExplanation)
+        case failed(String)
     }
 
     private struct Section {
@@ -112,6 +121,7 @@ final class WordPopupViewController: UITableViewController {
     private let context: Context
     private var sections: [Section] = []
     private var hiddenCount = 0
+    private var aiState = AIState.idle
     var onReady: (() -> Void)?
 
     init(lookup: WordLookup?, context: Context) {
@@ -244,6 +254,10 @@ final class WordPopupViewController: UITableViewController {
                 sections.append(Section(title: title, rows: rows))
             } else if entry.translations.isEmpty {
                 sections.append(Section(title: nil, rows: [.noContent]))
+            }
+            if GeminiClient.isConfigured {
+                sections.append(Section(title: "Förklaring med AI", rows: [.ai],
+                                        footer: "Meningen och ordet skickas till Google Gemini."))
             }
             if lookup.entries.count > 1 {
                 sections.append(Section(title: "Även som", rows: lookup.entries.indices.dropFirst().map { Row.otherEntry($0) }))
@@ -388,9 +402,66 @@ final class WordPopupViewController: UITableViewController {
         case .about:
             content = actionContent("Om ordboken", symbol: "info.circle")
             cell.selectionStyle = .default
+
+        case .ai:
+            switch aiState {
+            case .idle:
+                content = actionContent("Förklara i meningen", symbol: "sparkles")
+                cell.selectionStyle = .default
+            case .loading:
+                content = UIListContentConfiguration.cell()
+                content.text = "Frågar Gemini …"
+                content.textProperties.color = .secondaryLabel
+                let spinner = UIActivityIndicatorView(style: .medium)
+                spinner.startAnimating()
+                cell.accessoryView = spinner
+            case .done(let answer):
+                content.text = answer.explanation
+                var details: [String] = []
+                if let best = answer.bestWord {
+                    details.append("Passar bäst här: \(best)")
+                }
+                if let sense = answer.senseText {
+                    details.append("Betydelsen i ordboken: \(sense)")
+                }
+                content.secondaryText = details.isEmpty ? nil : details.joined(separator: "\n")
+            case .failed(let message):
+                content.text = message
+                content.textProperties.color = .systemRed
+                content.secondaryText = "Tryck för att försöka igen."
+                cell.selectionStyle = .default
+            }
+        }
+        if case .ai = sections[indexPath.section].rows[indexPath.row], case .loading = aiState {
+            // Snurran sattes ovan.
+        } else {
+            cell.accessoryView = nil
         }
         cell.contentConfiguration = content
         return cell
+    }
+
+    /// Frågar Gemini om ordets betydelse i meningen.
+    private func askAI() {
+        guard let lookup = lookup else { return }
+        switch aiState {
+        case .loading, .done:
+            return
+        default:
+            break
+        }
+        aiState = .loading
+        rebuild()
+        GeminiClient.explain(lookup, sentence: context.sentence) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let answer):
+                self.aiState = .done(answer)
+            case .failure(let error):
+                self.aiState = .failed(error.localizedDescription)
+            }
+            self.rebuild()
+        }
     }
 
     private func actionContent(_ title: String, symbol: String) -> UIListContentConfiguration {
@@ -441,6 +512,7 @@ final class WordPopupViewController: UITableViewController {
                                                          language: lookup.language.other,
                                                          hidden: UserWords.shared.hiddenPairs) {
                 self.lookup = other
+                aiState = .idle
                 rebuild()
             }
 
@@ -452,6 +524,9 @@ final class WordPopupViewController: UITableViewController {
 
         case .about:
             navigationController?.pushViewController(AboutDictionaryViewController(), animated: true)
+
+        case .ai:
+            askAI()
 
         default:
             break

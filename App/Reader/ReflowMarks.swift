@@ -585,6 +585,83 @@ enum ReflowMarks {
         return { start: start, length: length, text: clean(range.toString()), page: page, rects: rectsOf(range) };
       }
 
+      // MARK: Uppläsning (fas 6)
+
+      // Texten som syns på en sida, och var den börjar i kapitlet.
+      function pageText(index) {
+        lasa.ensurePage(index);
+        ensure();
+        var w = lasa.pageWidth();
+        var h = window.innerHeight;
+        function inside(r) {
+          return r.width > 0 && r.right > 1 && r.left < w - 1 && r.bottom > 0 && r.top < h;
+        }
+        function charVisible(node, i) {
+          var r = document.createRange();
+          r.setStart(node, i);
+          r.setEnd(node, i + 1);
+          var list = r.getClientRects();
+          for (var k = 0; k < list.length; k++) {
+            if (inside(list[k])) {
+              return true;
+            }
+          }
+          return false;
+        }
+        var first = -1;
+        var last = -1;
+        for (var i = 0; i < nodes.length; i++) {
+          var node = nodes[i];
+          if (!node.data.length || /^\s*$/.test(node.data)) {
+            continue;
+          }
+          var whole = document.createRange();
+          whole.selectNodeContents(node);
+          var list = whole.getClientRects();
+          var visible = false;
+          for (var k = 0; k < list.length; k++) {
+            if (inside(list[k])) {
+              visible = true;
+              break;
+            }
+          }
+          if (!visible) {
+            if (first >= 0 && list.length && list[0].left >= w - 1) {
+              break;
+            }
+            continue;
+          }
+          if (first < 0) {
+            first = i;
+          }
+          last = i;
+        }
+        if (first < 0) {
+          return { start: 0, length: 0, text: '' };
+        }
+        var a = nodes[first];
+        var startIn = 0;
+        while (startIn < a.data.length && !charVisible(a, startIn)) {
+          startIn++;
+        }
+        var b = nodes[last];
+        var endIn = b.data.length;
+        while (endIn > 0 && !charVisible(b, endIn - 1)) {
+          endIn--;
+        }
+        var start = starts[first] + startIn;
+        var end = Math.max(start, starts[last] + endIn);
+        var range = rangeFor(start, end);
+        return { start: start, length: end - start, text: range ? range.toString() : '' };
+      }
+
+      // Rutorna för ett intervall på en sida.
+      function rectsOn(index, start, length) {
+        lasa.ensurePage(index);
+        var range = rangeFor(start, start + length);
+        return { rects: range ? rectsOf(range) : [] };
+      }
+
       // Sidbilden får också markeringarnas rutor, så att ett tryck på en markering kan hittas utan webbvyn.
       var originalShowPage = lasa.showPage;
       lasa.showPage = async function (index) {
@@ -598,7 +675,7 @@ enum ReflowMarks {
       };
 
       return { installStyle: installStyle, apply: apply, select: select, text: text, find: find, reveal: reveal,
-               visible: visible };
+               visible: visible, pageText: pageText, rectsOn: rectsOn };
     })();
     lasaMarks.installStyle(css);
     return true;

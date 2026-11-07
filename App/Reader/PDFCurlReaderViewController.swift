@@ -59,6 +59,13 @@ final class PDFCurlReaderViewController: UIViewController {
     private var lastQuery: String?
     private var selfTestStarted = false
 
+    // Fas 6: uppläsning. Koden ligger sist i filen.
+    private var readItem: UIBarButtonItem?
+    private var readBar: ReadAloudBar?
+    private var readingPage: Int?
+    private var readingText: FoldedText?
+    private var spokenWords = 0
+
     init?(book: Book) {
         guard let document = PDFDocument(url: book.url),
               !document.isLocked,
@@ -109,6 +116,7 @@ final class PDFCurlReaderViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopReading()
         guard isMovingFromParent else { return }
         if chromeHidden {
             navigationController?.setNavigationBarHidden(false, animated: animated)
@@ -338,7 +346,7 @@ final class PDFCurlReaderViewController: UIViewController {
         searchItem = annotationItems[0]
         markItem = annotationItems[1]
         bookmarkItem = annotationItems[2]
-        navigationItem.rightBarButtonItems = [themeButton, zoom] + annotationItems + [contents]
+        navigationItem.rightBarButtonItems = [themeButton, zoom, makeReadItem()] + annotationItems + [contents]
         contentsItem = contents
         themeItem = themeButton
     }
@@ -835,6 +843,8 @@ extension PDFCurlReaderViewController: UIPageViewControllerDataSource, UIPageVie
         LibraryStore.shared.savePageIndex(currentIndex, for: book)
         updatePageLabel()
         updateBookmarkState()
+        // Bläddrar man själv slutar uppläsningen.
+        stopReading()
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
         keepNeighbours()
@@ -851,6 +861,9 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
             return false
         }
         if let bar = markBar, let touched = touch.view, touched.isDescendant(of: bar) {
+            return false
+        }
+        if let bar = readBar, let touched = touch.view, touched.isDescendant(of: bar) {
             return false
         }
         if gestureRecognizer === markDrag {
@@ -1451,8 +1464,128 @@ extension PDFCurlReaderViewController {
         SelfTest.saveScreen(view, name: "10-morkt")
         setTheme(savedTheme)
 
+        await selfTestReadAloud()
+
         let after = AnnotationStore.shared.totalCounts()
         SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
         SelfTest.finish()
+    }
+}
+
+// MARK: Uppläsning (fas 6)
+
+extension PDFCurlReaderViewController {
+
+    fileprivate func makeReadItem() -> UIBarButtonItem {
+        let item = UIBarButtonItem(image: UIImage(systemName: "speaker.wave.2"), style: .plain,
+                                   target: self, action: #selector(toggleReading))
+        item.accessibilityLabel = "Läs upp"
+        readItem = item
+        return item
+    }
+
+    @objc fileprivate func toggleReading() {
+        if readingPage != nil {
+            stopReading()
+        } else {
+            startReading(at: visibleIndices.first ?? currentIndex)
+        }
+    }
+
+    /// Läser sidan och fortsätter på nästa, med pappersvikning när sidan är slut.
+    fileprivate func startReading(at index: Int, emptyPages: Int = 0) {
+        guard index >= 0, index < document.pageCount else {
+            stopReading()
+            return
+        }
+        readingPage = index
+        showReadBar()
+        let spoken = FoldedText((document.page(at: index)?.string ?? "") as NSString, lowercase: false)
+        guard !(spoken.text as String).trimmingCharacters(in: .whitespaces).isEmpty else {
+            if emptyPages >= 3 {
+                stopReading()
+                showToast("Sidorna har ingen text att läsa upp. De är troligen skannade.")
+            } else {
+                continueReading(after: index, emptyPages: emptyPages + 1)
+            }
+            return
+        }
+        readingText = spoken
+        ReadAloud.shared.speak(spoken.text as String, onWord: { [weak self] range in
+            self?.showSpokenWord(range, onPage: index)
+        }, onFinish: { [weak self] in
+            self?.continueReading(after: index, emptyPages: 0)
+        })
+    }
+
+    fileprivate func showSpokenWord(_ range: NSRange, onPage index: Int) {
+        guard readingPage == index, let spoken = readingText, let pdfPage = document.page(at: index) else { return }
+        spokenWords += 1
+        let original = spoken.originalRange(of: range)
+        guard original.length > 0 else { return }
+        let rects = PDFTextRanges.rects(on: pdfPage, range: original)
+        visiblePages.first { $0.pageIndex == index }?.showPreview(rects, color: .blue)
+    }
+
+    fileprivate func continueReading(after index: Int, emptyPages: Int) {
+        visiblePages.forEach { $0.clearPreview() }
+        let next = index + 1
+        guard next < document.pageCount else {
+            stopReading()
+            return
+        }
+        if visibleIndices.contains(next) {
+            startReading(at: next, emptyPages: emptyPages)
+            return
+        }
+        turnPage(forward: true)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard let self = self, self.readingPage == index else { return }
+            self.startReading(at: next, emptyPages: emptyPages)
+        }
+    }
+
+    fileprivate func stopReading() {
+        guard readingPage != nil || readBar != nil else { return }
+        readingPage = nil
+        readingText = nil
+        ReadAloud.shared.stop()
+        readBar?.removeFromSuperview()
+        readBar = nil
+        visiblePages.forEach { $0.clearPreview() }
+        readItem?.image = UIImage(systemName: "speaker.wave.2")
+        readItem?.accessibilityLabel = "Läs upp"
+    }
+
+    fileprivate func showReadBar() {
+        readItem?.image = UIImage(systemName: "speaker.slash")
+        readItem?.accessibilityLabel = "Sluta läsa upp"
+        guard readBar == nil else { return }
+        let bar = ReadAloudBar()
+        bar.onPause = { [weak bar] in
+            if ReadAloud.shared.isPaused {
+                ReadAloud.shared.resume()
+                bar?.setPaused(false)
+            } else {
+                ReadAloud.shared.pause()
+                bar?.setPaused(true)
+            }
+        }
+        bar.onStop = { [weak self] in
+            self?.stopReading()
+        }
+        bar.install(in: view)
+        readBar = bar
+    }
+
+    /// Självtestet: läs upp en stund och räkna orden.
+    fileprivate func selfTestReadAloud() async {
+        spokenWords = 0
+        startReading(at: visibleIndices.first ?? currentIndex)
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        SelfTest.log("Uppläsning: \(spokenWords) ord lästa på fyra sekunder, röst \(ReadAloud.voice(for: "Det här är en svensk mening.")?.language ?? "saknas")")
+        SelfTest.saveScreen(view, name: "11-upplasning")
+        stopReading()
     }
 }

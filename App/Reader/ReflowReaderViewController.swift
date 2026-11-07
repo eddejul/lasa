@@ -93,6 +93,13 @@ final class ReflowReaderViewController: UIViewController {
     private var bookSearch: BookSearch?
     private var lastQuery: String?
 
+    // Fas 6: uppläsning. Koden ligger sist i filen.
+    private var readItem: UIBarButtonItem?
+    private var readBar: ReadAloudBar?
+    private var readingPosition: ReflowPage?
+    private var readingSpan: (start: Int, text: FoldedText)?
+    private var spokenWords = 0
+
     init(book: Book) {
         self.book = book
         self.location = LibraryStore.shared.savedLocation(for: book) ?? ReflowLocation(chapter: 0, progression: 0)
@@ -147,6 +154,7 @@ final class ReflowReaderViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopReading()
         guard isMovingFromParent else { return }
         if isShowingPages {
             saveLocation()
@@ -554,7 +562,7 @@ final class ReflowReaderViewController: UIViewController {
         searchItem = annotationItems[0]
         markItem = annotationItems[1]
         bookmarkItem = annotationItems[2]
-        navigationItem.rightBarButtonItems = [themeButton, text] + annotationItems + [contents]
+        navigationItem.rightBarButtonItems = [themeButton, text, makeReadItem()] + annotationItems + [contents]
         contentsItem = contents
         typographyItem = text
         themeItem = themeButton
@@ -1190,6 +1198,8 @@ extension ReflowReaderViewController: UIPageViewControllerDataSource, UIPageView
             return
         }
         guard completed else { return }
+        // Bläddrar man själv slutar uppläsningen.
+        stopReading()
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
         pagesChanged()
@@ -1210,6 +1220,9 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
                 return false
             }
             if let bar = markBar, touched.isDescendant(of: bar) {
+                return false
+            }
+            if let bar = readBar, touched.isDescendant(of: bar) {
                 return false
             }
         }
@@ -1316,6 +1329,7 @@ extension ReflowReaderViewController {
 
         await selfTestWord(name: "03-ord")
         await selfTestAnnotations()
+        await selfTestReadAloud()
 
         let isFull = SelfTest.bookName?.lowercased().hasSuffix(".epub") == true
         if isFull, content.toc.count > 2 {
@@ -2000,5 +2014,141 @@ extension ReflowReaderViewController {
         }
         let after = AnnotationStore.shared.totalCounts()
         SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
+    }
+}
+
+// MARK: Uppläsning (fas 6)
+
+extension ReflowReaderViewController {
+
+    fileprivate func makeReadItem() -> UIBarButtonItem {
+        let item = UIBarButtonItem(image: UIImage(systemName: "speaker.wave.2"), style: .plain,
+                                   target: self, action: #selector(toggleReading))
+        item.accessibilityLabel = "Läs upp"
+        readItem = item
+        return item
+    }
+
+    @objc fileprivate func toggleReading() {
+        if readingPosition != nil {
+            stopReading()
+        } else if let page = visiblePages.first(where: { !$0.isBlank }), let number = page.page {
+            startReading(chapter: page.chapter, page: number)
+        }
+    }
+
+    /// Läser sidan och fortsätter på nästa, med pappersvikning när sidan är slut.
+    /// Texten på sidan tas fram i kapitlets webbvy.
+    fileprivate func startReading(chapter: Int, page: Int, emptyPages: Int = 0) {
+        guard let renderer = renderer else { return }
+        let position = ReflowPage(chapter: chapter, page: page)
+        readingPosition = position
+        readingSpan = nil
+        showReadBar()
+        if let count = renderer.pageCount(of: chapter), page >= count {
+            // Ett tomt blad efter kapitlets sista sida i ett uppslag.
+            continueReading(from: position, emptyPages: emptyPages)
+            return
+        }
+        renderer.evaluate("return lasaMarks.pageText(index);", arguments: ["index": page], in: chapter) { [weak self] value in
+            guard let self = self, self.readingPosition == position else { return }
+            let info = value as? [String: Any]
+            let text = info?["text"] as? String ?? ""
+            let start = Int(ReflowValues.number(info?["start"]) ?? 0)
+            let spoken = FoldedText(text as NSString, lowercase: false)
+            guard !(spoken.text as String).trimmingCharacters(in: .whitespaces).isEmpty else {
+                if emptyPages >= 3 {
+                    self.stopReading()
+                } else {
+                    self.continueReading(from: position, emptyPages: emptyPages + 1)
+                }
+                return
+            }
+            self.readingSpan = (start, spoken)
+            ReadAloud.shared.speak(spoken.text as String, onWord: { [weak self] range in
+                self?.showSpokenWord(range, at: position)
+            }, onFinish: { [weak self] in
+                self?.continueReading(from: position, emptyPages: 0)
+            })
+        }
+    }
+
+    fileprivate func showSpokenWord(_ range: NSRange, at position: ReflowPage) {
+        guard readingPosition == position, let span = readingSpan, let renderer = renderer else { return }
+        spokenWords += 1
+        let original = span.text.originalRange(of: range)
+        guard original.length > 0 else { return }
+        renderer.evaluate("return lasaMarks.rectsOn(index, start, length);",
+                          arguments: ["index": position.page, "start": span.start + original.location,
+                                      "length": original.length],
+                          in: position.chapter) { [weak self] value in
+            guard let self = self, self.readingPosition == position else { return }
+            let info = value as? [String: Any]
+            let rects = (info?["rects"] as? [Any] ?? []).compactMap { ReflowValues.rect(from: $0) }
+            self.visiblePages.first { $0.chapter == position.chapter && $0.page == position.page }?
+                .showPreview(rects, color: .blue, dark: self.theme.isDark)
+        }
+    }
+
+    fileprivate func continueReading(from position: ReflowPage, emptyPages: Int) {
+        visiblePages.forEach { $0.clearPreview() }
+        guard let next = step(chapter: position.chapter, slot: position.page, forward: true) else {
+            stopReading()
+            return
+        }
+        if visiblePages.contains(where: { $0.chapter == next.chapter && $0.slot == next.slot }) {
+            startReading(chapter: next.chapter, page: next.slot, emptyPages: emptyPages)
+            return
+        }
+        turn(forward: true)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard let self = self, self.readingPosition == position else { return }
+            self.startReading(chapter: next.chapter, page: next.slot, emptyPages: emptyPages)
+        }
+    }
+
+    fileprivate func stopReading() {
+        guard readingPosition != nil || readBar != nil else { return }
+        readingPosition = nil
+        readingSpan = nil
+        ReadAloud.shared.stop()
+        readBar?.removeFromSuperview()
+        readBar = nil
+        visiblePages.forEach { $0.clearPreview() }
+        readItem?.image = UIImage(systemName: "speaker.wave.2")
+        readItem?.accessibilityLabel = "Läs upp"
+    }
+
+    fileprivate func showReadBar() {
+        readItem?.image = UIImage(systemName: "speaker.slash")
+        readItem?.accessibilityLabel = "Sluta läsa upp"
+        guard readBar == nil else { return }
+        let bar = ReadAloudBar()
+        bar.onPause = { [weak bar] in
+            if ReadAloud.shared.isPaused {
+                ReadAloud.shared.resume()
+                bar?.setPaused(false)
+            } else {
+                ReadAloud.shared.pause()
+                bar?.setPaused(true)
+            }
+        }
+        bar.onStop = { [weak self] in
+            self?.stopReading()
+        }
+        bar.install(in: view)
+        readBar = bar
+    }
+
+    /// Självtestet: läs upp en stund och räkna orden.
+    fileprivate func selfTestReadAloud() async {
+        spokenWords = 0
+        toggleReading()
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        SelfTest.log("Uppläsning: \(spokenWords) ord lästa på fyra sekunder, röst "
+                     + "\(ReadAloud.voice(for: "Det här är en svensk mening.")?.language ?? "saknas")")
+        SelfTest.saveScreen(view, name: "03i-upplasning")
+        stopReading()
     }
 }
