@@ -3,10 +3,11 @@
 
 Källor (se SOURCES nedan och README.md):
   * Folkets synonymlexikon Synlex (KTH), svenska synonympar med betyg
+  * wordfreq (Robyn Speer), hur vanliga orden är, CC BY-SA 4.0
   * Swesaurus (Språkbanken), som delar upp Synlex-paren per betydelse, CC BY 4.0
   * SALDO och SALDO morfologi (Språkbanken), betydelser och böjningsformer, CC BY 4.0
   * Open English WordNet 2025, engelska synonymer och definitioner, CC BY 4.0
-  * Folkets lexikon (KTH), engelska till svenska, CC BY-SA 2.5
+  * Folkets lexikon (KTH), engelska till svenska och svenska definitioner, CC BY-SA 2.5
 
 Användning:
   python tools/dictionary/build.py                 # laddar ner till sources/, bygger out/lasa-ordbok.sqlite
@@ -35,7 +36,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Höj när schemat eller tolkningen ändras på ett sätt som appen behöver veta om.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SOURCES = {
     "synlex": "https://folkets-lexikon.csc.kth.se/lexikon/synpairs.xml",
@@ -44,7 +45,11 @@ SOURCES = {
     "saldom": "https://svn.spraakbanken.gu.se/sb-arkiv/pub/lmf/saldom/saldom.xml",
     "oewn": "https://github.com/globalwordnet/english-wordnet/releases/download/2025-edition/english-wordnet-2025.xml.gz",
     "folkets_en_sv": "https://folkets-lexikon.csc.kth.se/folkets/folkets_en_sv_public.xml",
+    "folkets_sv_en": "https://folkets-lexikon.csc.kth.se/folkets/folkets_sv_en_public.xml",
 }
+
+# Vanligheten kommer från wordfreq, som installeras i bygget (pip install wordfreq==3.1.1).
+WORDFREQ_VERSION = "3.1.1"
 
 # Specen: visa bara synonympar med betyg 3 eller högre på Synlex femgradiga skala.
 # Synlex-filen innehåller redan bara par från 3,0, men gränsen ligger här så att den kan höjas.
@@ -66,6 +71,12 @@ SV_COMPOUND_MSD = {"c", "ci", "cm", "sms"}
 
 OEWN_POS = {"n": "n", "v": "v", "a": "a", "s": "a", "r": "r"}
 FOLKETS_POS = {"nn": "n", "vb": "v", "jj": "a", "ab": "r"}
+# Folkets svensk-engelska del: ordklass till SALDO:s koder, och till engelska koder för omvända översättningar.
+FOLKETS_SV_POS = {"nn": "nn", "vb": "vb", "jj": "av", "pc": "av", "ab": "ab", "pp": "pp", "pn": "pn",
+                  "kn": "kn", "sn": "sn", "in": "in", "rg": "nl", "ie": "ie", "article": "al"}
+FOLKETS_SV_TO_EN = {"nn": "n", "vb": "v", "jj": "a", "pc": "a", "ab": "r"}
+# Omvända översättningar (ur den svensk-engelska delen) får rank från och med det här, efter Folkets egna.
+REVERSED_RANK = 500
 
 USER_AGENT = "Lasa-ordbok-bygge/1 (+https://github.com/eddejul/lasa)"
 
@@ -78,6 +89,21 @@ def normalize(word):
     """Samma normalisering som appen: NFKC (ligaturer som fi blir två bokstäver), raka apostrofer, gemener."""
     word = unicodedata.normalize("NFKC", word).replace("’", "'").replace("­", "")
     return word.strip().lower()
+
+
+def frequency_lookup(language):
+    """Hur vanligt ett ord är på Zipf-skalan (0 till 8, vanliga ord ligger runt 4 till 6)."""
+    try:
+        from wordfreq import zipf_frequency
+    except ImportError:
+        raise SystemExit(f"wordfreq saknas: pip install wordfreq=={WORDFREQ_VERSION}")
+    cache = {}
+
+    def frequency(word):
+        if word not in cache:
+            cache[word] = round(zipf_frequency(word, language), 2)
+        return cache[word]
+    return frequency
 
 
 def is_single_token(word):
@@ -394,6 +420,51 @@ def read_folkets(path, stats):
     return translations, forms
 
 
+def read_folkets_sv(path, stats):
+    """Svenska definitioner per SALDO-betydelse, och engelska ord med svensk översättning (omvänt).
+
+    Folkets svensk-engelska del har definitioner på enkel svenska för omkring 8 000 betydelser,
+    till exempel "springa: ta sig fram genom att röra benen snabbt, löpa", och länkar varje uppslag
+    till en SALDO-betydelse. Det engelska ordet i en översättning ger dessutom en svensk översättning
+    åt engelska ord som saknas i den engelsk-svenska delen.
+    """
+    definitions = []
+    reversed_pairs = []
+    seen = set()
+    rank = Counter()
+    for word in iter_elements(path, {"word"}):
+        value = html.unescape(word.get("value") or "").strip()
+        folkets_class = word.get("class") or ""
+        if not value or " " in value:
+            continue
+        sense_id = ""
+        for see in word.findall("see"):
+            if see.get("type") == "saldo":
+                parts = (see.get("value") or "").split("||")
+                if len(parts) >= 2 and parts[1]:
+                    sense_id = parts[1]
+                    break
+        pos = FOLKETS_SV_POS.get(folkets_class)
+        if pos:
+            for definition in word.findall("definition"):
+                text = html.unescape(definition.get("value") or "").strip()
+                key = (value, pos, sense_id, text)
+                if text and key not in seen:
+                    seen.add(key)
+                    definitions.append((value, pos, sense_id, rank[(value, pos)], text))
+                    rank[(value, pos)] += 1
+        english_pos = FOLKETS_SV_TO_EN.get(folkets_class)
+        if english_pos:
+            for translation in word.findall("translation"):
+                english = html.unescape(translation.get("value") or "").strip()
+                if is_single_token(english) and english.replace("-", "").replace("'", "").isalpha():
+                    reversed_pairs.append((normalize(english), value, english_pos))
+    stats["folkets svenska definitioner"] = len(definitions)
+    stats["folkets svenska definitioner med betydelse"] = sum(1 for d in definitions if d[2])
+    stats["folkets omvända översättningar"] = len(reversed_pairs)
+    return definitions, reversed_pairs
+
+
 # MARK: Databasen
 
 SCHEMA = """
@@ -403,10 +474,14 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID;
 CREATE TABLE sv_forms (form TEXT NOT NULL, lemma TEXT NOT NULL, pos TEXT NOT NULL,
                        PRIMARY KEY (form, lemma, pos)) WITHOUT ROWID;
 -- Synonymer per betydelse (SALDO-betydelse som lämna..2, tom när betydelsen är okänd).
--- score är Synlex-betyget 3 till 5.
+-- score är Synlex-betyget 3 till 5, freq hur vanlig synonymen är (Zipf, wordfreq).
 CREATE TABLE sv_synonyms (lemma TEXT NOT NULL, pos TEXT NOT NULL, sense_id TEXT NOT NULL,
-                          synonym TEXT NOT NULL, score REAL NOT NULL,
+                          synonym TEXT NOT NULL, score REAL NOT NULL, freq REAL NOT NULL,
                           PRIMARY KEY (lemma, pos, sense_id, synonym)) WITHOUT ROWID;
+-- Definitioner på enkel svenska ur Folkets lexikon, per SALDO-betydelse (tom när den är okänd).
+CREATE TABLE sv_definitions (lemma TEXT NOT NULL, pos TEXT NOT NULL, sense_id TEXT NOT NULL,
+                             rank INTEGER NOT NULL, definition TEXT NOT NULL,
+                             PRIMARY KEY (lemma, pos, rank)) WITHOUT ROWID;
 
 -- Engelska: form till grundform. Reguljära böjningar (dogs, walked) hittas med reglerna i README.md.
 CREATE TABLE en_forms (form TEXT NOT NULL, lemma TEXT NOT NULL, pos TEXT NOT NULL,
@@ -416,8 +491,9 @@ CREATE TABLE en_senses (lemma TEXT NOT NULL, synset_id TEXT NOT NULL, pos TEXT N
                         PRIMARY KEY (lemma, synset_id)) WITHOUT ROWID;
 CREATE TABLE en_synsets (synset_id TEXT PRIMARY KEY, definition TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE en_synset_members (synset_id TEXT NOT NULL, lemma TEXT NOT NULL, rank INTEGER NOT NULL,
-                                PRIMARY KEY (synset_id, lemma)) WITHOUT ROWID;
--- Engelska till svenska. en_lemma är normaliserad (gemener). rank i lexikonets ordning.
+                                freq REAL NOT NULL, PRIMARY KEY (synset_id, lemma)) WITHOUT ROWID;
+-- Engelska till svenska. en_lemma är normaliserad (gemener). rank i lexikonets ordning, och från 500
+-- för omvända översättningar ur den svensk-engelska delen (används bara när ordet saknar egna).
 CREATE TABLE en_sv (en_lemma TEXT NOT NULL, rank INTEGER NOT NULL, sv TEXT NOT NULL, pos TEXT NOT NULL,
                     comment TEXT NOT NULL, PRIMARY KEY (en_lemma, rank)) WITHOUT ROWID;
 """
@@ -445,6 +521,15 @@ def build(sources_dir, out_path, stats):
 
     log("Läser Folkets lexikon")
     en_sv, folkets_forms = read_folkets(paths["folkets_en_sv"], stats)
+    sv_definitions, reversed_pairs = read_folkets_sv(paths["folkets_sv_en"], stats)
+    seen_translations = {(key, sv, pos) for key, _rank, sv, pos, _comment in en_sv}
+    reversed_rank = Counter()
+    for key, sv, pos in reversed_pairs:
+        if (key, sv, pos) in seen_translations:
+            continue
+        seen_translations.add((key, sv, pos))
+        en_sv.append((key, REVERSED_RANK + reversed_rank[key], sv, pos, ""))
+        reversed_rank[key] += 1
 
     en_forms = set(folkets_forms)
     en_senses = {}
@@ -475,6 +560,12 @@ def build(sources_dir, out_path, stats):
                 en_members.append((synset_id, lemma, rank))
     en_senses = list(en_senses.values())
 
+    log("Räknar ut hur vanliga synonymerna är (wordfreq)")
+    sv_frequency = frequency_lookup("sv")
+    en_frequency = frequency_lookup("en")
+    sv_synonyms = [row + (sv_frequency(row[3]),) for row in sv_synonyms]
+    en_members = [(synset_id, lemma, rank, en_frequency(lemma)) for synset_id, lemma, rank in en_members]
+
     log("Skriver databasen")
     if os.path.exists(out_path):
         os.remove(out_path)
@@ -483,17 +574,19 @@ def build(sources_dir, out_path, stats):
     db.execute("PRAGMA page_size = 4096")
     db.executescript(SCHEMA)
     db.executemany("INSERT INTO sv_forms VALUES (?, ?, ?)", sorted(sv_forms))
-    db.executemany("INSERT INTO sv_synonyms VALUES (?, ?, ?, ?, ?)", sorted(sv_synonyms))
+    db.executemany("INSERT INTO sv_synonyms VALUES (?, ?, ?, ?, ?, ?)", sorted(sv_synonyms))
+    db.executemany("INSERT INTO sv_definitions VALUES (?, ?, ?, ?, ?)", sorted(sv_definitions))
     db.executemany("INSERT INTO en_forms VALUES (?, ?, ?)", sorted(en_forms))
     db.executemany("INSERT INTO en_senses VALUES (?, ?, ?, ?)", sorted(en_senses))
     db.executemany("INSERT INTO en_synsets VALUES (?, ?)", sorted(en_synsets))
-    db.executemany("INSERT INTO en_synset_members VALUES (?, ?, ?)", sorted(en_members))
+    db.executemany("INSERT INTO en_synset_members VALUES (?, ?, ?, ?)", sorted(en_members))
     db.executemany("INSERT INTO en_sv VALUES (?, ?, ?, ?, ?)", en_sv)
 
     meta = {
         "schema_version": str(SCHEMA_VERSION),
         "built": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
         "min_score": str(MIN_SCORE),
+        "wordfreq": WORDFREQ_VERSION,
     }
     for name, url in SOURCES.items():
         meta[f"source.{name}.url"] = url
@@ -505,7 +598,8 @@ def build(sources_dir, out_path, stats):
     db.execute("VACUUM")
     db.close()
 
-    for table, rows in [("sv_forms", sv_forms), ("sv_synonyms", sv_synonyms), ("en_forms", en_forms),
+    for table, rows in [("sv_forms", sv_forms), ("sv_synonyms", sv_synonyms),
+                        ("sv_definitions", sv_definitions), ("en_forms", en_forms),
                         ("en_senses", en_senses), ("en_synsets", en_synsets),
                         ("en_synset_members", en_members), ("en_sv", en_sv)]:
         stats[f"rader {table}"] = len(rows)
