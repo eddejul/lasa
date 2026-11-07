@@ -60,6 +60,18 @@ Testrapporten för ordboken (150 ord ur kurslitteraturen och appens svar) finns 
 
 Under knappen med två A står längst ner hur många millisekunder en sidbild tar på din iPad. Skriv gärna av det.
 
+## Testa fas 4
+
+Fas 4 byggs på grenen `fas4`, som innehåller fas 2 och fas 3.
+
+* **Markera:** tryck på pennan i menyn. Sidan står still och en rad med färger visas nere. Dra med fingret över några rader i en PDF och i en EPUB. Prova också att trycka på ett enda ord, och att dra från texten ut i den tomma ytan under sista raden. Klar avslutar, pilarna i raden bläddrar.
+* **Anteckning:** tryck på en markering (utan pennan). Byt färg, skriv en anteckning, kopiera eller ta bort. En markering med anteckning får ett streck under.
+* **Bokmärke:** bokmärket i menyn märker sidan du läser (ett rött band i hörnet). Tryck igen för att ta bort det.
+* **Listorna:** knappen Innehåll har nu tre flikar: Innehåll, Bokmärken och Markeringar. Tryck på en rad för att hoppa dit, svep åt vänster för att ta bort.
+* **Sök:** förstoringsglaset söker i hela boken. Tryck på en träff: sidan visas och träffen blinkar orange en stund.
+* **Bläddringsljud:** menyn Bakgrund (den halvfyllda cirkeln) har ett val för bläddringsljud. Det är på från början. Säg till om ljudet låter fel.
+* Stäng appen helt och öppna igen: markeringar, anteckningar och bokmärken ska finnas kvar.
+
 ## Licenser för ordboken
 
 Ordboken bygger på Folkets synonymlexikon och Folkets lexikon (KTH), Swesaurus och SALDO (Språkbanken, Göteborgs universitet) och Open English WordNet. Detaljer i `tools/dictionary/README.md` och under Om ordboken i appen.
