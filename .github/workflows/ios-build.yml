@@ -13,9 +13,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Lämna tomt för byggserverns standard-Xcode.
-  # Sätt t.ex. /Applications/Xcode_26.6.app om en viss version behövs (lägsta iOS måste vara 15 eller lägre).
-  XCODE_APP: ""
+  # Låst på Xcode 26.6 så att en ny standard-Xcode på byggservern inte kan höja lägsta iOS över 15.
+  # Lämna tomt för byggserverns standard-Xcode. Byt bara till en version som stöder iOS 15.
+  XCODE_APP: "/Applications/Xcode_26.6.app"
 
 jobs:
   build:
