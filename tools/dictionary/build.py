@@ -23,6 +23,7 @@ import gzip
 import hashlib
 import html
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -454,8 +455,26 @@ def read_folkets_sv(path, stats):
                 if is_single_token(english) and english.replace("-", "").replace("'", "").isalpha():
                     reversed_pairs.append((normalize(english), value, english_pos))
 
-    # Varje definition får den första av uppslagets betydelser som inte redan har en definition.
-    # Alla får inte bara den första länken, då föll till exempel "handling: intrig" bort.
+    stats["folkets omvända översättningar"] = len(reversed_pairs)
+    return raw, reversed_pairs
+
+
+def assign_definitions(raw, sv_synonyms, stats):
+    """Vilken SALDO-betydelse varje definition hör till.
+
+    Ett uppslag i Folkets lexikon kan länka till flera betydelser. Att ta den första lediga gav fel
+    ("handling: intrig" hamnade hos betydelsen med synonymen "dokument"). Därför:
+    1. Har definitionen ett ord som är synonym i någon av de länkade betydelserna vinner den
+       betydelsen ("akt, dokument" hör till betydelsen med synonymen "dokument").
+    2. Annars gäller den första länken, om den inte redan har en definition.
+    3. Annars blir definitionen en egen betydelse utan SALDO-koppling. Varje betydelse får högst en.
+    """
+    words_of_sense = defaultdict(set)
+    for lemma, pos, sense_id, synonym, _level in sv_synonyms:
+        if sense_id:
+            for word in synonym.split(" "):
+                words_of_sense[(lemma, pos, sense_id)].add(normalize(word))
+
     definitions = []
     for (value, pos), items in raw.items():
         taken = set()
@@ -464,14 +483,24 @@ def read_folkets_sv(path, stats):
             if text in seen_texts:
                 continue
             seen_texts.add(text)
-            sense_id = next((s for s in senses if s not in taken), "")
+            tokens = {normalize(t) for t in re.split(r"[^\w]+", text) if t}
+            free = [s for s in senses if s not in taken]
+            scored = [(len(tokens & words_of_sense.get((value, pos, s), set())), -i, s) for i, s in enumerate(free)]
+            best = max(scored, default=None)
+            if best and best[0] > 0:
+                sense_id = best[2]
+                stats["sv definition placerad efter synonym"] += 1
+            elif senses and senses[0] not in taken:
+                sense_id = senses[0]
+                stats["sv definition placerad efter första länken"] += 1
+            else:
+                sense_id = ""
+                stats["sv definition utan betydelse"] += 1
             if sense_id:
                 taken.add(sense_id)
             definitions.append((value, pos, sense_id, rank, text))
     stats["folkets svenska definitioner"] = len(definitions)
-    stats["folkets svenska definitioner med betydelse"] = sum(1 for d in definitions if d[2])
-    stats["folkets omvända översättningar"] = len(reversed_pairs)
-    return definitions, reversed_pairs
+    return definitions
 
 
 # MARK: Databasen
@@ -530,7 +559,8 @@ def build(sources_dir, out_path, stats):
 
     log("Läser Folkets lexikon")
     en_sv, folkets_forms = read_folkets(paths["folkets_en_sv"], stats)
-    sv_definitions, reversed_pairs = read_folkets_sv(paths["folkets_sv_en"], stats)
+    raw_definitions, reversed_pairs = read_folkets_sv(paths["folkets_sv_en"], stats)
+    sv_definitions = assign_definitions(raw_definitions, sv_synonyms, stats)
     seen_translations = {(key, sv, pos) for key, _rank, sv, pos, _comment in en_sv}
     reversed_rank = Counter()
     for key, sv, pos in reversed_pairs:
