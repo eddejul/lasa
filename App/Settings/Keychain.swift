@@ -7,6 +7,13 @@ enum Keychain {
 
     private static let service = "se.edvin.lasa"
 
+    /// Reserv när nyckelringen inte går att skriva i (en osignerad app i simulatorn). Gäller bara tills
+    /// appen stängs. På iPaden signerar Sideloadly appen, och då används nyckelringen.
+    private static var memory: [Key: String] = [:]
+
+    /// Svaret från nyckelringen vid senaste sparandet, till självtestet.
+    private(set) static var lastStatus: OSStatus = errSecSuccess
+
     enum Key: String {
         case geminiAPIKey = "gemini.apiKey"
         case syncRefreshToken = "sync.refreshToken"
@@ -23,7 +30,7 @@ enum Keychain {
               let data = result as? Data,
               let text = String(data: data, encoding: .utf8),
               !text.isEmpty else {
-            return nil
+            return memory[key]
         }
         return text
     }
@@ -31,11 +38,15 @@ enum Keychain {
     /// Sparar eller tar bort (tom text eller nil) en hemlighet.
     static func set(_ value: String?, for key: Key) {
         SecItemDelete(baseQuery(key) as CFDictionary)
+        memory[key] = nil
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return }
         var query = baseQuery(key)
         query[kSecValueData as String] = Data(value.utf8)
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(query as CFDictionary, nil)
+        lastStatus = SecItemAdd(query as CFDictionary, nil)
+        if lastStatus != errSecSuccess {
+            memory[key] = value
+        }
     }
 
     private static func baseQuery(_ key: Key) -> [String: Any] {

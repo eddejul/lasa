@@ -101,6 +101,7 @@ enum Fas6SelfTest {
         client.projectURL = url
         client.anonKey = "test-anon"
         client.email = "test@example.com"
+        SelfTest.log("Synk: nyckelringen svarade \(Keychain.lastStatus) (0 är ok, annars sparas nyckeln bara i minnet)")
         do {
             try await client.signIn(email: "test@example.com", password: "test-password")
             SelfTest.log("Synk: inloggad som \(client.userID ?? "?")")

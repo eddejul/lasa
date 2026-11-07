@@ -88,13 +88,9 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         let recognizer = NLLanguageRecognizer()
         recognizer.languageConstraints = [.swedish, .english]
         recognizer.processString(String(text.prefix(1200)))
-        let code = recognizer.dominantLanguage == .english ? "en" : "sv"
-        let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(code) }
-        // Bättre kvalitet först, om användaren har laddat ner en sådan röst.
-        if let enhanced = voices.first(where: { $0.quality == .enhanced }) {
-            return enhanced
-        }
-        return AVSpeechSynthesisVoice(language: code == "en" ? "en-US" : "sv-SE") ?? voices.first
+        let code = recognizer.dominantLanguage == .english ? "en-US" : "sv-SE"
+        // Listan med alla röster tar lång tid att läsa första gången, så rösten väljs direkt på språket.
+        return AVSpeechSynthesisVoice(language: code)
     }
 
     // MARK: AVSpeechSynthesizerDelegate
@@ -182,7 +178,8 @@ final class ReadAloudBar: UIView {
         view.addSubview(self)
         NSLayoutConstraint.activate([
             centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -14),
+            // Ovanför reglaget och sidnumret, som syns när menyn är framme.
+            bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -84),
         ])
     }
 }
