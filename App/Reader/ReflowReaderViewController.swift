@@ -1466,10 +1466,13 @@ extension ReflowReaderViewController {
                 finishPress()
                 await pause(1.5)
                 SelfTest.saveScreen(view.window ?? view, name: name)
-                // Ordet sparas när rutan syns, inte innan.
-                SelfTest.log("Senast sparade ord: \(UserWords.shared.savedWords().first?.word ?? "inget"). "
-                             + (LookupStats.shared.summary ?? "Ingen tid för rutan."))
+                // Ordet sparas när rutan syns, eller senast när den stängs.
+                let shownWord = UserWords.shared.savedWords().first?.word ?? "inget"
                 dismiss(animated: false)
+                await pause(0.3)
+                SelfTest.log("Senast sparade ord medan rutan syns: \(shownWord), efter att den stängts: "
+                             + "\(UserWords.shared.savedWords().first?.word ?? "inget"). "
+                             + (LookupStats.shared.summary ?? "Ingen tid för rutan."))
                 clearPressedWord()
                 return
             }

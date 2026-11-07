@@ -203,13 +203,23 @@ final class NoteEditorViewController: UIViewController, UIAdaptivePresentationCo
         onSave?(text)
     }
 
-    /// Självtestet: skriv en text och gör som om arket svepts bort.
-    func simulateSwipeAway(typing text: String) {
-        textView.text = text
-        guard let controller = navigationController?.presentationController else { return }
-        dismiss(animated: false) { [weak self] in
-            self?.presentationControllerDidDismiss(controller)
+    /// Arket stängdes på något annat sätt än med Spara eller Avbryt, till exempel svept bort: spara.
+    /// Samma sak som delegaten ovan, men oberoende av den.
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || navigationController?.isBeingDismissed == true {
+            saveIfChanged()
         }
+    }
+
+    /// Självtestet: skriv en text och stäng arket utan Spara, som när det sveps bort.
+    /// Svarar med om arket har en presentationskontroll med delegaten satt.
+    @discardableResult
+    func simulateSwipeAway(typing text: String) -> Bool {
+        textView.text = text
+        let hasDelegate = navigationController?.presentationController?.delegate === self
+        navigationController?.dismiss(animated: false)
+        return hasDelegate
     }
 
     override func viewDidLoad() {

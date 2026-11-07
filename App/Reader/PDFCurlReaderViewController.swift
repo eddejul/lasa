@@ -1445,10 +1445,11 @@ extension PDFCurlReaderViewController {
             editNote(highlightID: highlight.id)
             if let editor = await waitForPresented(NoteEditorViewController.self) {
                 await pause(0.6)
-                editor.simulateSwipeAway(typing: "Svept anteckning.")
+                let hasDelegate = editor.simulateSwipeAway(typing: "Svept anteckning.")
                 await pause(0.6)
                 let note = AnnotationStore.shared.highlight(id: highlight.id)?.note ?? ""
-                SelfTest.log("Anteckning som sveptes bort: \(note == "Svept anteckning." ? "sparad" : "FEL, \(note)")")
+                SelfTest.log("Anteckning som sveptes bort: \(note == "Svept anteckning." ? "sparad" : "FEL, \(note)"). "
+                             + "Delegaten för svepet: \(hasDelegate ? "satt" : "FEL, saknas")")
             } else {
                 SelfTest.log("FEL: anteckningen öppnades inte")
             }
