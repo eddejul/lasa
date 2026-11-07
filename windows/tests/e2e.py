@@ -121,6 +121,7 @@ def run(url, books, out):
         check(wait_for(lambda: page.locator('[data-testid="book"]').count() == 3, 20), 'tre böcker i biblioteket')
         titles = page.locator('.book-title').all_inner_texts()
         check('Testbok i PDF' in titles and 'Testbok för Läsa' in titles, f'titlar ur filerna: {titles}')
+        check(page.locator('.book-cover.has-image').count() == 2, 'omslag för PDF (första sidan) och EPUB (omslagsbilden)')
         ids = page.locator('[data-testid="book"]').evaluate_all('els => els.map(e => e.dataset.id)')
         check(all(len(i) == 64 and all(c in '0123456789abcdef' for c in i) for i in ids), 'bok-id är sha256 i gemener')
         page.screenshot(path=os.path.join(out, "01-bibliotek.png"))

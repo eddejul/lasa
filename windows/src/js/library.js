@@ -34,28 +34,72 @@ function textOf(value) {
   return String(value);
 }
 
-/** Titel och författare ur filen, annars filnamnet. */
+const COVER_WIDTH = 240;
+
+/** En liten JPEG av en bild eller canvas, för omslaget i biblioteket. */
+function thumbnail(source, width, height) {
+  const scale = COVER_WIDTH / width;
+  const canvas = document.createElement('canvas');
+  canvas.width = COVER_WIDTH;
+  canvas.height = Math.round(height * scale);
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.82);
+}
+
+async function pdfCover(pdf) {
+  const page = await pdf.getPage(1);
+  const base = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: (COVER_WIDTH * 1.5) / base.width });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport }).promise;
+  return thumbnail(canvas, canvas.width, canvas.height);
+}
+
+async function blobCover(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    if (!image.naturalWidth) return '';
+    return thumbnail(image, image.naturalWidth, image.naturalHeight);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Titel, författare och omslag ur filen. Titeln blir filnamnet om filen inte har någon. */
 async function readMetadata(bytes, ext, fileName) {
-  const fallback = { title: stripExtension(fileName), author: '' };
+  const result = { title: stripExtension(fileName), author: '', cover: '' };
   try {
     if (ext === 'pdf') {
       const pdf = await openPdf(bytes);
-      const { info } = await pdf.getMetadata();
-      await closePdf(pdf);
-      return { title: (info?.Title || '').trim() || fallback.title, author: (info?.Author || '').trim() };
-    }
-    if (ext === 'epub') {
+      try {
+        const { info } = await pdf.getMetadata();
+        result.title = (info?.Title || '').trim() || result.title;
+        result.author = (info?.Author || '').trim();
+        result.cover = await pdfCover(pdf).catch(() => '');
+      } finally {
+        await closePdf(pdf);
+      }
+    } else if (ext === 'epub') {
       const { makeBook } = await import('../vendor/foliate-js/view.js');
       const book = await makeBook(new File([bytes], 'bok.epub', { type: 'application/epub+zip' }));
-      const title = textOf(book.metadata?.title).trim() || fallback.title;
-      const author = textOf(book.metadata?.author).trim();
+      result.title = textOf(book.metadata?.title).trim() || result.title;
+      result.author = textOf(book.metadata?.author).trim();
+      const cover = await Promise.resolve(book.getCover?.()).catch(() => null);
+      if (cover) result.cover = await blobCover(cover).catch(() => '');
       book.destroy?.();
-      return { title, author };
     }
   } catch (error) {
     console.warn('Kunde inte läsa bokens uppgifter', error);
   }
-  return fallback;
+  return result;
 }
 
 /** Lägger till filer i biblioteket. Ger antalet nya böcker. */
@@ -77,7 +121,7 @@ export async function importFiles(files) {
       const meta = await readMetadata(bytes, ext, file.name);
       await storeBookFile(id, ext, bytes);
       await addBook({ id, title: meta.title, author: meta.author, format: ext === 'md' || ext === 'txt' ? 'text' : ext,
-        ext, fileName: file.name, size: bytes.length });
+        ext, fileName: file.name, size: bytes.length, cover: meta.cover });
       added += 1;
     } catch (error) {
       console.error(error);
@@ -106,9 +150,11 @@ export async function renderLibrary(container, { onOpen }) {
     return;
   }
   const cards = books.map((book) => el('div', { class: 'book-card', dataset: { testid: 'book', id: book.id } },
-    el('button', { class: `book-cover format-${book.format}`, onclick: () => onOpen(book.id), title: `Öppna ${book.title}` },
-      el('span', { class: 'book-format' }, FORMAT_NAMES[book.format] ?? book.format),
-      el('span', { class: 'book-cover-title' }, book.title)),
+    el('button', { class: `book-cover format-${book.format}${book.cover ? ' has-image' : ''}`, onclick: () => onOpen(book.id),
+      title: `Öppna ${book.title}` },
+    book.cover ? el('img', { class: 'book-cover-image', src: book.cover, alt: '' }) : null,
+    el('span', { class: 'book-format' }, FORMAT_NAMES[book.format] ?? book.format),
+    book.cover ? null : el('span', { class: 'book-cover-title' }, book.title)),
     el('div', { class: 'book-info' },
       el('button', { class: 'book-title', onclick: () => onOpen(book.id) }, book.title),
       book.author ? el('div', { class: 'book-author' }, book.author) : null,

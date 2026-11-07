@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS books (
   added REAL NOT NULL,
   opened REAL NOT NULL DEFAULT 0,
   position TEXT NOT NULL DEFAULT '',
-  progress REAL NOT NULL DEFAULT 0
+  progress REAL NOT NULL DEFAULT 0,
+  cover TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -84,17 +85,17 @@ export async function setSetting(key, value) {
 
 // Biblioteket
 
-const BOOK_COLUMNS = 'id, title, author, format, ext, file_name, size, added, opened, position, progress';
+const BOOK_COLUMNS = 'id, title, author, format, ext, file_name, size, added, opened, position, progress, cover';
 
 function bookFromRow(row) {
-  const [id, title, author, format, ext, fileName, size, added, opened, position, progress] = row;
+  const [id, title, author, format, ext, fileName, size, added, opened, position, progress, cover] = row;
   let parsed = null;
   try {
     parsed = position ? JSON.parse(position) : null;
   } catch {
     parsed = null;
   }
-  return { id, title, author, format, ext, fileName, size, added, opened, position: parsed, progress };
+  return { id, title, author, format, ext, fileName, size, added, opened, position: parsed, progress, cover };
 }
 
 export async function listBooks() {
@@ -108,9 +109,9 @@ export async function getBook(id) {
 }
 
 export async function addBook(book) {
-  await library.run(`INSERT INTO books (id, title, author, format, ext, file_name, size, added)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  [book.id, book.title, book.author ?? '', book.format, book.ext, book.fileName, book.size, now()]);
+  await library.run(`INSERT INTO books (id, title, author, format, ext, file_name, size, added, cover)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  [book.id, book.title, book.author ?? '', book.format, book.ext, book.fileName, book.size, now(), book.cover ?? '']);
 }
 
 export async function removeBook(id) {

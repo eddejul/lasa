@@ -151,6 +151,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   overflow: hidden;
 }
 
+.book-cover.has-image { position: relative; padding: 0; background: #ffffff; }
+.book-cover-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.book-cover.has-image .book-format { position: absolute; left: 8px; top: 8px; padding: 2px 7px; border-radius: 5px; background: rgb(0 0 0 / 0.55); }
 .book-cover.format-epub { background: #5b4a7a; }
 .book-cover.format-text { background: #7a5b3a; }
 .book-cover:hover { filter: brightness(1.08); }
