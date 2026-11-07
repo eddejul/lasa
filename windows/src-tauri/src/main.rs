@@ -4,7 +4,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::types::{Value as SqlValue, ValueRef};
@@ -92,7 +93,7 @@ fn user_db<'a>(state: &'a AppState, name: &str) -> Result<&'a Mutex<Connection>,
 }
 
 /// En SELECT-fråga mot ordboken. Bara läsande frågor går igenom, och filen är öppnad skrivskyddad.
-#[tauri::command]
+#[tauri::command(async)]
 fn dict_query(
     state: State<'_, AppState>,
     sql: String,
@@ -105,7 +106,7 @@ fn dict_query(
     run_query(&lock(dictionary), &sql, &params, true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn user_query(
     state: State<'_, AppState>,
     db: String,
@@ -116,7 +117,7 @@ fn user_query(
     run_query(&connection, &sql, &params, false)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn user_execute(
     state: State<'_, AppState>,
     db: String,
@@ -130,7 +131,7 @@ fn user_execute(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn user_batch(state: State<'_, AppState>, db: String, sql: String) -> Result<(), String> {
     let connection = lock(user_db(&state, &db)?);
     connection
@@ -156,8 +157,40 @@ fn header(request: &Request<'_>, name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{name} saknas"))
 }
 
+/// Skriver en fil säkert: först till en tillfällig fil bredvid, som byter namn när allt är skrivet och
+/// sparat på disken. En krasch mitt i lämnar då aldrig en halv fil med det riktiga namnet.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    let temporary = PathBuf::from(temporary);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map_err(|error| error.to_string())
+}
+
+/// Tillfälliga filer som blev kvar efter en krasch tas bort när appen startar.
+fn remove_leftovers(books: &Path) {
+    if let Ok(entries) = fs::read_dir(books) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "tmp") {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
 /// Sparar en bokfil. Filen kommer som råa byte, id (sha256) och filändelse i rubrikerna x-id och x-ext.
-#[tauri::command]
+/// Körs utanför fönstrets huvudtråd, som de andra kommandona med (async), så att fönstret inte fryser.
+#[tauri::command(async)]
 fn library_store(state: State<'_, AppState>, request: Request<'_>) -> Result<(), String> {
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("Filen kom inte fram.".to_string());
@@ -165,18 +198,18 @@ fn library_store(state: State<'_, AppState>, request: Request<'_>) -> Result<(),
     let id = header(&request, "x-id")?;
     let ext = header(&request, "x-ext")?;
     let path = book_path(&state, &id, &ext)?;
-    fs::write(&path, bytes).map_err(|error| error.to_string())
+    write_atomic(&path, bytes)
 }
 
 /// Läser en bokfil och skickar den som råa byte (en ArrayBuffer i JavaScript).
-#[tauri::command]
+#[tauri::command(async)]
 fn library_read(state: State<'_, AppState>, id: String, ext: String) -> Result<Response, String> {
     let path = book_path(&state, &id, &ext)?;
     let bytes = fs::read(&path).map_err(|error| error.to_string())?;
     Ok(Response::new(bytes))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn library_delete(state: State<'_, AppState>, id: String, ext: String) -> Result<(), String> {
     let path = book_path(&state, &id, &ext)?;
     match fs::remove_file(&path) {
@@ -198,7 +231,7 @@ fn secret_entry(name: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SECRET_SERVICE, name).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn secret_get(name: String) -> Result<Option<String>, String> {
     match secret_entry(&name)?.get_password() {
         Ok(value) => Ok(Some(value)),
@@ -208,7 +241,7 @@ fn secret_get(name: String) -> Result<Option<String>, String> {
 }
 
 /// Sparar en hemlighet, eller tar bort den när värdet är tomt eller saknas.
-#[tauri::command]
+#[tauri::command(async)]
 fn secret_set(name: String, value: Option<String>) -> Result<(), String> {
     let entry = secret_entry(&name)?;
     match value {
@@ -243,6 +276,7 @@ fn main() {
             let data = app.path().app_data_dir()?;
             let books = data.join("Böcker");
             fs::create_dir_all(&books)?;
+            remove_leftovers(&books);
             let words = Connection::open(data.join("anvandarord.sqlite"))?;
             let library = Connection::open(data.join("bibliotek.sqlite"))?;
             let dictionary = open_dictionary(app);

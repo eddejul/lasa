@@ -72,8 +72,11 @@ class Backend:
                 self.users[args["db"]].executescript(args["sql"])
                 return None
             if command == "library_store":
-                with open(self.book_path(headers.get("x-id", ""), headers.get("x-ext", "")), "wb") as file:
+                # Som i appen: först en tillfällig fil, som byter namn när den är skriven.
+                path = self.book_path(headers.get("x-id", ""), headers.get("x-ext", ""))
+                with open(path + ".tmp", "wb") as file:
                     file.write(body)
+                os.replace(path + ".tmp", path)
                 return None
             if command == "library_read":
                 with open(self.book_path(args["id"], args["ext"]), "rb") as file:
