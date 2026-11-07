@@ -31,9 +31,16 @@ final class AboutDictionaryViewController: UITableViewController {
                license: "CC BY 4.0",
                url: "https://en-word.net"),
         Source(name: "Folkets lexikon, KTH",
-               use: "Svensk översättning av engelska ord, och oregelbundna engelska böjningar.",
+               use: "Svensk översättning av engelska ord, definitioner på enkel svenska och "
+                   + "oregelbundna engelska böjningar.",
                license: "CC BY-SA 2.5. Den bearbetade versionen i Läsa delas under samma licens.",
                url: "https://folkets-lexikon.csc.kth.se/folkets/"),
+        Source(name: "wordfreq, Robyn Speer",
+               use: "Hur vanliga orden är, så att vanliga synonymer visas först. Bygger bland annat på "
+                   + "Wikipedia, OpenSubtitles 2018, Google Books Ngram Viewer, ParaCrawl och SUBTLEX "
+                   + "(Marc Brysbaert med flera, fritt tillgänglig data).",
+               license: "CC BY-SA 4.0",
+               url: "https://github.com/rspeer/wordfreq"),
     ]
 
     private enum Section: Int, CaseIterable {
@@ -113,10 +120,10 @@ final class AboutDictionaryViewController: UITableViewController {
                 let built = dictionary.meta["built"] ?? "okänt datum"
                 content.text = "Byggd \(built)"
                 content.secondaryText = "\(counts.swedishWords) svenska ord, \(counts.swedishPairs) svenska synonympar, "
-                    + "\(counts.englishWords) engelska ord och \(counts.translations) översättningar till svenska. "
-                    + "Allt finns i appen och fungerar utan internet."
+                    + "\(counts.swedishDefinitions) svenska definitioner, \(counts.englishWords) engelska ord och "
+                    + "\(counts.translations) översättningar till svenska. Allt finns i appen och fungerar utan internet."
             } else {
-                content.text = "Ordboken saknas i den här versionen av appen."
+                content.text = "Ordboken saknas i den här versionen av appen, eller är av en äldre version."
             }
 
         case .speed:

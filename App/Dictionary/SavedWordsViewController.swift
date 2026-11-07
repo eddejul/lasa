@@ -42,7 +42,7 @@ final class SavedWordsViewController: UITableViewController {
             return
         }
         let label = UILabel()
-        label.text = "Inga sparade ord än.\nHåll fingret på ett ord i en bok, så sparas det här."
+        label.text = "Inga sparade ord än.\nHåll fingret på ett ord i en bok och släpp, så sparas det här."
         label.numberOfLines = 0
         label.textAlignment = .center
         label.textColor = .secondaryLabel

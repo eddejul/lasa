@@ -33,7 +33,8 @@ final class PDFCurlReaderViewController: UIViewController {
     private var chromeTap: UITapGestureRecognizer?
     private var zoomTap: UITapGestureRecognizer?
     private var wordPress: UILongPressGestureRecognizer?
-    private weak var highlightedPage: PDFPageViewController?
+    private var pressedWord: PressedWord?
+    private weak var wordBubble: PaddedLabel?
     private weak var toastLabel: UILabel?
     private var contentsItem: UIBarButtonItem?
     private var themeItem: UIBarButtonItem?
@@ -506,37 +507,97 @@ final class PDFCurlReaderViewController: UIViewController {
 
     // MARK: Ordboken
 
-    /// Håll fingret på ett ord: ordet markeras, slås upp och visas i en ruta vid ordet.
-    /// Det sparas också i Sparade ord tillsammans med meningen.
+    /// Hur långt från fingret ett ord får ligga och ändå väljas, i punkter.
+    static let fingerTolerance: CGFloat = 22
+
+    /// Ordet under fingret medan man håller.
+    private struct PressedWord {
+        let found: FoundWord
+        let page: PDFPageViewController
+        /// Ordets rutor i bladets vy.
+        let rects: [CGRect]
+        /// Var fingret var senast, i bladets vy.
+        let finger: CGPoint
+    }
+
+    /// Håll fingret på ett ord: ordet markeras, och en bubbla ovanför fingret visar vilket ord det är.
+    /// Drar man vidare följer markeringen med. Rutan med ordboken öppnas när man släpper,
+    /// och ordet sparas i Sparade ord tillsammans med meningen.
     @objc private func handleWordPress(_ press: UILongPressGestureRecognizer) {
-        guard press.state == .began, presentedViewController == nil else { return }
-        let started = CACurrentMediaTime()
         let point = press.location(in: view)
-
-        guard let page = visiblePages.first(where: { candidate in
-            !candidate.isBlank && candidate.view.bounds.contains(candidate.view.convert(point, from: view))
-        }) else { return }
-
-        // Trycket ska inte också vika sidan eller visa menyn när fingret lyfts.
-        cancelPageGestures()
-
-        let local = page.view.convert(point, from: view)
-        guard let pdfPage = document.page(at: page.pageIndex),
-              let imageFrame = page.imageFrame,
-              let pagePoint = PDFPageGeometry.pagePoint(for: local, imageFrame: imageFrame, page: pdfPage) else {
-            return
-        }
-        guard let found = PDFWordFinder.word(on: pdfPage, at: pagePoint) else {
-            if !PDFWordFinder.pageHasText(pdfPage) {
+        switch press.state {
+        case .began:
+            guard presentedViewController == nil else { return }
+            // Trycket ska inte också vika sidan eller visa menyn när fingret lyfts.
+            cancelPageGestures()
+            if !updatePressedWord(at: point),
+               let page = pageView(at: point),
+               let pdfPage = document.page(at: page.pageIndex),
+               !PDFWordFinder.pageHasText(pdfPage) {
                 showToast("Sidan har ingen text att slå upp. Den är troligen skannad.")
             }
-            return
+        case .changed:
+            updatePressedWord(at: point)
+        case .ended:
+            hideWordBubble()
+            if let pressed = pressedWord {
+                lookUp(pressed)
+            }
+        default:
+            hideWordBubble()
+            clearPressedWord()
         }
+    }
+
+    private func pageView(at point: CGPoint) -> PDFPageViewController? {
+        visiblePages.first { candidate in
+            !candidate.isBlank && candidate.view.bounds.contains(candidate.view.convert(point, from: view))
+        }
+    }
+
+    /// Tar fram ordet närmast fingret och flyttar markeringen dit. Falskt om inget ord fanns nära.
+    /// Ligger fingret mellan ord ligger markeringen kvar på det senaste, så att små glidningar inte tappar ordet.
+    @discardableResult
+    private func updatePressedWord(at point: CGPoint) -> Bool {
+        guard let page = pageView(at: point),
+              let pdfPage = document.page(at: page.pageIndex),
+              let imageFrame = page.imageFrame else {
+            return false
+        }
+        let local = page.view.convert(point, from: view)
+        guard let pagePoint = PDFPageGeometry.pagePoint(for: local, imageFrame: imageFrame, page: pdfPage) else {
+            return false
+        }
+        let tolerance = Self.fingerTolerance * PDFPageGeometry.pageUnitsPerPoint(imageFrame: imageFrame, page: pdfPage)
+        guard let found = PDFWordFinder.word(on: pdfPage, at: pagePoint, tolerance: tolerance) else {
+            if pressedWord != nil {
+                moveWordBubble(to: point)
+            }
+            return false
+        }
+        if let current = pressedWord, current.page === page, current.found.location == found.location {
+            pressedWord = PressedWord(found: current.found, page: page, rects: current.rects, finger: local)
+            moveWordBubble(to: point)
+            return true
+        }
+        let rects = found.pageRects.map { PDFPageGeometry.viewRect(for: $0, imageFrame: imageFrame, page: pdfPage) }
+        pressedWord?.page.clearHighlight()
+        page.showHighlight(rects)
+        pressedWord = PressedWord(found: found, page: page, rects: rects, finger: local)
+        Haptics.shared.wordTapped()
+        showWordBubble(found.candidates.first ?? "", at: point)
+        return true
+    }
+
+    /// Slår upp ordet som var markerat när fingret släpptes, och visar rutan vid ordet.
+    private func lookUp(_ pressed: PressedWord) {
+        let started = CACurrentMediaTime()
         guard let dictionary = WordDictionary.shared else {
+            clearPressedWord()
             showMessage(title: "Ordboken saknas", message: "Den här versionen av appen byggdes utan ordboken.")
             return
         }
-
+        let found = pressed.found
         let hidden = UserWords.shared.hiddenPairs
         var lookup: WordLookup?
         for candidate in found.candidates {
@@ -547,25 +608,22 @@ final class PDFCurlReaderViewController: UIViewController {
             if lookup != nil { break }
         }
         let lookupTime = (CACurrentMediaTime() - started) * 1000
-        Haptics.shared.wordTapped()
 
-        let rects = found.pageRects.map { PDFPageGeometry.viewRect(for: $0, imageFrame: imageFrame, page: pdfPage) }
-        page.showHighlight(rects)
-        highlightedPage = page
-        let anchor = rects.first(where: { $0.insetBy(dx: -6, dy: -6).contains(local) })
-            ?? rects.first
-            ?? CGRect(x: local.x, y: local.y, width: 1, height: 1)
-        let sourceRect = view.convert(anchor, from: page.view)
+        let anchor = pressed.rects.first(where: { $0.insetBy(dx: -6, dy: -6).contains(pressed.finger) })
+            ?? pressed.rects.first
+            ?? CGRect(x: pressed.finger.x, y: pressed.finger.y, width: 1, height: 1)
+        let sourceRect = view.convert(anchor, from: pressed.page.view)
+        let pageIndex = pressed.page.pageIndex
 
         if let lookup = lookup, let lemma = lookup.entries.first?.lemma {
             UserWords.shared.save(word: lookup.word, lemma: lemma, language: lookup.language,
-                                  sentence: found.sentence, book: book.title, pageIndex: page.pageIndex)
+                                  sentence: found.sentence, book: book.title, pageIndex: pageIndex)
         }
 
         let context = WordPopupViewController.Context(sentence: found.sentence,
                                                       rangeInSentence: found.rangeInSentence,
                                                       book: book.title,
-                                                      pageIndex: page.pageIndex,
+                                                      pageIndex: pageIndex,
                                                       triedWord: found.candidates.first ?? "")
         WordPopupViewController.present(
             lookup: lookup,
@@ -577,9 +635,54 @@ final class PDFCurlReaderViewController: UIViewController {
                 LookupStats.shared.record(lookup: lookupTime, ready: (CACurrentMediaTime() - started) * 1000)
             },
             onDismiss: { [weak self] in
-                self?.highlightedPage?.clearHighlight()
-                self?.highlightedPage = nil
+                self?.clearPressedWord()
             })
+    }
+
+    private func clearPressedWord() {
+        pressedWord?.page.clearHighlight()
+        pressedWord = nil
+    }
+
+    // MARK: Bubblan ovanför fingret
+
+    /// Fingret skymmer ordet, så ordet visas också i en bubbla ovanför fingret medan man håller.
+    private func showWordBubble(_ word: String, at point: CGPoint) {
+        let bubble: PaddedLabel
+        if let existing = wordBubble {
+            bubble = existing
+        } else {
+            bubble = PaddedLabel()
+            bubble.insets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+            bubble.font = .preferredFont(forTextStyle: .headline)
+            bubble.textColor = .white
+            bubble.backgroundColor = UIColor(white: 0.12, alpha: 0.9)
+            bubble.layer.cornerRadius = 10
+            bubble.layer.masksToBounds = true
+            bubble.isUserInteractionEnabled = false
+            view.addSubview(bubble)
+            wordBubble = bubble
+        }
+        bubble.text = word
+        bubble.sizeToFit()
+        moveWordBubble(to: point)
+    }
+
+    private func moveWordBubble(to point: CGPoint) {
+        guard let bubble = wordBubble else { return }
+        let size = bubble.bounds.size
+        let margin: CGFloat = 8
+        var center = CGPoint(x: point.x, y: point.y - 64)
+        if center.y - size.height / 2 < view.safeAreaInsets.top + margin {
+            center.y = point.y + 64
+        }
+        center.x = min(max(center.x, size.width / 2 + margin), view.bounds.width - size.width / 2 - margin)
+        bubble.center = center
+    }
+
+    private func hideWordBubble() {
+        wordBubble?.removeFromSuperview()
+        wordBubble = nil
     }
 
     /// Avbryter pappersvikningens och menyns tryck som redan har börjat.
