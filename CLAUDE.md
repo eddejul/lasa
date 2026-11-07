@@ -35,6 +35,8 @@ App/
   Reader/      läsare, rendering, pappersvikning (PDF och, med Reflow i namnet, EPUB och text)
   Dictionary/  ordboken, ordet under fingret, ordrutan, sparade ord
   Annotations/ (fas 4) markeringar, anteckningar, bokmärken, sökning och deras rutor och listor
+  Settings/    (fas 6) inställningar och nyckelringen
+  Sync/        (fas 6) synken med Supabase och böckernas id (SHA-256 av filen)
   Support/     haptik och små hjälpare
   Resources/   lasa-ordbok.sqlite läggs här av bygget, checkas inte in
 Config/Info.plist
@@ -70,6 +72,14 @@ tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en 
 * Sökningen (`BookSearch`) går i bakgrunden: PDF med ett eget `PDFDocument`, EPUB i kapitelfilerna utan taggar. Sökträffen i EPUB letas upp i webbvyn med samma vikning (`FoldedText` i Swift, `fold` i skriptet), n:te träffen med texten runt som kontroll.
 * Bläddringsljudet räknas fram i appen (`PageTurnSound`), ingen ljudfil. Spelas när en vikning börjar.
 * Självtestet provar allt detta i alla testböcker, även en PDF (`test.pdf` från `make_books.py`).
+
+## Fas 6: repetition, uppläsning, AI-knappen och synk
+
+* Repetitionen (`WordReviewViewController`, schemat i `UserWords.swift`) ligger i `anvandarord.sqlite`: tabellen `reviews`, och `deleted_words` för borttagna ord (synken behöver dem). Signaturerna för `UserWords.save`, `WordDictionary.lookup` och `WordPopupViewController.present` är oförändrade.
+* Uppläsningen (`ReadAloud`) läser en sida i taget med iOS röster, `FoldedText(..., lowercase: false)` ger texten och vägen tillbaka till sidans tecken så att ordet som läses kan markeras. EPUB: `lasaMarks.pageText` ger sidans text i webbvyn.
+* AI-knappen (`GeminiClient`) använder `generateContent` med `responseJsonSchema`. Modellen får bara välja bland ordbokens betydelser och ord, och ord den hittat på själv visas inte. Nyckeln ligger i nyckelringen, modellen är en inställning (från början `gemini-3.5-flash-lite`, gratis enligt Googles prissida 7 november 2026). Gratisnivåns data får användas av Google, det står i Inställningar.
+* Synken (`SyncEngine`, `SyncClient`) och protokollet beskrivs i `docs/SYNK.md`. Tabellerna i `tools/supabase/schema.sql`. Inga nycklar i koden: adressen i UserDefaults, nyckel och inloggning i nyckelringen.
+* Självtestet `-LasaSelfTest fas6` provar repetitionen, AI-tolkningen och synken mot `tools/simtest/mock_supabase.py`. Läs `fas6.log` och `mock-supabase.json` i artefakten Simulatortest.
 
 ## Ordboken (fas 2)
 

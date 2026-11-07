@@ -72,6 +72,15 @@ Fas 4 byggs på grenen `fas4`, som innehåller fas 2 och fas 3.
 * **Bläddringsljud:** menyn Bakgrund (den halvfyllda cirkeln) har ett val för bläddringsljud. Det är på från början. Säg till om ljudet låter fel.
 * Stäng appen helt och öppna igen: markeringar, anteckningar och bokmärken ska finnas kvar.
 
+## Testa fas 6
+
+Fas 6 byggs på grenen `fas6`, som innehåller fas 2, 3 och 4.
+
+* **Repetera ord:** knappen uppe till vänster i biblioteket, Repetera ord (eller Repetera under Sparade ord). Ordet och meningen visas, tryck Visa svaret och välj Igen, Svårt, Bra eller Lätt. Under knapparna står när ordet kommer tillbaka. Högst 20 nya ord per dag.
+* **Uppläsning:** högtalaren i menyn läser sidan högt med iPadens svenska eller engelska röst, markerar ordet som läses och vänder sidan själv. Bläddrar du själv slutar uppläsningen. Hastigheten ställs in under Inställningar (kugghjulet i biblioteket).
+* **AI-knappen:** skapa en gratis nyckel i Google AI Studio (aistudio.google.com) och klistra in den under Inställningar, Förklaring med AI. Tryck Prova nyckeln. Håll sedan fingret på ett ord: rutan har Förklara i meningen. Utan nyckel syns ingen AI-knapp. Meningen skickas till Google.
+* **Synk:** kräver ett eget Supabase-projekt, se [docs/SYNK.md](docs/SYNK.md). Fyll i adress, nyckel, e-post och lösenord under Inställningar och tryck Logga in. Synken går också när appen öppnas och när du stänger en bok. Windows-appen behöver synken för att det ska märkas.
+
 ## Licenser för ordboken
 
 Ordboken bygger på Folkets synonymlexikon och Folkets lexikon (KTH), Swesaurus och SALDO (Språkbanken, Göteborgs universitet) och Open English WordNet. Detaljer i `tools/dictionary/README.md` och under Om ordboken i appen.

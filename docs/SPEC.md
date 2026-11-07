@@ -181,6 +181,16 @@ Byggd 7 november 2026 på grenen `fas4`.
 * **Bläddringsljud:** ett svagt prassel när en sida börjar vikas, på från början, kan stängas av i menyn Bakgrund.
 * Allt sparas i en egen databas och överlever omstart. Borttaget sparas som borttaget, så att synken i fas 6 kan föra det vidare.
 
+### 6.5 Repetition, uppläsning, AI-knappen och synk (fas 6)
+
+Byggd 7 november 2026 på grenen `fas6`.
+
+* **Repetera ord:** kort med ordet och meningen det stod i, svaret ur ordboken bakom ett tryck. Igen, Svårt, Bra och Lätt flyttar ordet i ett schema i stil med Anki (Igen: tio minuter, Bra: en dag, sedan tre dagar och vidare). Högst 20 nya ord per dag.
+* **Uppläsning:** AVSpeechSynthesizer med svensk eller engelsk röst efter sidans språk. Ordet som läses markeras, och sidan vänds med pappersvikning när den är slut. Hastigheten är en inställning.
+* **AI-knappen:** se 5.5. Modellen är `gemini-3.5-flash-lite` från början och kan bytas under Inställningar.
+* **Synk:** se `docs/SYNK.md`. Supabase med e-post och lösenord, regler som bara släpper fram den inloggades rader, och den nyaste ändringen vinner rad för rad.
+* **Inställningar:** kugghjulet i biblioteket: bläddringsljud, uppläsningens hastighet, AI-nyckel och modell, synkens adress, nyckel och inloggning.
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.
