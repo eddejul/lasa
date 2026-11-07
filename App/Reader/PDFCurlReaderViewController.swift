@@ -101,8 +101,16 @@ final class PDFCurlReaderViewController: UIViewController {
         applyThemeToChrome()
     }
 
+    /// När boken öppnades och när första sidbilden kom, till loggen (G4).
+    private let openedAt = CACurrentMediaTime()
+    private var loggedFirstPage = false
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if !loggedFirstPage {
+            AppLog.shared.write("Öppnade \(book.url.lastPathComponent) (PDF, \(document.pageCount) sidor)")
+            logFirstPage()
+        }
         PageTurnSound.shared.prepare()
         WordDictionary.warmUpLanguageModels()
         startSelfTestIfNeeded()
@@ -111,6 +119,8 @@ final class PDFCurlReaderViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         guard isMovingFromParent else { return }
+        AppLog.shared.write("Stängde \(book.url.lastPathComponent): \(renderer.statsSummary) Appen använder "
+                            + String(format: "%.0f MB.", MemoryUsage.megabytes))
         SyncEngine.shared.syncSoon()
         if chromeHidden {
             navigationController?.setNavigationBarHidden(false, animated: animated)
@@ -121,6 +131,22 @@ final class PDFCurlReaderViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateLayoutIfNeeded()
+    }
+
+    /// Väntar på första sidbilden och skriver tiden i loggen.
+    private func logFirstPage() {
+        loggedFirstPage = true
+        Task { @MainActor [weak self] in
+            for _ in 0..<200 {
+                guard let self = self else { return }
+                if self.visiblePages.contains(where: { $0.imageFrame != nil }) {
+                    let milliseconds = Int(((CACurrentMediaTime() - self.openedAt) * 1000).rounded())
+                    AppLog.shared.write("Första sidan syntes efter \(milliseconds) ms")
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
     }
 
     // MARK: Layout och läge

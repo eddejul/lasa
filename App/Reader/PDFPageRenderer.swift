@@ -54,6 +54,17 @@ final class PDFPageRenderer {
     /// Självtestet: så många ritningar i följd av en sida som ska misslyckas.
     private var simulatedFailures: [Int: Int] = [:]
 
+    /// Hur lång tid varje sidbild tog att rita, i millisekunder, till loggen (G4).
+    private(set) var renderTimes: [Double] = []
+
+    /// "40 sidbilder, mittvärde 85 ms, längsta 420 ms."
+    var statsSummary: String {
+        guard !renderTimes.isEmpty else { return "Inga sidbilder ritade." }
+        let sorted = renderTimes.sorted()
+        return "\(sorted.count) sidbilder, mittvärde \(Int(sorted[sorted.count / 2].rounded())) ms, "
+            + "längsta \(Int((sorted.last ?? 0).rounded())) ms."
+    }
+
     init?(url: URL, pageCount: Int) {
         guard let worker = PDFRenderWorker(url: url) else { return nil }
         self.worker = worker
@@ -153,8 +164,11 @@ final class PDFPageRenderer {
         operation.queuePriority = priority
         operation.addExecutionBlock { [weak self, weak operation] in
             guard let operation = operation, !operation.isCancelled else { return }
+            let started = CACurrentMediaTime()
             let image = worker.render(index: index, size: size, scale: scale, theme: theme)
+            let milliseconds = (CACurrentMediaTime() - started) * 1000
             DispatchQueue.main.async {
+                self?.record(milliseconds, index: index, ok: image != nil)
                 self?.finish(index, image: image, generation: generation)
             }
         }
@@ -181,6 +195,18 @@ final class PDFPageRenderer {
             trim()
         }
         render.completions.forEach { $0(image) }
+    }
+
+    private func record(_ milliseconds: Double, index: Int, ok: Bool) {
+        guard ok else { return }
+        renderTimes.append(milliseconds)
+        if renderTimes.count > 2000 {
+            renderTimes.removeFirst(1000)
+        }
+        // Långsamma sidor syns var för sig i loggen, resten i sammanfattningen när boken stängs.
+        if milliseconds > 400 {
+            AppLog.shared.write("Sidbild \(index + 1) tog \(Int(milliseconds.rounded())) ms")
+        }
     }
 
     /// En ritning som misslyckades görs om en gång. Andra gången får de väntande bladen veta det.

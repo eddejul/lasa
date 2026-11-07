@@ -91,8 +91,31 @@ enum Fas6SelfTest {
         navigation.pushViewController(SettingsViewController(), animated: false)
         await pause(1.0)
         SelfTest.saveScreen(navigation.view, name: "05-installningar")
+        if let settings = navigation.topViewController as? UITableViewController {
+            // Säkerhetskopian och Diagnostik ligger längre ner.
+            let table = settings.tableView!
+            table.scrollRectToVisible(CGRect(x: 0, y: table.contentSize.height - 1, width: 1, height: 1), animated: false)
+            await pause(0.6)
+            SelfTest.saveScreen(navigation.view, name: "05b-installningar-nere")
+        }
         navigation.popToRootViewController(animated: false)
+
+        testLog()
         SelfTest.finish()
+    }
+
+    /// G4: loggen i Filer har startraden och raderna som de andra självtesten gav upphov till.
+    private static func testLog() {
+        AppLog.shared.flush()
+        let text = (try? String(contentsOf: AppLog.fileURL, encoding: .utf8)) ?? ""
+        let lines = text.split(separator: "\n")
+        let start = lines.last { $0.contains("Start:") }.map(String.init) ?? "SAKNAS"
+        SelfTest.log("Loggen i Filer: \(lines.count) rader. Senaste start: \(start)")
+        let pageFailures = lines.filter { $0.contains("kunde inte ritas") }.count
+        let opened = lines.filter { $0.contains("Öppnade ") }.count
+        let backups = lines.filter { $0.contains("Säkerhetskopia sparad") }.count
+        SelfTest.log("I loggen: \(opened) böcker öppnade, \(pageFailures) rader om sidbilder som inte kunde ritas, "
+                     + "\(backups) säkerhetskopior. Delas: \(AppLog.shared.shareableFiles.map(\.lastPathComponent))")
     }
 
     /// G8: databasernas versioner, trappan av uppdateringar och att en avbruten transaktion inte sparar något.

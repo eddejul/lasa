@@ -148,6 +148,13 @@ final class ReflowReaderViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         guard isMovingFromParent else { return }
+        if let renderer = renderer {
+            var line = "Stängde \(book.url.lastPathComponent): \(renderer.statsSummary)"
+            if let first = renderer.firstSnapshotAt {
+                line += " Första sidan syntes efter \(Int(((first - openedAt) * 1000).rounded())) ms."
+            }
+            AppLog.shared.write(line)
+        }
         defer { SyncEngine.shared.syncSoon() }
         if isShowingPages {
             saveLocation()
@@ -201,6 +208,8 @@ final class ReflowReaderViewController: UIViewController {
         case .success(let content):
             self.content = content
             loadedAt = CACurrentMediaTime()
+            AppLog.shared.write("Öppnade \(book.url.lastPathComponent) (\(content.chapters.count) kapitel), "
+                                + "uppackad och läst efter \(Int(((loadedAt ?? openedAt) - openedAt) * 1000)) ms")
             if location.chapter < 0 || location.chapter >= content.chapters.count {
                 location = ReflowLocation(chapter: 0, progression: 0)
             }

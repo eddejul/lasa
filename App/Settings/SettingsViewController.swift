@@ -1,6 +1,6 @@
 import UIKit
 
-/// Inställningar (fas 6): bläddringsljud, nyckeln till AI-knappen, synken och säkerhetskopian (G1).
+/// Inställningar (fas 6): bläddringsljud, nyckeln till AI-knappen, synken, säkerhetskopian (G1) och loggen (G4).
 /// Hemligheter sparas i nyckelringen, aldrig i filer.
 final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
@@ -20,6 +20,7 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         case backupStatus
         case backupNow
         case backupRestore
+        case shareLog
     }
 
     private struct Section {
@@ -83,6 +84,10 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
                     footer: "Läsposition, markeringar, bokmärken och sparade ord synkas via ditt eget Supabase-projekt "
                         + "(gratisnivån). Böckerna känns igen på innehållet, så samma fil måste finnas på båda ställena. "
                         + "Hur projektet skapas står i docs/SYNK.md i repot. Lösenordet sparas inte."),
+            Section(title: "Diagnostik", rows: [.shareLog],
+                    footer: "Appen skriver en logg i Filer under \(Self.filesLocation), Diagnostik: starter, tider för "
+                        + "sidor, minnesvarningar och fel. Den har boktitlar men ingen text ur böckerna. Dela den när "
+                        + "något har krånglat."),
         ]
         tableView.reloadData()
     }
@@ -202,6 +207,9 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         case .backupRestore:
             content.text = "Återställ från säkerhetskopia"
             content.textProperties.color = view.tintColor
+        case .shareLog:
+            content.text = "Dela loggen"
+            content.textProperties.color = view.tintColor
         default:
             break
         }
@@ -255,6 +263,8 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
             backupNow()
         case .backupRestore:
             chooseBackup(from: tableView.cellForRow(at: indexPath))
+        case .shareLog:
+            shareLog(from: tableView.cellForRow(at: indexPath))
         default:
             break
         }
@@ -320,6 +330,22 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         } catch {
             showAlert(title: "Kunde inte återställa", message: error.localizedDescription)
         }
+    }
+
+    // MARK: Loggen (G4)
+
+    private func shareLog(from cell: UITableViewCell?) {
+        let files = AppLog.shared.shareableFiles + DiagnosticReports.files()
+        guard !files.isEmpty else {
+            showAlert(title: "Ingen logg än", message: "Loggen skrivs när appen används.")
+            return
+        }
+        let share = UIActivityViewController(activityItems: files, applicationActivities: nil)
+        if let popover = share.popoverPresentationController {
+            popover.sourceView = cell ?? view
+            popover.sourceRect = cell?.bounds ?? CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+        }
+        present(share, animated: true)
     }
 
     private func showAlert(title: String, message: String) {

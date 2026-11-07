@@ -175,6 +175,7 @@ final class SyncEngine {
             return report
         } catch {
             lastError = error.localizedDescription
+            AppLog.shared.write("Synken misslyckades: \(error.localizedDescription)")
             throw error
         }
     }

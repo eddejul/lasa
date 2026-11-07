@@ -369,6 +369,8 @@ final class ReflowRenderer {
         view.markFailed()
         guard chapter >= 0 else { return }
         failuresByChapter[chapter, default: 0] += 1
+        AppLog.shared.write("Kapitel \(chapter + 1) kunde inte laddas eller mätas "
+                            + "(fel \(failuresByChapter[chapter, default: 0]) i kapitlet)")
         if isBroken(chapter), counts[chapter] == nil {
             // Läsaren får en tom sida i stället för att vänta för evigt.
             counts[chapter] = 1
@@ -715,6 +717,7 @@ final class ChapterView: NSObject, WKNavigationDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        AppLog.shared.write("Webbvyns process för kapitel \(chapter + 1) stängdes av iOS")
         guard state == .loading || state == .loaded else { return }
         onLoaded?(self, false)
     }

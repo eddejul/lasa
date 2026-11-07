@@ -110,6 +110,9 @@ print("  anrop:", len(data["requests"]))
 SUMMARY
 
 cp -R "$DATA/Documents/selftest/." "$OUT/" 2> /dev/null || true
+# Loggen i Filer (G4) och säkerhetskopiorna (G1).
+cp -R "$DATA/Documents/Diagnostik" "$OUT/Diagnostik" 2> /dev/null || true
+ls -laR "$DATA/Documents/Säkerhetskopia" > "$OUT/sakerhetskopior.txt" 2> /dev/null || true
 for LOG in "$OUT"/*.log; do
   case "$LOG" in
     *xcodebuild.log) ;;
