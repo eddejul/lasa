@@ -54,7 +54,8 @@ tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
 * Offline SQLite, byggd av `tools/dictionary/build.py` från Synlex, Swesaurus, SALDO, Open English WordNet och Folkets lexikon. Se licenser i specen och `tools/dictionary/README.md`.
 * Bygget i molnet har två jobb: Ordboken (Linux, bygger databasen och testrapporten) och Appen (Mac, lägger databasen i `App/Resources` före XcodeGen). Källfilerna och databasen sparas i Actions cache, så databasen byggs bara om när skripten eller testlistan ändras.
 * Uppslagslogiken finns två gånger: `App/Dictionary/WordDictionary.swift` och `tools/dictionary/lookup.py` (som testrapporten använder). Ändras den ena ska den andra ändras i samma commit.
-* Ord slås upp när fingret hålls stilla på ordet i 0,35 s (`wordPressDuration`). Ett vanligt tryck i mitten är fortfarande menyn, och i kanterna bläddring.
+* Ord slås upp när fingret hålls stilla på ordet i 0,35 s (`wordPressDuration`). Ordet närmast fingret markeras (inte ordet till vänster), en bubbla ovanför fingret visar ordet, markeringen följer med om man drar, och rutan öppnas först när man släpper. Ett vanligt tryck i mitten är fortfarande menyn, och i kanterna bläddring.
+* Rutan visar ett tydligt svar överst: för engelska den svenska översättningen (lånad från en synonym om ordet saknas i Folkets lexikon), för svenska definitionen ur Folkets lexikon och de vanligaste synonymerna. Övriga betydelser och ordklasser ligger bakom ett tryck. Edvin tyckte att den första rutan var förvirrande (7 november 2026).
 * Det användaren gör (sparade ord, dolda synonympar) ligger i `anvandarord.sqlite` under Application Support, aldrig i ordboksfilen.
 * Svenska Akademiens data (SO, SAOL) får aldrig kopieras in. Den visas bara via svenska.se i en `SFSafariViewController`.
 * Samma databasfil ska fungera i Windows-appen senare.
