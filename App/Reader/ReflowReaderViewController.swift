@@ -43,8 +43,10 @@ final class ReflowReaderViewController: UIViewController {
     private var currentChapter = 0
     /// Bladet som syns, i ett uppslag det vänstra.
     private var currentSlot = 0
-    /// Kapitlets sidantal när sidan visades. Används för läspositionen medan kapitlet mäts om.
-    private var currentCount = 1
+    /// Kapitlets sidantal när sidan visades, eller nil om kapitlet inte var mätt än.
+    /// Används för läspositionen medan kapitlet mäts om.
+    private var currentCount: Int?
+    private let openedAt = CACurrentMediaTime()
     private var isShowingPages = false
     private var pendingJump: PendingJump?
 
@@ -321,7 +323,7 @@ final class ReflowReaderViewController: UIViewController {
         guard let renderer = renderer else { return }
         let count = renderer.pageCount(of: chapter) ?? 1
         currentChapter = chapter
-        currentCount = count
+        currentCount = renderer.pageCount(of: chapter)
         currentSlot = min(max(page, 0), count - 1)
         if mode == .spread {
             currentSlot -= currentSlot % 2
@@ -404,7 +406,7 @@ final class ReflowReaderViewController: UIViewController {
         guard let first = visiblePages.first else { return }
         currentChapter = first.chapter
         currentSlot = first.slot
-        currentCount = renderer?.pageCount(of: first.chapter) ?? currentCount
+        currentCount = renderer?.pageCount(of: first.chapter)
         saveLocation()
         updatePageLabel()
         keepNeighbours()
@@ -418,7 +420,9 @@ final class ReflowReaderViewController: UIViewController {
 
     private func currentLocation() -> ReflowLocation {
         guard isShowingPages else { return location }
-        let count = max(currentCount, 1)
+        guard let count = currentCount, count > 0 else {
+            return ReflowLocation(chapter: currentChapter, progression: 0)
+        }
         let page = min(currentSlot, count - 1)
         return ReflowLocation(chapter: currentChapter, progression: (Double(page) + 0.5) / Double(count))
     }
@@ -431,10 +435,16 @@ final class ReflowReaderViewController: UIViewController {
     /// Ett kapitel har mätts. Väntar läsaren på det kapitlet visas sidan nu.
     private func chapterMeasured(_ chapter: Int) {
         if chapter == currentChapter, isShowingPages, pendingJump == nil,
-           let count = renderer?.pageCount(of: chapter), count != currentCount {
-            // Kapitlet fick ett annat sidantal (till exempel när ett typsnitt laddats klart).
-            let progression = currentLocation().progression
-            show(chapter: chapter, page: Int(progression * Double(count)))
+           let count = renderer?.pageCount(of: chapter) {
+            if let previous = currentCount, previous != count {
+                // Kapitlet fick ett annat sidantal med samma layout (till exempel när ett typsnitt laddats klart).
+                let progression = currentLocation().progression
+                show(chapter: chapter, page: Int(progression * Double(count)))
+            } else if currentCount == nil {
+                // Man har bläddrat in i kapitlet innan det mättes. Sidan man är på stämmer redan.
+                currentCount = count
+                saveLocation()
+            }
         }
         resolvePendingJump()
         updatePageLabel()
@@ -580,7 +590,10 @@ final class ReflowReaderViewController: UIViewController {
         }
         let numbers = shown.map { String($0 + 1) }.joined(separator: " och ")
         let percent = Int((content.fraction(at: currentLocation()) * 100).rounded())
-        return "Sida \(numbers) av \(currentCount) i kapitlet, \(percent) % av boken"
+        guard let count = currentCount else {
+            return "Sida \(numbers) i kapitlet, \(percent) % av boken"
+        }
+        return "Sida \(numbers) av \(count) i kapitlet, \(percent) % av boken"
     }
 
     /// Sidan i hela boken, från 0, till Sparade ord. Uppskattad från kapitlens storlek tills alla kapitel är mätta.
@@ -1048,8 +1061,10 @@ extension ReflowReaderViewController {
             "kapitel \(page.chapter + 1) blad \(page.slot + 1)\(page.isBlank ? " (tomt)" : "")\(page.hasImage ? "" : " UTAN BILD")"
         }
         let counts = (0..<(content?.chapters.count ?? 0)).map { renderer?.pageCount(of: $0).map(String.init) ?? "?" }
+        let size = "\(Int(view.bounds.width))x\(Int(view.bounds.height))"
         SelfTest.log("\(label): \(pages.joined(separator: ", ")). Etikett: \(bottomBar.pageButton.title(for: .normal) ?? ""). "
-                     + "Sidantal per kapitel: \(counts.joined(separator: " "))")
+                     + "Sidantal per kapitel: \(counts.joined(separator: " ")). Vy \(size), \(mode == .spread ? "uppslag" : "en sida"), "
+                     + "layout \(lastLayout?.key ?? "ingen")")
     }
 
     private func runSelfTest() async {
@@ -1061,7 +1076,8 @@ extension ReflowReaderViewController {
         SelfTest.log("Innehåll: " + content.toc.prefix(12).map { "\($0.title) (kap \($0.chapter + 1))" }.joined(separator: "; "))
 
         let firstShown = await waitUntilShown()
-        SelfTest.log("Första sidan: \(firstShown ? "ok" : "FEL, sidbilden kom inte")")
+        let openTime = Int(((CACurrentMediaTime() - openedAt) * 1000).rounded())
+        SelfTest.log("Första sidan: \(firstShown ? "ok efter \(openTime) ms från att läsaren öppnades" : "FEL, sidbilden kom inte")")
         logState("Start")
         SelfTest.saveScreen(view, name: "01-start")
 
@@ -1130,26 +1146,57 @@ extension ReflowReaderViewController {
         setTypography(savedTypography)
         await pause(0.6)
         _ = await waitUntilShown()
+        logState("Återställd typografi")
 
-        if isFull, #available(iOS 16.0, *), let scene = view.window?.windowScene {
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight))
-            await pause(2.0)
-            _ = await waitUntilShown()
-            logState("Liggande")
-            SelfTest.saveScreen(view, name: "11-liggande")
-            turn(forward: true)
-            await pause(1.5)
-            _ = await waitUntilShown()
-            logState("Liggande efter ett uppslag")
-            SelfTest.saveScreen(view, name: "12-liggande-uppslag")
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-            await pause(2.0)
-            _ = await waitUntilShown()
-            logState("Stående igen")
+        if isFull {
+            await selfTestSpread()
         }
 
         SelfTest.log(renderer.statsSummary)
         SelfTest.finish()
+    }
+
+    /// Vrider till liggande för att pröva uppslaget. Vrider inte simulatorn görs läsarens yta bred i stället.
+    private func selfTestSpread() async {
+        var rotated = false
+        if #available(iOS 16.0, *), let scene = view.window?.windowScene {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { error in
+                SelfTest.log("Vridningen nekades: \(error.localizedDescription)")
+            }
+            await pause(2.0)
+            rotated = view.bounds.width > view.bounds.height
+        }
+        let container = navigationController?.view
+        let original = container?.frame ?? .zero
+        if !rotated, let container = container {
+            container.frame = CGRect(x: 0, y: 0, width: original.width, height: (original.width * 0.72).rounded())
+            await pause(1.0)
+        }
+        SelfTest.log(rotated ? "Uppslag: simulatorn vreds till liggande" : "Uppslag: läsarens yta gjordes bred (simulatorn vred inte)")
+        _ = await waitUntilShown()
+        logState("Liggande")
+        SelfTest.saveScreen(view, name: "11-liggande")
+        turn(forward: true)
+        await pause(1.5)
+        _ = await waitUntilShown()
+        logState("Liggande efter ett uppslag")
+        SelfTest.saveScreen(view, name: "12-liggande-uppslag")
+        for _ in 0..<6 {
+            turn(forward: true)
+            await pause(1.2)
+        }
+        _ = await waitUntilShown()
+        logState("Liggande efter sex uppslag till")
+        SelfTest.saveScreen(view, name: "13-liggande-senare")
+
+        if rotated, #available(iOS 16.0, *), let scene = view.window?.windowScene {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+        } else {
+            container?.frame = original
+        }
+        await pause(2.0)
+        _ = await waitUntilShown()
+        logState("Stående igen")
     }
 
     /// Letar upp ett ord på sidan och slår upp det, som när fingret hålls stilla på det.

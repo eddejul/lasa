@@ -90,6 +90,7 @@ final class ReflowRenderer {
     private var jobs: [ObjectIdentifier: Int] = [:]
     private var nextJob = 0
     private var snapshotTimes: [Double] = []
+    private var scriptTimes: [Double] = []
     private var measureTimes: [Double] = []
 
     /// En fråga till ett kapitel (ord under fingret, var ett ankare ligger) som väntar på att kapitlet är klart.
@@ -252,7 +253,8 @@ final class ReflowRenderer {
             values.isEmpty ? 0 : Int(values.sorted()[values.count / 2].rounded())
         }
         let loaded = views.filter { $0.state == .loaded }.count
-        return "Sidbild \(median(snapshotTimes)) ms och kapitel \(median(measureTimes)) ms (mittvärden), "
+        return "Sidbild \(median(snapshotTimes)) ms, varav \(median(scriptTimes)) ms att flytta till sidan, "
+            + "kapitel \(median(measureTimes)) ms (mittvärden för \(snapshotTimes.count) bilder), "
             + "\(failures) fel, \(loaded) av \(Self.maxViews) webbvyer laddade, "
             + "appen använder \(Int(MemoryUsage.megabytes.rounded())) MB."
     }
@@ -486,6 +488,7 @@ final class ReflowRenderer {
         let started = CACurrentMediaTime()
         view.call("return await lasa.showPage(index);", ["index": page.page]) { [weak self, weak view] value in
             guard let self = self, let view = view, self.isCurrent(job, on: view) else { return }
+            self.scriptTimes = Array((self.scriptTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(50))
             let links = ReflowValues.links(from: value)
             let configuration = WKSnapshotConfiguration()
             configuration.afterScreenUpdates = true

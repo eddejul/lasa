@@ -17,8 +17,9 @@ enum SelfTest {
             .appendingPathComponent("selftest", isDirectory: true)
     }
 
-    private static var stem: String {
-        URL(fileURLWithPath: bookName ?? "test").deletingPathExtension().lastPathComponent
+    /// Filnamnet med punkten utbytt, så att test.epub och test.md inte skriver över varandras filer.
+    static var stem: String {
+        (bookName ?? "test").replacingOccurrences(of: ".", with: "-")
     }
 
     private static let started = Date()

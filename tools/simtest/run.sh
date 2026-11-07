@@ -38,7 +38,7 @@ cp "$BOOKS"/* "$DATA/Documents/Böcker/"
 
 status=0
 for BOOK in test.epub test.md test.txt test.rtf; do
-  STEM="${BOOK%.*}"
+  STEM="${BOOK//./-}"
   echo "== $BOOK"
   rm -f "$DATA/Documents/selftest/$STEM.klar"
   xcrun simctl launch "$UDID" "$BUNDLE" -LasaSelfTest "$BOOK"
