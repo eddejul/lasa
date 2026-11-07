@@ -471,3 +471,35 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   .toolbar { flex-wrap: wrap; }
   .book-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; }
 }
+
+/* Sök i boken */
+.reader-panel[data-name="search"] { display: flex; flex-direction: column; }
+.search-input { margin: 2px 0 6px; }
+.search-status { font-size: 13px; margin: 0 0 6px; }
+.search-results { flex: 1; overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
+.search-hit { text-align: left; padding: 7px 8px; border-radius: 6px; display: flex; flex-direction: column; gap: 2px; }
+.search-hit:hover { background: var(--surface-2); }
+.search-hit.selected { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.search-hit-label { font-size: 12px; color: var(--muted); }
+.search-hit-text { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.search-hit-text mark { background: rgb(255 204 26 / 0.55); color: inherit; border-radius: 2px; padding: 0 1px; }
+.search-help { margin: 8px 0 0; }
+
+/* Markeringar och sökträffar på PDF-sidor (under textlagret, så att ord fortfarande kan slås upp) */
+.pdf-marks { position: absolute; inset: 0; pointer-events: none; }
+.pdf-mark { position: absolute; border-radius: 2px; }
+:root:not([data-theme="dark"]) .pdf-mark { mix-blend-mode: multiply; }
+.pdf-mark.color-yellow { background: rgb(255 204 26 / 0.38); }
+.pdf-mark.color-green { background: rgb(92 204 102 / 0.36); }
+.pdf-mark.color-blue { background: rgb(89 158 255 / 0.34); }
+.pdf-mark.color-pink { background: rgb(255 115 168 / 0.36); }
+:root[data-theme="dark"] .pdf-mark { opacity: 0.8; }
+.pdf-mark.has-note.color-yellow { box-shadow: inset 0 -2px 0 rgb(230 170 0 / 0.95); }
+.pdf-mark.has-note.color-green { box-shadow: inset 0 -2px 0 rgb(40 160 60 / 0.95); }
+.pdf-mark.has-note.color-blue { box-shadow: inset 0 -2px 0 rgb(40 110 230 / 0.95); }
+.pdf-mark.has-note.color-pink { box-shadow: inset 0 -2px 0 rgb(230 60 130 / 0.95); }
+.pdf-search-hit { position: absolute; border: 2.5px solid rgb(230 140 0 / 0.95); border-radius: 4px; background: rgb(255 170 0 / 0.12); }
+
+/* Markeringar i EPUB och textfiler ritas av foliate-js */
+.reader-stage foliate-view { --overlayer-highlight-opacity: 0.38; --overlayer-highlight-blend-mode: multiply; }
+:root[data-theme="dark"] .reader-stage foliate-view { --overlayer-highlight-opacity: 0.30; --overlayer-highlight-blend-mode: normal; }

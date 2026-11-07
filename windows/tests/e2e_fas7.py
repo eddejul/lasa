@@ -167,7 +167,63 @@ def run(url, books, out, data):
 EXPECTED = ("PasswordException", "InvalidPDFException", "Invalid PDF", "No password given", "Content Security Policy",
             "kunde inte läsas", "Kunde inte läsa", "Indexing all PDF objects")
 
-STEPS = []
+def search_in_books(page, books, out):
+    # PDF: ett avstavat ord över radbrytningen hittas som ett ord, och träffen ringas in.
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    page.locator('[data-testid="search-button"]').click()
+    page.fill('[data-testid="search-input"]', 'kunskap')
+    check(wait_for(lambda: 'träff' in page.locator('[data-testid="search-status"]').inner_text()
+                   and 'Söker' not in page.locator('[data-testid="search-status"]').inner_text(), 15),
+          f'sökningen blir klar: {page.locator("[data-testid=search-status]").inner_text()}')
+    rows = page.locator('[data-testid="search-hit-row"]').all_inner_texts()
+    check(len(rows) >= 1 and 'kun-' not in rows[0] and any('kun' in r for r in rows), f'kunskap hittas trots avstavningen: {rows[:2]}')
+    page.locator('[data-testid="search-hit-row"]').first.click()
+    check(wait_for(lambda: page.locator('.pdf-spread [data-testid="search-hit"]').count() >= 1), 'träffen ringas in på sidan')
+    page.screenshot(path=os.path.join(out, "f03-sok-pdf.png"))
+    page.fill('[data-testid="search-input"]', 'Undersökningen')
+    check(wait_for(lambda: 'Söker' not in page.locator('[data-testid="search-status"]').inner_text()
+                   and page.locator('[data-testid="search-hit-row"]').count() >= 6, 15),
+          f'flera träffar för Undersökningen: {page.locator("[data-testid=search-hit-row]").count()}')
+    first = page.locator('.page-label').inner_text()
+    page.locator('[data-testid="search-input"]').press('Enter')
+    page.locator('[data-testid="search-input"]').press('Enter')
+    page.locator('[data-testid="search-input"]').press('Enter')
+    check(wait_for(lambda: page.locator('.page-label').inner_text() != first), 'Enter går vidare till nästa träff och sida')
+    page.keyboard.press('Escape')
+    check(wait_for(lambda: page.locator('.reader-panel').is_hidden()), 'Esc stänger sökpanelen')
+    check(wait_for(lambda: page.locator('.pdf-spread [data-testid="search-hit"]').count() == 0), 'ringen försvinner när panelen stängs')
+    back_to_library(page)
+
+    # EPUB: träffen visas i rätt kapitel.
+    page.set_input_files('[data-testid="file-input"]', [os.path.join(books, "test.epub")])
+    check(wait_for(lambda: page.locator('.book-title', has_text='Testbok för Läsa').count() == 1, 20), 'EPUB:en lades till')
+    open_book(page, 'Testbok för Läsa')
+    check(wait_for(lambda: any(f.url.startswith('blob:') for f in page.frames), 15), 'EPUB-kapitel laddat')
+    page.wait_for_timeout(600)
+    page.locator('[data-testid="search-button"]').click()
+    page.fill('[data-testid="search-input"]', 'library')
+    check(wait_for(lambda: 'Söker' not in page.locator('[data-testid="search-status"]').inner_text()
+                   and page.locator('[data-testid="search-hit-row"]').count() >= 1, 15),
+          f'library hittas i EPUB:en: {page.locator("[data-testid=search-status]").inner_text()}')
+    label = page.locator('[data-testid="search-hit-row"]').first.inner_text()
+    page.locator('[data-testid="search-hit-row"]').first.click()
+    check(wait_for(lambda: page.evaluate("lasaTest.reader.searchHit?.cfi ?? null") is not None), 'träffen visas')
+    check(wait_for(lambda: 'kap4' in page.locator('.page-label').inner_text() or 'English' in page.locator('.page-label').inner_text()),
+          f'boken står i det engelska kapitlet: {page.locator(".page-label").inner_text()} ({label.splitlines()[0]})')
+    visible = page.evaluate("""() => {
+      const hit = lasaTest.reader.searchHit;
+      const doc = lasaTest.reader.loadedDoc(hit.section);
+      return doc ? doc.body.innerText.includes('library') : false;
+    }""")
+    check(visible, 'kapitlet med träffen är laddat')
+    page.wait_for_timeout(400)
+    page.screenshot(path=os.path.join(out, "f04-sok-epub.png"))
+    page.keyboard.press('Escape')
+    back_to_library(page)
+
+
+STEPS = [search_in_books]
 
 
 def main():

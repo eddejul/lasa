@@ -1,11 +1,12 @@
 // Läsarens ram: verktygsraden, sidan, reglaget och sidnumret nere, tangenter och mushjul.
 // Själva sidorna ritas av PdfReader (PDF) eller ReflowReader (EPUB och text).
 
-import { readBookFile } from './backend.js';
+import { inTauri, readBookFile } from './backend.js';
 import { bookErrorMessage } from './bookerrors.js';
 import { closeWordPopup, isWordPopupOpen, showWordPopup } from './popup.js';
 import { PdfReader } from './pdfreader.js';
 import { FONTS, ReflowReader, SIZES } from './reflowreader.js';
+import { newSearchState, renderSearchPanel } from './searchpanel.js';
 import { markOpened, savePosition, setSetting, settings } from './store.js';
 import { syncSoon } from './sync.js';
 import { THEMES, applyTheme, resolvedTheme, setThemeListener } from './theme.js';
@@ -36,6 +37,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     el('div', { class: 'reader-title', title: book.title }, book.title),
     el('div', { class: 'toolbar-buttons' },
       el('button', { class: 'toolbar-button', onclick: () => togglePanel('toc'), dataset: { testid: 'toc-button' } }, 'Innehåll'),
+      el('button', { class: 'toolbar-button', onclick: () => togglePanel('search'), title: 'Sök i boken (Ctrl och F)',
+        dataset: { testid: 'search-button' } }, 'Sök'),
       book.format === 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => goToPage() }, 'Gå till sida') : null,
       book.format === 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('zoom'), dataset: { testid: 'zoom-button' } }, 'Visning') : null,
       book.format !== 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('type'), title: 'Typsnitt och storlek' }, 'Aa') : null,
@@ -187,6 +190,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown });
 
   document.addEventListener('keydown', onKey);
+  // Provkörningen i webbläsaren (dev/server.py) når läsaren härifrån. Finns inte i appen.
+  if (!inTauri) globalThis.lasaTest = { reader, book };
   stage.addEventListener('wheel', onWheel, { passive: false });
   slider.addEventListener('change', () => reader.goToFraction(Number(slider.value) / 1000));
   label.addEventListener('click', () => (book.format === 'pdf' ? goToPage() : null));
@@ -201,15 +206,21 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     if (!reader.goToPageText(answer)) toast(`Hittade ingen sida ${answer}.`);
   }
 
+  const searchState = newSearchState();
+
   async function togglePanel(name) {
+    if (panel.dataset.name === 'search' && name !== 'search') reader.clearSearchHit?.();
     if (!name || panel.dataset.name === name) {
       panel.hidden = true;
       panel.dataset.name = '';
+      stage.focus({ preventScroll: true });
       return;
     }
     panel.dataset.name = name;
     panel.hidden = false;
-    if (name === 'toc') {
+    if (name === 'search') {
+      renderSearchPanel(panel, reader, searchState, { onClose: () => togglePanel(null) });
+    } else if (name === 'toc') {
       const items = await reader.toc();
       const list = (entries, depth) => el('ul', { class: `toc-list depth-${depth}` }, entries.map((entry) => el('li', {},
         el('button', { class: 'toc-item', onclick: async () => {

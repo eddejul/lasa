@@ -2,8 +2,31 @@
 // uppslag) när fönstret är brett, annars en. Ord tas fram som lasa.wordAt i App/Reader/ReflowStyle.swift.
 
 import '../vendor/foliate-js/view.js';
+import { Overlayer } from '../vendor/foliate-js/overlayer.js';
+import { chapterNodes, rangeFromOffsets } from './chaptertext.js';
+import { MAX_HITS, breathe, excerpt, findAll, foldQuery } from './search.js';
 import { makeTextBook } from './textbook.js';
 import { reflowCandidates, sentenceAround } from './wordfind.js';
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+/** En markering i kapitlet: färgen över texten, och ett streck under om den har en anteckning. */
+function drawMark(rects, { color, strong, note }) {
+  const group = Overlayer.highlight(rects, { color });
+  if (!note) return group;
+  const wrapper = document.createElementNS(SVG, 'g');
+  wrapper.append(group);
+  for (const { left, bottom, width } of rects) {
+    const line = document.createElementNS(SVG, 'rect');
+    line.setAttribute('x', left);
+    line.setAttribute('y', bottom - 1.5);
+    line.setAttribute('width', width);
+    line.setAttribute('height', 2);
+    line.setAttribute('fill', strong);
+    wrapper.append(line);
+  }
+  return wrapper;
+}
 
 // Typsnitt som finns i Windows. Samma nycklar som på iPaden där det går (original, georgia, palatino, system).
 export const FONTS = [
@@ -97,7 +120,7 @@ export function wordAt(doc, x, y) {
 }
 
 export class ReflowReader {
-  constructor(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown }) {
+  constructor(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks = null, onMarkClick = null, onSelect = null }) {
     this.kind = 'reflow';
     this.stage = stage;
     this.onRelocate = onRelocate;
@@ -105,7 +128,13 @@ export class ReflowReader {
     this.onKey = onKey;
     this.onWheel = onWheel;
     this.onPointerDown = onPointerDown;
+    // Markeringar (se annotations.js): getMarks(kapitel, kapitlets text) ger [{ id, start, end, color, note }].
+    this.getMarks = getMarks;
+    this.onMarkClick = onMarkClick;
+    this.onSelect = onSelect;
     this.settings = { theme: 'white', font: 'original', size: 2 };
+    this.annotations = new Map(); // CFI -> { value, index, kind: 'mark' eller 'search', mark }
+    this.searchHit = null;
   }
 
   async open(bytes, position, { ext, title, settings }) {
@@ -118,6 +147,9 @@ export class ReflowReader {
       : makeTextBook(bytes, { title, ext });
     await this.view.open(book);
     this.mapSections();
+    this.view.addEventListener('draw-annotation', (event) => this.drawAnnotation(event.detail));
+    this.view.addEventListener('create-overlay', (event) => this.paintMarks(event.detail.index));
+    this.view.addEventListener('show-annotation', (event) => this.showAnnotation(event.detail));
     const renderer = this.view.renderer;
     // Lyssnar på sidornas egen händelse (den kommer efter vyns), som har andelen av kapitlet.
     renderer.addEventListener('relocate', (event) => this.onRelocateEvent(event.detail));
@@ -206,6 +238,139 @@ export class ReflowReader {
 
   get book() {
     return this.view?.book;
+  }
+
+  // Markeringar och sökträffar, ritade av foliate-js (overlayer.js) ovanpå kapitlet.
+
+  /** Kapitlet bland bokens dokument (som synken och iPaden räknar), för foliate-js sektion. */
+  documentIndex(index) {
+    return this.documentOfSection?.[index] ?? index;
+  }
+
+  drawAnnotation({ draw, annotation }) {
+    if (annotation.kind === 'search') draw(Overlayer.outline, { color: 'rgba(230, 140, 0, 0.95)', width: 2.5, radius: 3 });
+    else draw(drawMark, annotation.style);
+  }
+
+  loadedDoc(index) {
+    return this.view?.renderer?.getContents().find((content) => content.index === index)?.doc ?? null;
+  }
+
+  /** Lägger markeringarna i ett kapitel som har laddats (eller ritar om dem efter en ändring). */
+  paintMarks(index) {
+    const doc = this.loadedDoc(index);
+    if (!doc) return;
+    const info = chapterNodes(doc);
+    const fresh = new Map();
+    for (const mark of this.getMarks?.(this.documentIndex(index), info.text) ?? []) {
+      const range = rangeFromOffsets(doc, mark.start, mark.end, info);
+      if (!range) continue;
+      const value = this.view.getCFI(index, range);
+      fresh.set(value, { value, index, kind: 'mark', mark, style: mark.style });
+    }
+    // Borttagna markeringar tas bort, de andra ritas om (samma CFI ersätter den gamla).
+    for (const [value, annotation] of [...this.annotations]) {
+      if (annotation.kind === 'mark' && annotation.index === index && !fresh.has(value)) {
+        this.view.deleteAnnotation(annotation);
+        this.annotations.delete(value);
+      }
+    }
+    for (const [value, annotation] of fresh) {
+      this.annotations.set(value, annotation);
+      this.view.addAnnotation(annotation);
+    }
+    if (this.searchHit?.index === index) this.view.addAnnotation(this.searchHit.annotation);
+  }
+
+  refreshMarks() {
+    for (const { index } of this.view?.renderer?.getContents() ?? []) this.paintMarks(index);
+  }
+
+  showAnnotation({ value, range }) {
+    const annotation = this.annotations.get(value);
+    if (annotation?.kind !== 'mark') return;
+    const doc = range?.startContainer?.ownerDocument;
+    if (doc && !doc.getSelection()?.isCollapsed) return;
+    this.onMarkClick?.(annotation.mark, this.frameRect(doc, range.getBoundingClientRect()));
+  }
+
+  /** En ruta i ett kapitel i fönstrets koordinater. */
+  frameRect(doc, rect) {
+    const frame = doc?.defaultView?.frameElement?.getBoundingClientRect() ?? new DOMRect(0, 0, 0, 0);
+    return new DOMRect(frame.left + rect.left, frame.top + rect.top, rect.width, rect.height);
+  }
+
+  // Sök
+
+  /** Kapitlens namn ur innehållsförteckningen, för träfflistan. */
+  sectionLabels() {
+    if (this.labels) return this.labels;
+    const labels = [];
+    const book = this.view.book;
+    const walk = (items) => {
+      for (const item of items ?? []) {
+        let index = null;
+        try {
+          index = book.resolveHref?.(item.href)?.index ?? null;
+        } catch {
+          index = null;
+        }
+        if (Number.isInteger(index) && labels[index] === undefined) labels[index] = (item.label ?? '').trim();
+        walk(item.subitems);
+      }
+    };
+    walk(book.toc);
+    let last = '';
+    this.labels = book.sections.map((_, index) => {
+      if (labels[index]) last = labels[index];
+      return last;
+    });
+    return this.labels;
+  }
+
+  /** Söker kapitel för kapitel. onResult får varje träff, onProgress andelen av boken. */
+  async search(query, { onResult, onProgress, isCurrent }) {
+    const needle = foldQuery(query);
+    const sections = this.view?.book?.sections ?? [];
+    if (!needle) return 0;
+    const labels = this.sectionLabels();
+    let total = 0;
+    for (const [index, section] of sections.entries()) {
+      if (!isCurrent() || !this.view || total >= MAX_HITS) return total;
+      if (!section.createDocument || this.documentOfSection?.[index] === null) continue;
+      let doc;
+      try {
+        doc = await section.createDocument();
+      } catch {
+        continue;
+      }
+      if (!isCurrent() || !this.view) return total;
+      const info = chapterNodes(doc);
+      for (const [start, end] of findAll(info.text, needle, MAX_HITS - total)) {
+        const range = rangeFromOffsets(doc, start, end, info);
+        if (!range) continue;
+        total += 1;
+        onResult({ section: index, start, end, cfi: this.view.getCFI(index, range), excerpt: excerpt(info.text, start, end),
+          label: labels[index] || `Kapitel ${this.documentIndex(index) + 1}` });
+      }
+      onProgress?.((index + 1) / sections.length);
+      await breathe();
+    }
+    return total;
+  }
+
+  async showHit(hit) {
+    this.clearSearchHit();
+    const annotation = { value: hit.cfi, index: hit.section, kind: 'search' };
+    this.searchHit = { ...hit, index: hit.section, annotation };
+    await this.view.goTo(hit.cfi);
+    await this.view.addAnnotation(annotation);
+  }
+
+  clearSearchHit() {
+    if (!this.searchHit) return;
+    this.view?.deleteAnnotation(this.searchHit.annotation);
+    this.searchHit = null;
   }
 
   next() {

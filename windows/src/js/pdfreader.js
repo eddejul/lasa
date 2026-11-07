@@ -7,6 +7,7 @@
 // för att läsa, som på en bärbar dator med 150 procents skalning. Zoom gör sidan större än så.
 
 import { closePdf, openPdf, pdfjs } from './pdfjs.js';
+import { MAX_HITS, breathe, excerpt, findAll, foldQuery } from './search.js';
 import { el } from './ui.js';
 import { isWordCharacter, wordInPageText } from './wordfind.js';
 
@@ -26,12 +27,16 @@ export const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const MAX_CANVAS_PIXELS = 16e6;
 
 export class PdfReader {
-  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1 }) {
+  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, getMarks = null }) {
     this.kind = 'pdf';
     this.stage = stage;
     this.onRelocate = onRelocate;
     this.onWord = onWord;
     this.onMessage = onMessage;
+    // Markeringarna på en sida: [{ id, start, end, color, note }] i sidans text (se annotations.js).
+    this.getMarks = getMarks;
+    this.searchHit = null; // { section, start, end } när en sökträff visas
+    this.texts = new Map(); // sidindex -> sidans text, för sökningen
     this.fit = fit; // 'auto', 'page' eller 'width'
     this.zoom = ZOOM_STEPS.includes(zoom) ? zoom : 1;
     this.effectiveFit = 'page';
@@ -162,7 +167,8 @@ export class PdfReader {
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     const layer = el('div', { class: 'textLayer' });
-    const element = el('div', { class: 'pdf-page', dataset: { page: index } }, el('div', { class: 'pdf-paper' }, canvas), layer);
+    const marks = el('div', { class: 'pdf-marks' });
+    const element = el('div', { class: 'pdf-page', dataset: { page: index } }, el('div', { class: 'pdf-paper' }, canvas), marks, layer);
     element.style.width = `${width}px`;
     element.style.height = `${height}px`;
     element.style.setProperty('--total-scale-factor', String(scale));
@@ -191,6 +197,7 @@ export class PdfReader {
         if (items[i]?.hasEOL) text += '\n';
       });
       entry.text = text;
+      this.texts.set(index, text);
       entry.divs.forEach((div, i) => entry.indexOf.set(div, i));
     })();
     this.cache.set(index, entry);
@@ -252,6 +259,7 @@ export class PdfReader {
     } else {
       view.scrollTop = 0;
     }
+    this.refreshMarks();
     this.onRelocate?.(this.location());
     this.trimCache();
     this.prefetch(token);
@@ -271,6 +279,125 @@ export class PdfReader {
     }
     const last = this.current[this.current.length - 1];
     return { label, page: first, fraction: this.count > 1 ? last / (this.count - 1) : 1, position: { page: first } };
+  }
+
+  // Markeringar och sökträffar
+
+  /** Ritar om markeringarna och sökträffen på sidorna som syns. */
+  refreshMarks() {
+    for (const page of this.current) this.paintMarks(page);
+  }
+
+  /** Rutor för ett teckenintervall på en sida, i sidans koordinater. Sidan måste synas. */
+  rectsFor(entry, start, end) {
+    const range = this.rangeFor(entry, start, end);
+    if (!range) return [];
+    const origin = entry.element.getBoundingClientRect();
+    return [...range.getClientRects()].filter((r) => r.width > 0.5 && r.height > 0.5)
+      .map((r) => ({ left: r.left - origin.left, top: r.top - origin.top, width: r.width, height: r.height }));
+  }
+
+  paintMarks(index) {
+    const entry = this.cache.get(index);
+    const layer = entry?.element.querySelector('.pdf-marks');
+    if (!layer || !entry.element.isConnected || !entry.text) return;
+    const boxes = [];
+    entry.markRects = [];
+    for (const mark of this.getMarks?.(index, entry.text) ?? []) {
+      const rects = this.rectsFor(entry, mark.start, mark.end);
+      entry.markRects.push({ mark, rects });
+      for (const r of rects) {
+        boxes.push(el('div', { class: `pdf-mark color-${mark.color}${mark.note ? ' has-note' : ''}`, dataset: { id: mark.id },
+          style: `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px` }));
+      }
+    }
+    if (this.searchHit?.section === index) {
+      for (const r of this.rectsFor(entry, this.searchHit.start, this.searchHit.end)) {
+        boxes.push(el('div', { class: 'pdf-search-hit', dataset: { testid: 'search-hit' },
+          style: `left:${r.left - 2}px;top:${r.top - 2}px;width:${r.width + 4}px;height:${r.height + 4}px` }));
+      }
+    }
+    layer.replaceChildren(...boxes);
+  }
+
+  /** Markeringen under en punkt i fönstret, eller null. */
+  markAt(x, y) {
+    for (const page of this.current) {
+      const entry = this.cache.get(page);
+      if (!entry?.markRects) continue;
+      const origin = entry.element.getBoundingClientRect();
+      for (const { mark, rects } of entry.markRects) {
+        if (rects.some((r) => x >= origin.left + r.left && x <= origin.left + r.left + r.width
+          && y >= origin.top + r.top && y <= origin.top + r.top + r.height)) return { mark, page };
+      }
+    }
+    return null;
+  }
+
+  // Sök
+
+  pageName(index) {
+    return this.labels?.[index] || String(index + 1);
+  }
+
+  /** Sidans text som sökningen och markeringarna använder (samma som textlagret). */
+  async pageText(index) {
+    if (this.texts.has(index)) return this.texts.get(index);
+    const page = await this.pdf.getPage(index + 1);
+    const content = await page.getTextContent();
+    let text = '';
+    for (const item of content.items) {
+      if (item.str === undefined) continue;
+      text += item.str;
+      if (item.hasEOL) text += '\n';
+    }
+    this.texts.set(index, text);
+    return text;
+  }
+
+  /** Söker sida för sida. onResult får varje träff, onProgress andelen av boken. isCurrent() falskt avbryter. */
+  async search(query, { onResult, onProgress, isCurrent }) {
+    const needle = foldQuery(query);
+    if (!needle || !this.pdf) return 0;
+    let total = 0;
+    for (let index = 0; index < this.count && total < MAX_HITS; index++) {
+      if (!isCurrent() || !this.pdf) return total;
+      const text = await this.pageText(index);
+      if (!isCurrent()) return total;
+      for (const [start, end] of findAll(text, needle, MAX_HITS - total)) {
+        total += 1;
+        onResult({ section: index, start, end, excerpt: excerpt(text, start, end), label: `s. ${this.pageName(index)}` });
+      }
+      onProgress?.((index + 1) / this.count);
+      if (index % 4 === 3) await breathe();
+    }
+    return total;
+  }
+
+  /** Visar sidan med träffen och ringar in den. */
+  async showHit(hit) {
+    this.searchHit = hit;
+    if (!this.current.includes(hit.section)) await this.show(hit.section);
+    else this.refreshMarks();
+    this.scrollToMark(hit.section, hit.start, hit.end);
+  }
+
+  /** I en sida som rullas: rulla så att intervallet syns. */
+  scrollToMark(page, start, end) {
+    const entry = this.cache.get(page);
+    if (!this.scrollMode || !entry) return;
+    const [rect] = this.rectsFor(entry, start, end);
+    if (!rect) return;
+    const view = this.spreadElement;
+    const top = entry.element.getBoundingClientRect().top - view.getBoundingClientRect().top + view.scrollTop + rect.top;
+    if (top < view.scrollTop + 40 || top > view.scrollTop + view.clientHeight - 60) {
+      view.scrollTop = Math.max(0, top - view.clientHeight / 3);
+    }
+  }
+
+  clearSearchHit() {
+    this.searchHit = null;
+    this.refreshMarks();
   }
 
   /** Ritar uppslagen före och efter i förväg, så att bläddringen går fort. */
