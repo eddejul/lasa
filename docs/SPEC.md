@@ -199,12 +199,19 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Uppläsning:** byggdes med AVSpeechSynthesizer men togs bort 8 november 2026, eftersom rösterna lät som en robot. Ett bättre alternativ undersöks senare.
 * **AI-knappen:** se 5.5. Modellen är `gemini-3.5-flash-lite` från början och kan bytas under Inställningar.
 * **Synk:** se `docs/SYNK.md`. Supabase med e-post och lösenord, regler som bara släpper fram den inloggades rader, och den nyaste ändringen vinner rad för rad.
-* **Inställningar:** kugghjulet i biblioteket: bläddringsljud, AI-nyckel och modell, synkens adress, nyckel och inloggning.
+* **Inställningar:** kugghjulet i biblioteket: bläddringsljud, AI-nyckel och modell, synkens adress, nyckel och inloggning, säkerhetskopian och Dela loggen.
+
+### 6.6 Grunden (våg 1, 8 november 2026)
+
+* **Säkerhetskopia:** en kopia per dag i Filer (Säkerhetskopia) med markeringar, anteckningar, sparade ord och läspositioner, de sju senaste. Återställ från säkerhetskopia i Inställningar sparar först det som finns nu.
+* **Utgångsvarning:** två dagar innan appen går ut visar biblioteket när, och att den ska förnyas i Sideloadly.
+* **Logg:** Filer, Diagnostik, med starter, tider, fel och Apples rapporter om krascher (MetricKit). Delas från Inställningar.
+* **Databaserna** har versionsnummer och en trappa av uppdateringar, skriver i transaktioner och säger till när något inte kunde sparas.
 
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.
-2. Workflow `iOS build` (`.github/workflows/ios-build.yml`) kör på `macos-26`: XcodeGen, sedan `xcodebuild archive` utan signering, sedan packas `Lasa-unsigned.ipa` som artefakt.
+2. Workflow `iOS build` (`.github/workflows/ios-build.yml`) kör på `macos-26`: XcodeGen (låst version), sedan `xcodebuild archive` utan signering, sedan packas `Lasa-unsigned.ipa` som artefakt, och arkivets dSYM som `Lasa-dSYM`. Ändringar som bara rör `docs/` eller `.md`-filer bygger inte.
 3. Vid fel läser Claude Code loggen med `gh run view --log-failed` och rättar.
 4. Edvin laddar ner artefakten, installerar med Sideloadly (gratis Apple-ID). AltStore kan förnya automatiskt var 7:e dag över wifi.
 

@@ -21,7 +21,7 @@ Pusha inte flera orelaterade ändringar i samma commit. Varje runda tar flera mi
 ### Windows-appen
 
 1. Provkör gränssnittet först i Chrome: `windows/dev/server.py` svarar på samma kommandon som Rust-delen, och `windows/tests/e2e.py` provar det mesta (se `windows/README.md`). Det finns ingen Rust på datorn.
-2. Push startar `Windows build` (bara när `windows/`, `tools/dictionary/` eller workflowfilen ändras). iOS-bygget hoppar över ändringar som bara rör `windows/`.
+2. Push startar `Windows build` (bara när `windows/`, `tools/dictionary/` eller workflowfilen ändras). iOS-bygget hoppar över ändringar som bara rör `windows/`, `docs/` eller `.md`-filer.
 3. Följ bygget: `gh run list --workflow "Windows build" --limit 1`, fel med `gh run view <id> --log-failed`. Samma regel om tre fel som ovan.
 4. När bygget är grönt: Edvin laddar ner artefakten `Lasa-windows` och kör filen som slutar på `-setup.exe` (osignerad: Mer info och Kör ändå).
 5. Synken på Windows (`windows/src/js/sync.js`) följer `docs/SYNK.md` och iPadens `App/Sync/SyncEngine.swift`. Ändras protokollet ska båda ändras. Provas med `windows/tests/e2e_sync.py` mot `windows/tests/mock_supabase.py`.
@@ -51,6 +51,7 @@ Config/Info.plist
 docs/SPEC.md
 tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
 tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en iPad-simulator
+Tests/LasaTests/    automatiska tester av ren logik (XCTest), körs sist i Simulatortest
 windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tauri/ (Rust), dev/, tests/
 .github/workflows/ios-build.yml
 .github/workflows/windows-build.yml
@@ -93,6 +94,13 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Självtestet `-LasaSelfTest fas6` provar repetitionen, AI-tolkningen och synken mot `tools/simtest/mock_supabase.py`. Läs `fas6.log` och `mock-supabase.json` i artefakten Simulatortest.
 * Den osignerade appen i simulatorn kan inte skriva i nyckelringen (`SecItemAdd` svarar -34018). `Keychain` håller då värdet i minnet tills appen stängs, så självtestet fungerar ändå. På iPaden signerar Sideloadly appen och nyckelringen används.
 * Simulatorn kör iOS 26: popovers och vissa knappar ritas som glas och kommer inte med i självtestets egna bilder (`drawHierarchy`). Kontrollera sådant i loggen (till exempel antalet träffar) eller i skärmbilderna från `simctl`, inte i appens bilder.
+
+## Grunden (våg 1, 8 november 2026)
+
+* Loggen: `AppLog` skriver `Documents/Diagnostik/logg.txt`, som syns i Filer. Nya fel och tider loggas där, kort och utan text ur böckerna. Apples MetricKit-rapporter sparas i `Diagnostik/MetricKit` (`DiagnosticReports`). Inställningar har Dela loggen, och Simulatortest lägger loggen i artefakten (`Diagnostik/`).
+* Säkerhetskopian: `Backup` sparar en kopia per dag i `Documents/Säkerhetskopia/<datum tid>/` (båda databaserna med SQLite:s backup, läspositionerna ur UserDefaults som JSON) och behåller de sju senaste. Ny användardata (en ny databas, nya nycklar i UserDefaults) ska också in i `Backup`.
+* Utgångsvarningen: `AppExpiry` läser utgångsdatumet ur `embedded.mobileprovision` och visar en rad i biblioteket två dagar före. Simulatorn har ingen profil.
+* Fel vid sparning visas av `SaveProblems` (se fas 4). Ren logik får ett test i `Tests/LasaTests`. XcodeGen är låst (`XCODEGEN_VERSION` i workflowen), och arkivets dSYM sparas som artefakten `Lasa-dSYM`.
 
 ## Ordboken (fas 2)
 
