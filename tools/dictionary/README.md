@@ -1,6 +1,7 @@
 # Ordboken
 
 `build.py` bygger `out/lasa-ordbok.sqlite` (cirka 50 MB) och en testrapport, `out/testrapport.txt`.
+Det kräver wordfreq: `pip install wordfreq==3.1.1`.
 Bygget körs i GitHub Actions (jobbet Ordboken i `ios-build.yml`) och databasen läggs in i appen.
 Testrapporten laddas upp som artefakten **Ordbok-testrapport**, så att svaren för orden i
 `testwords.txt` kan jämföras med svenska.se.
@@ -19,8 +20,10 @@ python tools/dictionary/lookup.py tools/dictionary/out/lasa-ordbok.sqlite sprang
 | SALDO och SALDO morfologi (Språkbanken) | Grundformer, ordklasser, böjningsformer, betydelser | CC BY 4.0 |
 | Open English WordNet 2025 | Engelska betydelser, definitioner, synonymer, oregelbundna former | CC BY 4.0 |
 | Folkets lexikon (KTH), `folkets_en_sv_public.xml` | Svensk översättning, oregelbundna engelska former | CC BY-SA 2.5 |
+| Folkets lexikon (KTH), `folkets_sv_en_public.xml` | Definitioner på enkel svenska per SALDO-betydelse, och omvända översättningar | CC BY-SA 2.5 |
+| wordfreq 3.1.1 (Robyn Speer) | Hur vanliga synonymerna är (Zipf-skalan) | CC BY-SA 4.0, källorna anges under Om ordboken |
 
-Databasen är en bearbetning av Folkets lexikon och delas därför under CC BY-SA 2.5.
+Databasen är en bearbetning av Folkets lexikon och wordfreq och delas därför under CC BY-SA 4.0.
 Svenska Akademiens data (SO, SAOL) finns inte här. Appen visar dem bara via svenska.se.
 
 ## Hur de svenska synonymerna väljs
@@ -37,6 +40,18 @@ Därför:
 4. Ett par som Swesaurus inte känner till hamnar i ordets enda betydelse, eller i en grupp utan
    betydelse (`sense_id` tom) som visas sist.
 
+## Vad rutan visar (schema version 2)
+
+Edvin tyckte att den första rutan var förvirrande: allt visades på en gång och engelska ord saknade
+ofta svensk översättning. Därför:
+
+* Engelska ord: den svenska översättningen överst. Folkets egna översättningar först. Saknas de används
+  omvända par ur den svensk-engelska delen (rank från 500). Saknas de också lånas översättningen från
+  den vanligaste synonymen i någon av de tre första betydelserna ("exceedingly" får "ytterst" från "extremely").
+* Svenska ord: definitionen ur Folkets lexikon (omkring 8 000 betydelser) med de vanligaste synonymerna.
+* Synonymerna sorteras efter vanlighet (svenska: Synlex-betyget plus 0,5 gånger Zipf-värdet).
+  Ord under Zipf 2,0 räknas som ovanliga och visas sist. Fem visas direkt, resten bakom ett tryck.
+
 ## Schemat
 
 Alla tabeller är vanlig SQLite (`WITHOUT ROWID` med sammansatta nycklar), så att Windows-appen kan
@@ -44,12 +59,13 @@ läsa samma fil. Former och `en_sv.en_lemma` är normaliserade: NFKC, raka apost
 
 ```sql
 sv_forms (form, lemma, pos)                       -- SALDO:s ordklasser: nn, vb, av, ab, pp, pn, kn, sn, in, nl, al, ie
-sv_synonyms (lemma, pos, sense_id, synonym, score) -- score är Synlex-betyget
+sv_synonyms (lemma, pos, sense_id, synonym, score, freq) -- score är Synlex-betyget, freq Zipf-värdet
+sv_definitions (lemma, pos, sense_id, rank, definition)    -- Folkets lexikon, sense_id tom när den är okänd
 en_forms (form, lemma, pos)                       -- pos: n, v, a, r (och Folkets övriga klasser)
 en_senses (lemma, synset_id, pos, rank)           -- rank: WordNets ordning, vanligast först
 en_synsets (synset_id, definition)
-en_synset_members (synset_id, lemma, rank)
-en_sv (en_lemma, rank, sv, pos, comment)          -- rank: Folkets ordning
+en_synset_members (synset_id, lemma, rank, freq)
+en_sv (en_lemma, rank, sv, pos, comment)          -- rank: Folkets ordning, från 500 omvända par
 meta (key, value)                                 -- byggdatum, källornas adresser och sha256
 ```
 
