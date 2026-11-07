@@ -16,7 +16,7 @@ samma filer och skriv in den nya commiten här.
 
 ## pdf.js (PDF)
 
-* Källa: npm-paketet `pdfjs-dist`, version enligt `windows/package.json` (6.4.299).
+* Källa: npm-paketet `pdfjs-dist`, version enligt `windows/package.json` (6.4.299), legacy-bygget.
 * Licens: Apache License 2.0, se `pdfjs/LICENSE`. Typsnitten i `pdfjs/standard_fonts` och avkodarna
   i `pdfjs/wasm` har egna licensfiler i samma mappar.
 * Kopieras med `npm install` och `npm run vendor` (skriptet `windows/tools/vendor.mjs`), som också tar

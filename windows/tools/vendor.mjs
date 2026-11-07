@@ -24,8 +24,10 @@ fs.rmSync(target, { recursive: true, force: true });
 fs.mkdirSync(target, { recursive: true });
 const copy = (from, to = from) => fs.cpSync(path.join(source, from), path.join(target, to), { recursive: true });
 copy('LICENSE');
-copy('build/pdf.min.mjs', 'pdf.min.mjs');
-copy('build/pdf.worker.min.mjs', 'pdf.worker.min.mjs');
+// Legacy-bygget har ersättare för de nyaste JavaScript-funktionerna (som Map.getOrInsertComputed),
+// så att PDF fungerar även om WebView2 på datorn ligger några versioner efter.
+copy('legacy/build/pdf.min.mjs', 'pdf.min.mjs');
+copy('legacy/build/pdf.worker.min.mjs', 'pdf.worker.min.mjs');
 copy('cmaps');
 copy('standard_fonts');
 copy('iccs');
