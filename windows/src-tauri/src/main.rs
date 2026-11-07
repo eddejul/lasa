@@ -186,6 +186,40 @@ fn library_delete(state: State<'_, AppState>, id: String, ext: String) -> Result
     }
 }
 
+/// Hemligheterna för synken ligger i Windows Autentiseringshanteraren, aldrig i en fil.
+/// Bara de här namnen går att läsa och skriva.
+const SECRET_SERVICE: &str = "se.edvin.lasa";
+const SECRET_NAMES: [&str; 2] = ["sync-publishable-key", "sync-refresh-token"];
+
+fn secret_entry(name: &str) -> Result<keyring::Entry, String> {
+    if !SECRET_NAMES.contains(&name) {
+        return Err(format!("Okänd hemlighet: {name}"));
+    }
+    keyring::Entry::new(SECRET_SERVICE, name).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn secret_get(name: String) -> Result<Option<String>, String> {
+    match secret_entry(&name)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Sparar en hemlighet, eller tar bort den när värdet är tomt eller saknas.
+#[tauri::command]
+fn secret_set(name: String, value: Option<String>) -> Result<(), String> {
+    let entry = secret_entry(&name)?;
+    match value {
+        Some(text) if !text.is_empty() => entry.set_password(&text).map_err(|error| error.to_string()),
+        _ => match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        },
+    }
+}
+
 fn open_dictionary(app: &tauri::App) -> Result<Mutex<Connection>, String> {
     let path = app
         .path()
@@ -227,7 +261,9 @@ fn main() {
             user_batch,
             library_store,
             library_read,
-            library_delete
+            library_delete,
+            secret_get,
+            secret_set
         ])
         .run(tauri::generate_context!())
         .expect("Läsa kunde inte starta");
