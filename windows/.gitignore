@@ -1,0 +1,8 @@
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+# Bygget i molnet lägger ordboken här innan appen byggs
+src-tauri/resources/*.sqlite
+# Provkörningar i webbläsaren
+dev/data/
+tests/out/

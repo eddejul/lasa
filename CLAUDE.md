@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Läsa är en läsapp för iPad och iPhone (Swift, UIKit) med pappersvikning som i Apple Books och en offline ordfunktion. En Windows-version kommer i fas 5. Hela specen finns i `docs/SPEC.md`. Läs den innan du börjar på en ny fas.
+Läsa är en läsapp för iPad och iPhone (Swift, UIKit) med pappersvikning som i Apple Books och en offline ordfunktion. Windows-versionen (fas 5, Tauri) ligger i `windows/`, se `windows/README.md`. Hela specen finns i `docs/SPEC.md`. Läs den innan du börjar på en ny fas.
 
 ## Viktigast att veta
 
@@ -17,6 +17,14 @@ Läsa är en läsapp för iPad och iPhone (Swift, UIKit) med pappersvikning som 
 5. När bygget är grönt: säg till Edvin att ladda ner artefakten `Lasa-ipa` från körningen, och skriv exakt vad han ska testa på iPaden (2 till 5 punkter).
 
 Pusha inte flera orelaterade ändringar i samma commit. Varje runda tar flera minuter, så små och säkra steg går snabbast.
+
+### Windows-appen
+
+1. Provkör gränssnittet först i Chrome: `windows/dev/server.py` svarar på samma kommandon som Rust-delen, och `windows/tests/e2e.py` provar det mesta (se `windows/README.md`). Det finns ingen Rust på datorn.
+2. Push startar `Windows build` (bara när `windows/`, `tools/dictionary/` eller workflowfilen ändras). iOS-bygget hoppar över ändringar som bara rör `windows/`.
+3. Följ bygget: `gh run list --workflow "Windows build" --limit 1`, fel med `gh run view <id> --log-failed`. Samma regel om tre fel som ovan.
+4. När bygget är grönt: Edvin laddar ner artefakten `Lasa-windows` och kör filen som slutar på `-setup.exe` (osignerad: Mer info och Kör ändå).
+5. Synken på Windows (`windows/src/js/sync.js`) följer `docs/SYNK.md` och iPadens `App/Sync/SyncEngine.swift`. Ändras protokollet ska båda ändras. Provas med `windows/tests/e2e_sync.py` mot `windows/tests/mock_supabase.py`.
 
 ## Projektet
 
@@ -43,7 +51,9 @@ Config/Info.plist
 docs/SPEC.md
 tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
 tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en iPad-simulator
+windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tauri/ (Rust), dev/, tests/
 .github/workflows/ios-build.yml
+.github/workflows/windows-build.yml
 ```
 
 ## Regler för läsaren
@@ -87,12 +97,12 @@ tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en 
 
 * Offline SQLite, byggd av `tools/dictionary/build.py` från Synlex, Swesaurus, SALDO, Open English WordNet och Folkets lexikon. Se licenser i specen och `tools/dictionary/README.md`.
 * Bygget i molnet har två jobb: Ordboken (Linux, bygger databasen och testrapporten) och Appen (Mac, lägger databasen i `App/Resources` före XcodeGen). Källfilerna och databasen sparas i Actions cache, så databasen byggs bara om när skripten eller testlistan ändras.
-* Uppslagslogiken finns två gånger: `App/Dictionary/WordDictionary.swift` och `tools/dictionary/lookup.py` (som testrapporten använder). Ändras den ena ska den andra ändras i samma commit.
+* Uppslagslogiken finns tre gånger: `App/Dictionary/WordDictionary.swift`, `tools/dictionary/lookup.py` (som testrapporten använder) och `windows/src/js/lookup.js` (Windows-appen). Ändras en ska de andra ändras i samma commit. `windows/tests/parity.mjs` jämför lookup.js med lookup.py över testlistan och körs i Windows-bygget.
 * Ord slås upp när fingret hålls stilla på ordet i 0,35 s (`wordPressDuration`). Ordet närmast fingret markeras (inte ordet till vänster), en bubbla ovanför fingret visar ordet, markeringen följer med om man drar, och rutan öppnas först när man släpper. Ett vanligt tryck i mitten är fortfarande menyn, och i kanterna bläddring.
 * Rutan visar ett tydligt svar överst: för engelska den svenska översättningen (lånad från en synonym om ordet saknas i Folkets lexikon), för svenska definitionen ur Folkets lexikon och de vanligaste synonymerna. Övriga betydelser och ordklasser ligger bakom ett tryck. Edvin tyckte att den första rutan var förvirrande (7 november 2026).
 * Det användaren gör (sparade ord, dolda synonympar) ligger i `anvandarord.sqlite` under Application Support, aldrig i ordboksfilen.
 * Svenska Akademiens data (SO, SAOL) får aldrig kopieras in. Den visas bara via svenska.se i en `SFSafariViewController`.
-* Samma databasfil ska fungera i Windows-appen senare.
+* Samma databasfil används i Windows-appen, där Rust-delen läser den skrivskyddat (`dict_query`). Windows-appens egna data ligger i `bibliotek.sqlite` och `anvandarord.sqlite` under `%APPDATA%\se.edvin.lasa`.
 
 ## Säkerhet
 
