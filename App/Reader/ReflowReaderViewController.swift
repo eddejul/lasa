@@ -51,6 +51,9 @@ final class ReflowReaderViewController: UIViewController {
     private var firstMeasuredAt: CFTimeInterval?
     private var isShowingPages = false
     private var pendingJump: PendingJump?
+    /// En sida som ska visas när fingret har vikt klart. Bladen får inte bytas mitt i en vikning.
+    private var deferredShow: (chapter: Int, page: Int)?
+    private var turnToken = 0
 
     private var chromeHidden = false
     private let bottomBar = ReaderBottomBar()
@@ -324,6 +327,11 @@ final class ReflowReaderViewController: UIViewController {
     /// Visar en sida direkt, utan vikning.
     private func show(chapter: Int, page: Int) {
         guard let renderer = renderer else { return }
+        if renderer.isTurning {
+            deferredShow = (chapter, page)
+            return
+        }
+        deferredShow = nil
         let count = renderer.pageCount(of: chapter) ?? 1
         currentChapter = chapter
         currentCount = renderer.pageCount(of: chapter)
@@ -688,7 +696,12 @@ final class ReflowReaderViewController: UIViewController {
             self?.setTypography(value)
         }
         controller.diagnostics = { [weak self] in
-            self?.renderer?.statsSummary
+            guard let self = self, let renderer = self.renderer else { return nil }
+            var text = renderer.statsSummary
+            if let first = renderer.firstSnapshotAt {
+                text += " Boken öppnades på \(Int(((first - self.openedAt) * 1000).rounded())) ms."
+            }
+            return text
         }
         let navigation = UINavigationController(rootViewController: controller)
         navigation.modalPresentationStyle = .popover
@@ -980,6 +993,14 @@ extension ReflowReaderViewController: UIPageViewControllerDataSource, UIPageView
                             willTransitionTo pendingViewControllers: [UIViewController]) {
         Haptics.shared.prepareForPageTurn()
         renderer?.isTurning = true
+        // Skydd om vikningen aldrig rapporterar att den är klar: då ska förritning och hopp inte stå still.
+        turnToken += 1
+        let token = turnToken
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self = self, self.turnToken == token, self.renderer?.isTurning == true else { return }
+            self.renderer?.isTurning = false
+        }
     }
 
     func pageViewController(_ pageViewController: UIPageViewController,
@@ -987,6 +1008,11 @@ extension ReflowReaderViewController: UIPageViewControllerDataSource, UIPageView
                             previousViewControllers: [UIViewController],
                             transitionCompleted completed: Bool) {
         renderer?.isTurning = false
+        if let deferred = deferredShow {
+            deferredShow = nil
+            show(chapter: deferred.chapter, page: deferred.page)
+            return
+        }
         guard completed else { return }
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
