@@ -48,6 +48,16 @@ Senast uppdaterad: 7 november 2026.
 
 Tauri med foliate-js (EPUB) och pdf.js (PDF). Samma ordboksfil och samma logik för att hitta ordet under muspekaren. Bläddring med piltangenter och mushjul.
 
+Så blev den (7 november 2026, detaljer i `windows/README.md`):
+
+* **Mappar:** `windows/src` är gränssnittet i vanlig HTML, CSS och JavaScript utan byggsteg. `windows/src-tauri` är en liten Rust-del (Tauri 2.12, rusqlite) som läser ordboken skrivskyddat med parametriserade SELECT-frågor, sparar användarens data i två egna SQLite-filer (`bibliotek.sqlite`, `anvandarord.sqlite`) och bokfilerna i appens datamapp.
+* **Uppslagslogiken** är en tredje kopia i JavaScript (`windows/src/js/lookup.js`). Ett paritetstest jämför den med `lookup.py` över testlistan i varje bygge. Språket avgörs som på iPaden, men med vanliga småord i stället för NLLanguageRecognizer när ordet finns i båda språken, och engelsk ordklass med ordet före i stället för NLTagger.
+* **Ordet:** dubbelklick eller högerklick. Ordet och meningen tas fram med samma regler som på iPaden (avstavning över radbrytning i PDF, mening runt ordet), rutan har samma innehåll och ordning.
+* **PDF:** pdf.js (legacy-bygget) ritar sidorna på canvas med textlager ovanpå. Uppslag med omslaget ensamt till höger när sidan ryms läsbart, annars en sida i läsbar storlek som man rullar i. Visning: Automatiskt, Hela sidan eller Sidbredd, och zoom.
+* **EPUB och text:** foliate-js med CSS-kolumner, två kolumner i brett fönster. Textfiler görs om till HTML med samma regler som TextBookConverter.swift. Content-Security-Policy stoppar skript i EPUB-filer.
+* **Böcker** identifieras med SHA-256 av filens innehåll (gemener hex), samma id som synken i fas 6 ska använda. Sparade ord har kolumnerna `uuid` och `book_id` utöver iPadens.
+* **Bygget:** workflow `Windows build`, ordboken med samma cache som iOS-bygget, installationsfiler (NSIS och MSI) i artefakten `Lasa-windows`. Osignerade.
+
 ## 4. Funktioner, i prioritetsordning
 
 1. Bibliotek: lista, importera (plusknapp, "Öppna i Läsa" från Filer, dra in i Filer), ta bort.
@@ -177,7 +187,7 @@ Det finns ingen iOS 15-simulator på byggservern. Allt som beror på iOS 15 test
 
 ## 8. Faser
 
-Varje fas är klar först när Edvin har testat den på iPaden.
+Varje fas är klar först när Edvin har testat den på iPaden (fas 5 på Windows-datorn).
 
 | Fas | Innehåll | Klar när |
 |---|---|---|
@@ -186,7 +196,7 @@ Varje fas är klar först när Edvin har testat den på iPaden.
 | 2 | Ordboken: Python-skript, databas, tryck på ord i PDF, popup, SO-knapp, sparade ord, haptik | Testlistan ger rimliga svar och popupen öppnas på under 150 ms |
 | 3 | EPUB och textfiler med pappersvikning, typsnitt och storlek, ordfunktion i EPUB | En EPUB-roman läses utan hack |
 | 4 | Markeringar, anteckningar, bokmärken, sök, bläddringsljud | Allt sparas och överlever omstart |
-| 5 | Windows-appen | Kurslitteratur i PDF och EPUB läses på datorn med ordfunktion |
+| 5 | Windows-appen: bibliotek, PDF och EPUB och text, ordruta, sparade ord, teman, visning och zoom för PDF. Byggd 7 november 2026 på grenen `fas5`, väntar på Edvins test | Kurslitteratur i PDF och EPUB läses på datorn med ordfunktion |
 | 6 | Synk, AI-knapp, repetition av sparade ord, uppläsning | Läsposition och sparade ord följer med mellan iPad och dator |
 
 ### Synk (fas 6)

@@ -12,10 +12,12 @@
       {
         "label": "main",
         "title": "Läsa",
-        "width": 1280,
-        "height": 820,
+        "width": 1200,
+        "height": 760,
         "minWidth": 640,
         "minHeight": 480,
+        "center": true,
+        "maximized": true,
         "dragDropEnabled": false
       }
     ],
