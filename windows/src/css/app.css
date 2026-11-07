@@ -260,6 +260,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .font-choice { text-align: left; padding: 8px 10px; border-radius: 6px; font-size: 16px; }
 .font-choice:hover { background: var(--surface-2); }
 .font-choice.selected { background: var(--accent); color: var(--accent-text); }
+.choice-note { font-size: 12px; opacity: 0.75; margin-top: 2px; }
+.panel-subhead { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 14px 0 0; }
+.reader-panel[data-name="zoom"] { bottom: auto; }
 
 /* PDF */
 
@@ -272,6 +275,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   padding: 16px;
 }
 
+.pdf-spread.scroll { overflow: auto; justify-content: safe center; align-items: flex-start; }
 .pdf-page { position: relative; flex: 0 0 auto; box-shadow: var(--shadow); background: #ffffff; }
 .pdf-page.empty { box-shadow: none; background: transparent; height: 1px; }
 .pdf-spread.two .pdf-page:not(.empty):first-child { box-shadow: -4px 2px 18px rgb(0 0 0 / 0.14), inset -10px 0 18px -14px rgb(0 0 0 / 0.35); }

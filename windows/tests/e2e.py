@@ -130,11 +130,24 @@ def run(url, books, out):
         page.wait_for_selector('.pdf-spread .pdf-page canvas')
         wait_for(lambda: page.locator('.page-label').inner_text().strip())
         first_label = page.locator('.page-label').inner_text()
-        check('av 9' in first_label, f'sidnummer visas: {first_label}')
+        check(first_label == 'Sida 1 av 9', f'sidnummer visas: {first_label}')
+        # Fönstret är bara 720 punkter högt, så en hel A4-sida blir för liten och Automatiskt ger en sida
+        # i läsbar storlek (högst 1,3 gånger PDF:ens storlek) som man rullar i.
+        check(page.locator('.pdf-spread.scroll').count() == 1, 'Automatiskt väljer läsbar storlek i ett lågt fönster')
+        width = page.evaluate("document.querySelector('.pdf-page').getBoundingClientRect().width")
+        check(abs(width - 595.3 * 1.3) < 3, f'sidan är 1,3 gånger A4-bredden: {width:.0f} punkter')
         page.keyboard.press('ArrowRight')
-        check(wait_for(lambda: page.locator('.page-label').inner_text() != first_label), 'piltangent bläddrar')
-        second_label = page.locator('.page-label').inner_text()
-        check('2 och 3' in second_label, f'uppslag med sida 2 och 3 i brett fönster: {second_label}')
+        check(wait_for(lambda: page.locator('.page-label').inner_text() == 'Sida 2 av 9'), 'högerpil bläddrar')
+        page.keyboard.press('ArrowDown')
+        check(wait_for(lambda: page.evaluate("document.querySelector('.pdf-spread').scrollTop") > 50),
+              'nedåtpil rullar sidan i sidbredd')
+        check(page.locator('.page-label').inner_text() == 'Sida 2 av 9', 'nedåtpil bläddrar inte förrän sidan är slut')
+        page.screenshot(path=os.path.join(out, "02a-pdf-sidbredd.png"))
+        page.locator('[data-testid="zoom-button"]').click()
+        page.locator('[data-testid="fit-page"]').click()
+        check(wait_for(lambda: page.locator('.page-label').inner_text() == 'Sidorna 2 och 3 av 9'),
+              f'Hela sidan ger uppslag med sida 2 och 3: {page.locator(".page-label").inner_text()}')
+        page.keyboard.press('Escape')
         page.wait_for_function("document.querySelectorAll('.pdf-spread .textLayer span').length > 5")
         page.screenshot(path=os.path.join(out, "02-pdf-uppslag.png"))
 
@@ -186,6 +199,14 @@ def run(url, books, out):
         page.mouse.move(640, 400)
         page.mouse.wheel(0, 120)
         check(wait_for(lambda: page.locator('.page-label').inner_text() != before), 'mushjulet bläddrar')
+        pdf_label = page.locator('.page-label').inner_text()
+
+        # Zoom med Ctrl och plus
+        page.keyboard.press('Control+Equal')
+        check(wait_for(lambda: page.locator('.pdf-spread.scroll').count() == 1), 'Ctrl och plus zoomar in (sidan rullas)')
+        page.screenshot(path=os.path.join(out, "04a-pdf-zoom.png"))
+        page.keyboard.press('Control+Digit0')
+        check(wait_for(lambda: page.locator('.pdf-spread.two').count() == 1), 'Ctrl och 0 återställer till uppslag')
         pdf_label = page.locator('.page-label').inner_text()
 
         # Innehållsförteckning

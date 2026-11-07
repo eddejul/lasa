@@ -42,6 +42,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     el('div', { class: 'toolbar-buttons' },
       el('button', { class: 'toolbar-button', onclick: () => togglePanel('toc'), dataset: { testid: 'toc-button' } }, 'Innehåll'),
       book.format === 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => goToPage() }, 'Gå till sida') : null,
+      book.format === 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('zoom'), dataset: { testid: 'zoom-button' } }, 'Visning') : null,
       book.format !== 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('type'), title: 'Typsnitt och storlek' }, 'Aa') : null,
       el('button', { class: 'toolbar-button', onclick: () => togglePanel('theme'), dataset: { testid: 'theme-button' } }, 'Tema'),
       el('button', { class: 'toolbar-button', onclick: () => onSavedWords() }, 'Sparade ord'),
@@ -78,12 +79,37 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
 
   // Tangenter och mushjul
   const isTyping = (event) => /^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName ?? '') && event.target !== slider;
-  const turn = (direction) => {
+  const turn = (direction, options = {}) => {
     closeWordPopup();
-    return direction > 0 ? reader.next() : reader.prev();
+    return direction > 0 ? reader.next() : reader.prev(options);
+  };
+  // Nedåt och uppåt (pil, PageDown, mellanslag): rulla sidan om den rullas, annars bläddra.
+  const step = (direction) => {
+    closeWordPopup();
+    if (reader.scrollStep?.(direction)) return null;
+    return turn(direction, { atEnd: direction < 0 });
+  };
+  const zoom = async (direction) => {
+    if (!reader.zoomStep) return;
+    await reader.zoomStep(direction);
+    await setSetting('pdfZoom', reader.zoom);
   };
   const onKey = (event) => {
-    if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (event.defaultPrevented) return;
+    if (event.ctrlKey && !event.altKey && reader.zoomStep) {
+      if (['+', '=', 'Add'].includes(event.key)) {
+        event.preventDefault();
+        zoom(1);
+      } else if (['-', 'Subtract'].includes(event.key)) {
+        event.preventDefault();
+        zoom(-1);
+      } else if (event.key === '0') {
+        event.preventDefault();
+        reader.setView({ zoom: 1 }).then(() => setSetting('pdfZoom', 1));
+      }
+      return;
+    }
+    if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (document.querySelector('#modal-layer .modal-backdrop')) return;
     if (event.key === 'Escape') {
       if (isWordPopupOpen()) closeWordPopup();
@@ -93,11 +119,15 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
       return;
     }
     if (isTyping(event)) return;
-    const forward = ['ArrowRight', 'ArrowDown', 'PageDown'].includes(event.key) || (event.key === ' ' && !event.shiftKey);
-    const backward = ['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key) || (event.key === ' ' && event.shiftKey);
-    if (forward || backward) {
+    // Höger och vänster bläddrar alltid. Nedåt och uppåt rullar först om sidan är större än fönstret.
+    const down = ['ArrowDown', 'PageDown'].includes(event.key) || (event.key === ' ' && !event.shiftKey);
+    const up = ['ArrowUp', 'PageUp'].includes(event.key) || (event.key === ' ' && event.shiftKey);
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
       event.preventDefault();
-      turn(forward ? 1 : -1);
+      turn(event.key === 'ArrowRight' ? 1 : -1);
+    } else if (down || up) {
+      event.preventDefault();
+      step(down ? 1 : -1);
     } else if (event.key === 'Home') {
       event.preventDefault();
       reader.goToFraction(0);
@@ -113,19 +143,28 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   const onWheel = (event) => {
     if (event.ctrlKey) {
       event.preventDefault();
+      if (reader.zoomStep && Math.abs(event.deltaY) > 0 && performance.now() >= wheelBlockedUntil) {
+        wheelBlockedUntil = performance.now() + 200;
+        zoom(event.deltaY < 0 ? 1 : -1);
+      }
       return;
     }
     if (!panel.hidden && panel.contains(event.target)) return;
+    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+    // En sida som är större än fönstret rullar som vanligt, och bläddrar först när den är i kanten.
+    if (reader.scrollMode && !reader.atEdge(Math.sign(delta))) {
+      wheelSum = 0;
+      return;
+    }
     event.preventDefault();
     const now = performance.now();
     if (now < wheelBlockedUntil) return;
-    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
     wheelSum += event.deltaMode === 1 ? delta * 40 : delta;
     if (Math.abs(wheelSum) >= 50) {
       const direction = Math.sign(wheelSum);
       wheelSum = 0;
-      wheelBlockedUntil = now + 300;
-      turn(direction);
+      wheelBlockedUntil = now + (reader.scrollMode ? 600 : 300);
+      turn(direction, { atEnd: direction < 0 });
     }
   };
   const onPointerDown = () => {
@@ -133,7 +172,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   };
 
   const reader = book.format === 'pdf'
-    ? new PdfReader(stage, { onRelocate, onWord, onMessage: (message) => toast(message) })
+    ? new PdfReader(stage, { onRelocate, onWord, onMessage: (message) => toast(message),
+      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1 })
     : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown });
 
   document.addEventListener('keydown', onKey);
@@ -183,6 +223,31 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
           togglePanel(null);
         } }, theme.title))),
       el('p', { class: 'muted' }, 'Gäller alla böcker. Mörkt vänder ljusheten på PDF-sidor men behåller färgerna.'));
+    } else if (name === 'zoom') {
+      const fits = [
+        { id: 'auto', title: 'Automatiskt', note: 'Hela sidan om texten blir läsbar, annars en sida i läsbar storlek som du rullar i.' },
+        { id: 'page', title: 'Hela sidan', note: 'Sidan, eller två sidor bredvid varandra, ryms i fönstret.' },
+        { id: 'width', title: 'Sidbredd', note: 'Sidan fyller fönstrets bredd. Rulla nedåt med hjulet eller piltangenterna.' },
+      ];
+      const zoomLabel = el('span', { class: 'size-label', dataset: { testid: 'zoom-label' } }, `${Math.round(reader.zoom * 100)} %`);
+      replace(panel, el('div', { class: 'panel-head' }, el('h2', {}, 'Visning'),
+        el('button', { class: 'popup-close', onclick: () => togglePanel(null), 'aria-label': 'Stäng' }, '×')),
+      el('div', { class: 'font-list' }, fits.map((fit) => el('button', {
+        class: `font-choice${reader.fit === fit.id ? ' selected' : ''}`, dataset: { testid: `fit-${fit.id}` },
+        onclick: async () => {
+          await reader.setView({ fit: fit.id });
+          await setSetting('pdfFit', fit.id);
+          togglePanel(null);
+          togglePanel('zoom');
+        } }, el('div', {}, fit.title), el('div', { class: 'choice-note' }, fit.note)))),
+      el('h3', { class: 'panel-subhead' }, 'Zoom'),
+      el('div', { class: 'size-row' },
+        el('button', { class: 'button', onclick: async () => { await zoom(-1); zoomLabel.textContent = `${Math.round(reader.zoom * 100)} %`; },
+          'aria-label': 'Zooma ut' }, '−'),
+        zoomLabel,
+        el('button', { class: 'button', onclick: async () => { await zoom(1); zoomLabel.textContent = `${Math.round(reader.zoom * 100)} %`; },
+          'aria-label': 'Zooma in', dataset: { testid: 'zoom-in' } }, '+')),
+      el('p', { class: 'muted' }, 'Ctrl och plus eller minus, eller Ctrl och mushjulet, zoomar också. Ctrl och 0 återställer.'));
     } else if (name === 'type') {
       const sizeLabel = el('span', { class: 'size-label' }, `${Math.round(SIZES[settings.size] * 100)} %`);
       const setSize = async (index) => {

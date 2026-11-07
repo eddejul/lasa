@@ -1,23 +1,40 @@
 // PDF-läsaren: pdf.js ritar sidorna på en canvas och lägger ett osynligt textlager ovanpå, så att ord
 // kan hittas och markeras. Uppslag med två sidor när fönstret är brett (omslaget ensamt till höger,
 // sedan 2 och 3, 4 och 5, som i en tryckt bok och som på iPaden), annars en sida.
+//
+// Visning: Hela sidan (sidan eller uppslaget ryms i fönstret) eller Sidbredd (en sida så bred som
+// fönstret, och man rullar nedåt). Automatiskt väljer Sidbredd när en hel sida skulle bli för liten
+// för att läsa, som på en bärbar dator med 150 procents skalning. Zoom gör sidan större än så.
 
 import { closePdf, openPdf, pdfjs } from './pdfjs.js';
 import { el } from './ui.js';
 import { isWordCharacter, wordInPageText } from './wordfind.js';
 
 const PADDING = 16;
+const SCROLLBAR = 18;
 const MAX_CACHED_PAGES = 6;
 // Uppslag när fönstrets yta är så här mycket bredare än hög.
 const SPREAD_RATIO = 1.15;
+// Under den här skalan (1 = PDF:ens egen storlek) blir en hel sida svår att läsa, och Automatiskt
+// väljer Sidbredd.
+const READABLE_SCALE = 0.8;
+// Automatiskt i ett lågt fönster: sidan så bred som fönstret, men inte större än så här, så att en
+// A4-sida inte blir dubbelt så stor som på papper i ett brett fönster.
+const AUTO_MAX_SCALE = 1.3;
+export const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2, 2.5];
+// Största canvas i bildpunkter. Större sidor ritas med lägre upplösning, så att minnet räcker.
+const MAX_CANVAS_PIXELS = 16e6;
 
 export class PdfReader {
-  constructor(stage, { onRelocate, onWord, onMessage }) {
+  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1 }) {
     this.kind = 'pdf';
     this.stage = stage;
     this.onRelocate = onRelocate;
     this.onWord = onWord;
     this.onMessage = onMessage;
+    this.fit = fit; // 'auto', 'page' eller 'width'
+    this.zoom = ZOOM_STEPS.includes(zoom) ? zoom : 1;
+    this.effectiveFit = 'page';
     this.cache = new Map(); // sidindex -> { scale, element, ready, text, offsets, strings, divs, indexOf }
     this.sizes = new Map(); // sidindex -> { width, height } vid skala 1
     this.current = [0];
@@ -30,7 +47,7 @@ export class PdfReader {
     let timer = null;
     this.resizeObserver = new ResizeObserver(() => {
       clearTimeout(timer);
-      timer = setTimeout(() => this.show(this.current[0]), 150);
+      timer = setTimeout(() => this.show(this.current[0], { keepScroll: true }), 150);
     });
   }
 
@@ -51,9 +68,24 @@ export class PdfReader {
     return this.count;
   }
 
+  /** Om sidan rullas (Sidbredd, läsbar storlek eller inzoomat) i stället för att rymmas i fönstret. */
+  get scrollMode() {
+    return this.effectiveFit !== 'page' || this.zoom > 1;
+  }
+
   get spreadMode() {
     const { width, height } = this.stage.getBoundingClientRect();
-    return this.count > 1 && width > height * SPREAD_RATIO;
+    return !this.scrollMode && this.count > 1 && width > height * SPREAD_RATIO;
+  }
+
+  /** Hela sidan eller Sidbredd. Automatiskt: hela sidan om den blir läsbar, annars 'readable', en
+   *  sida i läsbar storlek (sidbredd, men högst AUTO_MAX_SCALE) som man rullar i. */
+  async resolveFit(index) {
+    if (this.fit !== 'auto') return this.fit;
+    const { width, height } = this.stage.getBoundingClientRect();
+    const size = await this.size(index);
+    const whole = Math.min((width - 2 * PADDING) / size.width, (height - 2 * PADDING) / size.height);
+    return whole >= READABLE_SCALE ? 'page' : 'readable';
   }
 
   /** Sidorna i uppslaget som innehåller sidan, i ordning från vänster. null är en tom plats. */
@@ -62,6 +94,33 @@ export class PdfReader {
     if (index === 0) return [null, 0];
     const left = index % 2 === 1 ? index : index - 1;
     return [left, left + 1 < this.count ? left + 1 : null];
+  }
+
+  async setView({ fit = this.fit, zoom = this.zoom }) {
+    this.fit = fit;
+    this.zoom = ZOOM_STEPS.includes(zoom) ? zoom : 1;
+    await this.show(this.current[0], { keepScroll: true });
+  }
+
+  zoomStep(direction) {
+    const index = ZOOM_STEPS.indexOf(this.zoom);
+    const next = ZOOM_STEPS[Math.min(Math.max(index + direction, 0), ZOOM_STEPS.length - 1)];
+    return this.setView({ zoom: next });
+  }
+
+  /** Rullar en skärm uppåt eller nedåt. Ger false när sidan redan är i kanten (då bläddrar läsaren). */
+  scrollStep(direction) {
+    if (!this.scrollMode) return false;
+    const view = this.spreadElement;
+    if (this.atEdge(direction)) return false;
+    view.scrollBy({ top: direction * view.clientHeight * 0.85 });
+    return true;
+  }
+
+  atEdge(direction) {
+    const view = this.spreadElement;
+    const max = view.scrollHeight - view.clientHeight;
+    return direction > 0 ? view.scrollTop >= max - 2 : view.scrollTop <= 2;
   }
 
   async size(index) {
@@ -75,10 +134,14 @@ export class PdfReader {
 
   async scaleFor(index, slots) {
     const { width, height } = this.stage.getBoundingClientRect();
-    const availableWidth = Math.max(50, (width - 2 * PADDING) / slots);
+    const availableWidth = Math.max(50, (width - 2 * PADDING - (this.scrollMode ? SCROLLBAR : 0)) / slots);
     const availableHeight = Math.max(50, height - 2 * PADDING);
     const size = await this.size(index);
-    return Math.min(availableWidth / size.width, availableHeight / size.height);
+    let fitted;
+    if (this.effectiveFit === 'width') fitted = availableWidth / size.width;
+    else if (this.effectiveFit === 'readable') fitted = Math.min(availableWidth / size.width, AUTO_MAX_SCALE);
+    else fitted = Math.min(availableWidth / size.width, availableHeight / size.height);
+    return fitted * this.zoom;
   }
 
   /** Sidan som element, ritad i rätt skala. Återanvänds om den redan är ritad i samma skala. */
@@ -91,9 +154,10 @@ export class PdfReader {
     if (cached) this.forget(index);
     const page = await this.pdf.getPage(index + 1);
     const viewport = page.getViewport({ scale });
-    const ratio = window.devicePixelRatio || 1;
     const width = Math.floor(viewport.width);
     const height = Math.floor(viewport.height);
+    let ratio = window.devicePixelRatio || 1;
+    if (width * height * ratio * ratio > MAX_CANVAS_PIXELS) ratio = Math.sqrt(MAX_CANVAS_PIXELS / (width * height));
     const canvas = el('canvas', { class: 'pdf-canvas', width: Math.floor(viewport.width * ratio), height: Math.floor(viewport.height * ratio) });
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
@@ -152,31 +216,42 @@ export class PdfReader {
     this.cache.delete(index);
   }
 
-  /** Visar uppslaget (eller sidan) som innehåller sidan `index`. */
-  async show(index, attempt = 0) {
+  /** Visar uppslaget (eller sidan) som innehåller sidan `index`. atEnd: visa sidans nederkant (när man
+   *  rullar bakåt in på sidan). keepScroll: behåll var på sidan man är (när fönstret eller zoomen ändras). */
+  async show(index, { atEnd = false, keepScroll = false } = {}, attempt = 0) {
     if (!this.pdf) return;
     const token = ++this.token;
     index = Math.min(Math.max(0, index), this.count - 1);
-    const slots = this.slotsFor(index);
+    const view = this.spreadElement;
+    const scrolled = keepScroll && view.scrollHeight > 0 ? view.scrollTop / view.scrollHeight : 0;
     const entries = [];
+    let slots;
     try {
+      this.effectiveFit = await this.resolveFit(index);
+      slots = this.slotsFor(index);
       for (const page of slots) {
         entries.push(page === null ? null : await this.pageElement(page, await this.scaleFor(page, slots.length)));
       }
     } catch (error) {
       // En sida som ritades i förväg kan ha slängts medan den ritades. Då ritas den om en gång.
       if (error?.name === 'RenderingCancelledException' || error?.name === 'AbortException') {
-        if (token === this.token && attempt < 2) return this.show(index, attempt + 1);
+        if (token === this.token && attempt < 2) return this.show(index, { atEnd, keepScroll }, attempt + 1);
         return;
       }
       throw error;
     }
     if (token !== this.token) return;
     this.current = slots.filter((page) => page !== null);
-    this.spreadElement.classList.toggle('two', slots.length === 2);
-    this.spreadElement.replaceChildren(...slots.map((page, i) => (page === null
+    view.classList.toggle('two', slots.length === 2);
+    view.classList.toggle('scroll', this.scrollMode);
+    view.replaceChildren(...slots.map((page, i) => (page === null
       ? el('div', { class: 'pdf-page empty', style: `width: ${entries[1 - i]?.element.style.width ?? '0px'}` })
       : entries[i].element)));
+    if (this.scrollMode) {
+      view.scrollTop = keepScroll ? scrolled * view.scrollHeight : (atEnd ? view.scrollHeight : 0);
+    } else {
+      view.scrollTop = 0;
+    }
     this.onRelocate?.(this.location());
     this.trimCache();
     this.prefetch(token);
@@ -233,8 +308,9 @@ export class PdfReader {
     return null;
   }
 
-  prev() {
-    if (this.current[0] > 0) return this.show(this.current[0] - 1);
+  /** atEnd: börja längst ned på sidan före (när man rullar uppåt förbi sidans topp). */
+  prev({ atEnd = false } = {}) {
+    if (this.current[0] > 0) return this.show(this.current[0] - 1, { atEnd });
     return null;
   }
 
