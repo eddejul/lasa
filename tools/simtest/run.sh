@@ -15,7 +15,8 @@ xcodegen generate
 UDID=$(xcrun simctl list devices available -j | python3 tools/simtest/pick_device.py)
 echo "Simulator: $UDID"
 
-if ! xcodebuild build \
+# build-for-testing bygger appen och de automatiska testerna (LasaTests) på en gång.
+if ! xcodebuild build-for-testing \
     -project Lasa.xcodeproj \
     -scheme Lasa \
     -configuration Debug \
@@ -122,4 +123,20 @@ done
 xcrun simctl spawn "$UDID" log show --last 20m --style compact \
   --predicate 'process == "Lasa"' > "$OUT/systemlogg.txt" 2> /dev/null || true
 cp ~/Library/Logs/DiagnosticReports/*Lasa* "$OUT/" 2> /dev/null || true
+
+# Automatiska tester av ren logik (G13): sökningens jämförelse, repetitionen, synkens tider,
+# databasernas trappa och utgångsvarningen.
+echo "== Automatiska tester (LasaTests)"
+if xcodebuild test-without-building \
+    -project Lasa.xcodeproj \
+    -scheme Lasa \
+    -destination "id=$UDID" \
+    -derivedDataPath build/dd \
+    CODE_SIGNING_ALLOWED=NO > "$OUT/xctest.log" 2>&1; then
+  echo "Testerna gick igenom."
+else
+  echo "Testerna misslyckades."
+  status=1
+fi
+grep -E "Test Case .* (passed|failed)|error:|Executed [0-9]+ test" "$OUT/xctest.log" | tail -n 80 || tail -n 40 "$OUT/xctest.log"
 exit $status

@@ -30,12 +30,34 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: "NO"
 
+  # Automatiska tester av ren logik (G13). Körs i jobbet Simulatortest, aldrig i arkivet.
+  LasaTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests/LasaTests
+    dependencies:
+      - target: Lasa
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: se.edvin.lasa.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Lasa.app/Lasa"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
 schemes:
   Lasa:
     build:
       targets:
         Lasa: all
+        LasaTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - LasaTests
     archive:
       config: Release
