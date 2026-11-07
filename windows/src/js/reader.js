@@ -7,12 +7,18 @@ import { closeWordPopup, isWordPopupOpen, showWordPopup } from './popup.js';
 import { PdfReader } from './pdfreader.js';
 import { FONTS, ReflowReader, SIZES } from './reflowreader.js';
 import { newSearchState, renderSearchPanel } from './searchpanel.js';
+import { isBrowserKey } from './shortcuts.js';
 import { markOpened, savePosition, setSetting, settings } from './store.js';
 import { syncSoon } from './sync.js';
 import { THEMES, applyTheme, resolvedTheme, setThemeListener } from './theme.js';
 import { el, promptDialog, replace, toast } from './ui.js';
 
 let active = null;
+
+/** Sant medan en bok är öppen. */
+export function isReaderOpen() {
+  return active !== null;
+}
 
 export async function closeReader() {
   if (!active) return;
@@ -24,7 +30,7 @@ export async function closeReader() {
 }
 
 /** Öppnar en bok i `container`. onBack går tillbaka till biblioteket. */
-export async function openReader(container, book, { onBack, onSavedWords, onAbout }) {
+export async function openReader(container, book, { onBack, onSavedWords, onAbout, onAppKey = null }) {
   await closeReader();
   const stage = el('div', { class: 'reader-stage', tabindex: '-1' });
   const loading = el('div', { class: 'reader-loading', dataset: { testid: 'reader-loading' } }, 'Öppnar boken ...');
@@ -108,7 +114,25 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     await setSetting('pdfZoom', reader.zoom);
   };
   const onKey = (event) => {
+    // Tangenter i ett EPUB-kapitel kommer hit från kapitlets ram: webbläsarens egna stoppas, och appens
+    // genvägar (F11, Ctrl och O, ?, T) skickas vidare.
+    const origin = event.target?.ownerDocument ?? event.target;
+    if (origin && origin !== document) {
+      if (isBrowserKey(event)) {
+        event.preventDefault();
+        return;
+      }
+      onAppKey?.(event);
+    }
     if (event.defaultPrevented) return;
+    const ctrl = event.ctrlKey || event.metaKey;
+    const letter = (event.key ?? '').toLowerCase();
+    if (ctrl && !event.altKey && !event.shiftKey && (letter === 'f' || letter === 'g')) {
+      event.preventDefault();
+      if (letter === 'f') openSearch();
+      else goToPage();
+      return;
+    }
     if (event.ctrlKey && !event.altKey && reader.zoomStep) {
       if (['+', '=', 'Add'].includes(event.key)) {
         event.preventDefault();
@@ -200,10 +224,26 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   });
 
   async function goToPage() {
-    const answer = await promptDialog({ title: 'Gå till sida', message: 'Skriv bokens sidnummer (till exempel 45 eller xii).',
-      confirm: 'Gå', placeholder: 'Sidnummer' });
+    if (document.querySelector('#modal-layer .modal-backdrop')) return;
+    const pdf = book.format === 'pdf';
+    const total = reader.placeCount ?? 0;
+    const answer = await promptDialog(pdf
+      ? { title: 'Gå till sida', message: 'Skriv bokens sidnummer (till exempel 45 eller xii).', confirm: 'Gå', placeholder: 'Sidnummer' }
+      : { title: 'Gå till plats', message: `Skriv platsen (1 till ${total || 'slutet'}) eller hur långt in i boken, som 50 %.`,
+        confirm: 'Gå', placeholder: 'Plats eller procent' });
     if (answer === null) return;
-    if (!reader.goToPageText(answer)) toast(`Hittade ingen sida ${answer}.`);
+    if (!reader.goToPageText(answer)) toast(pdf ? `Hittade ingen sida ${answer}.` : `Hittade ingen plats ${answer}.`);
+  }
+
+  /** Ctrl och F: öppnar sökpanelen, eller går till sökfältet om den redan är öppen. */
+  function openSearch() {
+    if (panel.dataset.name === 'search') {
+      const input = panel.querySelector('input');
+      input?.focus();
+      input?.select();
+    } else {
+      togglePanel('search');
+    }
   }
 
   const searchState = newSearchState();

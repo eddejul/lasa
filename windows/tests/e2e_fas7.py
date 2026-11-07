@@ -223,7 +223,91 @@ def search_in_books(page, books, out):
     back_to_library(page)
 
 
-STEPS = [search_in_books]
+def shortcuts(page, books, out):
+    # I biblioteket: ?, T och Ctrl och O.
+    page.locator('[data-testid="tab-library"]').click()
+    page.wait_for_selector('[data-testid="book"]')
+    page.mouse.click(5, 300)
+    page.keyboard.press('Shift+?')
+    if not page.locator('[data-testid="shortcuts"]').count():
+        page.keyboard.type('?')
+    check(wait_for(lambda: page.locator('[data-testid="shortcuts"]').count() == 1), '? visar genvägarna')
+    page.screenshot(path=os.path.join(out, "f05-genvagar.png"))
+    page.keyboard.press('Escape')
+    check(wait_for(lambda: page.locator('[data-testid="shortcuts"]').count() == 0), 'Esc stänger listan')
+    before = page.evaluate("localStorage.getItem('lasa-theme')")
+    page.keyboard.press('t')
+    check(wait_for(lambda: any('Tema:' in t for t in toasts(page)), 3), 'T säger vilket tema det blev')
+    check(wait_for(lambda: page.evaluate("localStorage.getItem('lasa-theme')") != before), f'T byter tema (från {before})')
+    # Tillbaka till vitt för resten av testet.
+    for _ in range(4):
+        if page.evaluate("localStorage.getItem('lasa-theme')") == 'white':
+            break
+        page.keyboard.press('t')
+        page.wait_for_timeout(150)
+    check(page.evaluate("localStorage.getItem('lasa-theme')") == 'white', 'tillbaka till vitt efter ett varv')
+    with page.expect_file_chooser(timeout=5000) as chooser:
+        page.keyboard.press('Control+o')
+    check(chooser.value is not None, 'Ctrl och O öppnar filvalet')
+
+    # Webbläsarens egna tangenter stoppas.
+    page.evaluate("window.__inteOmladdad = true")
+    prevented = page.evaluate("""() => ['F5', 'r', 'p'].map((key) => {
+      const event = new KeyboardEvent('keydown', { key, ctrlKey: key !== 'F5', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
+      return event.defaultPrevented;
+    })""")
+    check(all(prevented), f'F5, Ctrl och R och Ctrl och P stoppas: {prevented}')
+    page.keyboard.press('F5')
+    page.keyboard.press('Control+r')
+    page.wait_for_timeout(500)
+    check(page.evaluate("window.__inteOmladdad === true"), 'sidan laddas inte om')
+
+    # I läsaren: Ctrl och F, Ctrl och G.
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    page.keyboard.press('Control+f')
+    check(wait_for(lambda: page.evaluate("document.activeElement?.dataset?.testid") == 'search-input'),
+          'Ctrl och F öppnar sökningen med markören i sökfältet')
+    page.keyboard.press('Escape')
+    page.keyboard.press('Control+g')
+    check(wait_for(lambda: page.locator('.dialog', has_text='Gå till sida').count() == 1), 'Ctrl och G frågar efter sida')
+    page.keyboard.type('5')
+    page.keyboard.press('Enter')
+    check(wait_for(lambda: '5' in page.locator('.page-label').inner_text()), f'Ctrl och G går till sidan: {page.locator(".page-label").inner_text()}')
+    back_to_library(page)
+
+    # I ett EPUB-kapitel (tangenterna kommer från kapitlets ram).
+    open_book(page, 'Testbok för Läsa')
+    check(wait_for(lambda: any(f.url.startswith('blob:') for f in page.frames), 15), 'EPUB-kapitel laddat')
+    page.wait_for_timeout(500)
+    frame = next(f for f in page.frames if f.url.startswith('blob:'))
+    frame.evaluate("document.body.focus()")
+    box = frame.frame_element().bounding_box()
+    page.mouse.click(box["x"] + 60, box["y"] + 60)
+    page.keyboard.press('Control+f')
+    check(wait_for(lambda: page.locator('[data-testid="search-input"]').count() == 1), 'Ctrl och F i ett EPUB-kapitel öppnar sökningen')
+    page.keyboard.press('Escape')
+    page.mouse.click(box["x"] + 60, box["y"] + 60)
+    before = page.evaluate("localStorage.getItem('lasa-theme')")
+    page.keyboard.press('t')
+    check(wait_for(lambda: page.evaluate("localStorage.getItem('lasa-theme')") != before), 'T i ett EPUB-kapitel byter tema')
+    page.keyboard.press('Control+g')
+    check(wait_for(lambda: page.locator('.dialog', has_text='Gå till plats').count() == 1), 'Ctrl och G i EPUB frågar efter plats')
+    page.keyboard.type('50 %')
+    page.keyboard.press('Enter')
+    page.wait_for_timeout(800)
+    value = int(page.locator('.page-slider').input_value())
+    check(400 <= value <= 600, f'50 % går till mitten av boken: {value}')
+    for _ in range(4):
+        if page.evaluate("localStorage.getItem('lasa-theme')") == 'white':
+            break
+        page.keyboard.press('t')
+        page.wait_for_timeout(150)
+    back_to_library(page)
+
+
+STEPS = [search_in_books, shortcuts]
 
 
 def main():

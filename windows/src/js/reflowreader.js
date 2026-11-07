@@ -385,6 +385,28 @@ export class ReflowReader {
     return this.view?.goToFraction(Math.min(Math.max(fraction, 0), 0.9999));
   }
 
+  /** Antalet platser i boken (en plats är ungefär 1 500 tecken). */
+  get placeCount() {
+    return this.view?.lastLocation?.location?.total ?? 0;
+  }
+
+  /** Gå till sida i en EPUB: en plats (1 till antalet) eller hur långt in i boken ("50 %"). */
+  goToPageText(text) {
+    const value = String(text).trim().replace(',', '.');
+    let fraction = null;
+    if (value.endsWith('%')) {
+      const percent = parseFloat(value);
+      if (percent >= 0 && percent <= 100) fraction = percent / 100;
+    } else {
+      const number = parseInt(value, 10);
+      const total = this.placeCount;
+      if (String(number) === value && total && number >= 1 && number <= total) fraction = (number - 1) / total;
+    }
+    if (fraction === null) return false;
+    this.goToFraction(fraction);
+    return true;
+  }
+
   async toc() {
     const convert = (items) => (items ?? []).map((item) => ({ label: (item.label ?? '').trim(), target: item.href, subitems: convert(item.subitems) }));
     return convert(this.view?.book?.toc);

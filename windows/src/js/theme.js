@@ -41,3 +41,19 @@ darkQuery?.addEventListener?.('change', () => {
   document.documentElement.dataset.theme = resolvedTheme();
   listener?.(resolvedTheme());
 });
+
+/** Väljer ett tema och sparar valet. Läsaren får det visade temat via lyssnaren. */
+export async function chooseTheme(theme) {
+  const { setSetting } = await import('./store.js');
+  await setSetting('theme', theme);
+  applyTheme(theme);
+  listener?.(resolvedTheme());
+}
+
+/** Nästa tema i ordningen vitt, sepia, mörkt, följ systemet (tangenten T). Ger temats namn. */
+export async function cycleTheme() {
+  const index = THEMES.findIndex((t) => t.id === choice);
+  const next = THEMES[(index + 1) % THEMES.length];
+  await chooseTheme(next.id);
+  return next.title;
+}

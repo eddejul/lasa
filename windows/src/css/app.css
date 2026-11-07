@@ -503,3 +503,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 /* Markeringar i EPUB och textfiler ritas av foliate-js */
 .reader-stage foliate-view { --overlayer-highlight-opacity: 0.38; --overlayer-highlight-blend-mode: multiply; }
 :root[data-theme="dark"] .reader-stage foliate-view { --overlayer-highlight-opacity: 0.30; --overlayer-highlight-blend-mode: normal; }
+
+/* Tangentbordsgenvägar */
+.shortcuts-dialog { width: min(620px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.shortcuts-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.shortcuts-table th, .shortcuts-table td { text-align: left; vertical-align: top; padding: 6px 4px; border-top: 1px solid var(--border); }
+.shortcuts-table th { font-weight: 600; width: 42%; padding-right: 12px; }
+.shortcuts-table td { color: var(--muted); }

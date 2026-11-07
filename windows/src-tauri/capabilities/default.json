@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Huvudfönstret: appens egna kommandon och att öppna länkar (svenska.se och källorna) i webbläsaren.",
+  "description": "Huvudfönstret: appens egna kommandon, att öppna länkar (svenska.se och källorna) i webbläsaren, och helskärm (F11).",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:default"]
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen"
+  ]
 }
