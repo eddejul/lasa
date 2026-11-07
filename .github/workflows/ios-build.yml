@@ -6,7 +6,8 @@ name: iOS build
 on:
   push:
     branches: [main, "fas*"]
-    paths-ignore: ['windows/**']
+    # Ändringar som bara rör Windows-appen eller dokumentation bygger inte iOS-appen.
+    paths-ignore: ['windows/**', 'docs/**', '**/*.md']
   workflow_dispatch:
 
 concurrency:
@@ -17,6 +18,9 @@ env:
   # Låst på Xcode 26.6 så att en ny standard-Xcode på byggservern inte kan höja lägsta iOS över 15.
   # Lämna tomt för byggserverns standard-Xcode. Byt bara till en version som stöder iOS 15.
   XCODE_APP: "/Applications/Xcode_26.6.app"
+  # Låst XcodeGen, så att en ny version inte kan ändra projektet utan att något i repot ändrats.
+  # Byt bara medvetet, och kontrollera bygget efteråt.
+  XCODEGEN_VERSION: "2.46.0"
 
 jobs:
   dictionary:
@@ -102,8 +106,17 @@ jobs:
           fi
           xcodebuild -version
 
-      - name: Installera XcodeGen
-        run: brew install xcodegen
+      - name: Installera XcodeGen (låst version)
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          rm -rf "$RUNNER_TEMP/xcodegen"
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/xcodegen"
+          XCODEGEN=$(find "$RUNNER_TEMP/xcodegen" -type f -path '*/bin/xcodegen' | head -n 1)
+          test -n "$XCODEGEN"
+          chmod +x "$XCODEGEN"
+          dirname "$XCODEGEN" >> "$GITHUB_PATH"
+          "$XCODEGEN" --version
 
       - name: Generera Xcode-projektet
         run: |
@@ -151,6 +164,15 @@ jobs:
           path: build/Lasa-unsigned.ipa
           retention-days: 30
 
+      # Filerna som översätter adresserna i en kraschrapport (MetricKit) till funktioner och rader.
+      - name: Ladda upp dSYM
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lasa-dSYM
+          path: build/Lasa.xcarchive/dSYMs
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: Ladda upp bygglogg
         if: always()
         uses: actions/upload-artifact@v4
@@ -186,8 +208,17 @@ jobs:
           fi
           xcodebuild -version
 
-      - name: Installera XcodeGen
-        run: brew install xcodegen
+      - name: Installera XcodeGen (låst version)
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          rm -rf "$RUNNER_TEMP/xcodegen"
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/xcodegen"
+          XCODEGEN=$(find "$RUNNER_TEMP/xcodegen" -type f -path '*/bin/xcodegen' | head -n 1)
+          test -n "$XCODEGEN"
+          chmod +x "$XCODEGEN"
+          dirname "$XCODEGEN" >> "$GITHUB_PATH"
+          "$XCODEGEN" --version
 
       - name: Kör självtestet i simulatorn
         run: bash tools/simtest/run.sh
