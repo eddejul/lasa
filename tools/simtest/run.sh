@@ -62,6 +62,53 @@ for BOOK in test.epub test.md test.txt test.rtf test.pdf; do
   sleep 2
 done
 
+# Fas 6 utan bok: repetition, inställningar, AI-svaret och synken mot en låtsas-Supabase.
+echo "== fas6"
+EPUB_ID=$(shasum -a 256 "$BOOKS/test.epub" | cut -d' ' -f1)
+cat > build/mock_seed.json << SEED
+{
+  "positions": [{"book_id": "$EPUB_ID", "title": "test", "kind": "reflow", "section": 4, "progression": 0.25,
+                 "updated_at": "2030-01-01T10:00:00.123456+00:00"}],
+  "highlights": [{"id": "6f1c2d3e-0000-4000-8000-00000000abcd", "book_id": "$EPUB_ID", "section": 1, "start": 5,
+                  "length": 12, "text": "från servern", "color": "pink", "note": "", "deleted": false,
+                  "created_at": "2030-01-01T10:00:00+00:00", "updated_at": "2030-01-01T10:00:00.5+00:00"}],
+  "bookmarks": [],
+  "saved_words": [{"lemma": "fjärrord", "language": "sv", "word": "fjärrord", "sentence": "Ett ord från servern.",
+                   "book": "Windows", "page": 0, "lookups": 1, "deleted": false, "due": null, "interval": null,
+                   "ease": null, "reps": null, "lapses": null, "review_updated_at": null,
+                   "created_at": "2030-01-01T10:00:00+00:00", "updated_at": "2030-01-01T10:00:00+00:00"}]
+}
+SEED
+python3 tools/simtest/mock_supabase.py 54321 build/mock_seed.json "$OUT/mock-supabase.json" &
+MOCK=$!
+sleep 1
+rm -f "$DATA/Documents/selftest/fas6.klar"
+xcrun simctl launch "$UDID" "$BUNDLE" -LasaSelfTest fas6 -LasaSyncURL http://127.0.0.1:54321
+waited=0
+while [ ! -f "$DATA/Documents/selftest/fas6.klar" ] && [ $waited -lt 180 ]; do
+  sleep 5
+  waited=$((waited + 5))
+done
+if [ -f "$DATA/Documents/selftest/fas6.klar" ]; then
+  echo "Klart efter cirka $waited sekunder."
+else
+  echo "Självtestet för fas 6 blev inte klart inom 180 sekunder."
+  status=1
+fi
+xcrun simctl terminate "$UDID" "$BUNDLE" || true
+kill $MOCK 2> /dev/null || true
+python3 - "$OUT/mock-supabase.json" << 'SUMMARY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+print("Låtsasservern efter synken:")
+for table, rows in data["tables"].items():
+    print(f"  {table}: {len(rows)} rader")
+    for row in rows:
+        short = {k: v for k, v in row.items() if k not in ("user_id", "created_at")}
+        print("    ", json.dumps(short, ensure_ascii=False)[:220])
+print("  anrop:", len(data["requests"]))
+SUMMARY
+
 cp -R "$DATA/Documents/selftest/." "$OUT/" 2> /dev/null || true
 for LOG in "$OUT"/*.log; do
   case "$LOG" in

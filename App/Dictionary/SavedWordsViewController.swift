@@ -25,7 +25,8 @@ final class SavedWordsViewController: UITableViewController {
         super.viewDidLoad()
         title = "Sparade ord"
         navigationItem.largeTitleDisplayMode = .never
-        navigationItem.rightBarButtonItem = editButtonItem
+        let review = UIBarButtonItem(title: "Repetera", style: .plain, target: self, action: #selector(reviewTapped))
+        navigationItem.rightBarButtonItems = [editButtonItem, review]
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
     }
 
@@ -34,6 +35,10 @@ final class SavedWordsViewController: UITableViewController {
         words = UserWords.shared.savedWords()
         tableView.reloadData()
         updateEmptyState()
+    }
+
+    @objc private func reviewTapped() {
+        navigationController?.pushViewController(WordReviewViewController(), animated: true)
     }
 
     private func updateEmptyState() {

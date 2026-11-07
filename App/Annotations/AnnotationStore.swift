@@ -202,7 +202,7 @@ final class AnnotationStore {
         if !overlapping.isEmpty, newStart != start || newEnd != start + length {
             mergedText = textProvider?(newStart, newEnd - newStart) ?? text
         }
-        let highlight = Highlight(id: UUID().uuidString,
+        let highlight = Highlight(id: UUID().uuidString.lowercased(),
                                   book: book,
                                   section: section,
                                   start: newStart,
@@ -273,7 +273,7 @@ final class AnnotationStore {
     @discardableResult
     func addBookmark(book: String, section: Int, progression: Double, label: String) -> Bookmark {
         let now = Date()
-        let bookmark = Bookmark(id: UUID().uuidString, book: book, section: section,
+        let bookmark = Bookmark(id: UUID().uuidString.lowercased(), book: book, section: section,
                                 progression: progression, label: label, created: now, updated: now)
         try? db?.execute("""
             INSERT INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
@@ -332,5 +332,57 @@ enum ReaderSettings {
     static var highlightColor: HighlightColor {
         get { UserDefaults.standard.string(forKey: colorKey).flatMap(HighlightColor.init(rawValue:)) ?? .yellow }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: colorKey) }
+    }
+}
+
+// MARK: Synk (fas 6)
+
+extension AnnotationStore {
+
+    /// Alla markeringar, också borttagna, med flaggan för borttagen.
+    func highlightsForSync() -> [(Highlight, Bool)] {
+        var result: [(Highlight, Bool)] = []
+        try? db?.query("""
+            SELECT id, book, section, start, length, text, color, note, created, updated, deleted FROM highlights
+            """) { row in
+            result.append((Self.syncHighlight(from: row), row.int(10) != 0))
+        }
+        return result
+    }
+
+    /// Sparar en markering från en annan enhet med dess egna tider.
+    func applySynced(_ highlight: Highlight, deleted: Bool) {
+        try? db?.execute("""
+            INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [highlight.id, highlight.book, highlight.section, highlight.start, highlight.length, highlight.text,
+                  highlight.color.rawValue, highlight.note, highlight.created.timeIntervalSince1970,
+                  highlight.updated.timeIntervalSince1970, deleted ? 1 : 0])
+        NotificationCenter.default.post(name: Self.didChange, object: highlight.book)
+    }
+
+    func bookmarksForSync() -> [(Bookmark, Bool)] {
+        var result: [(Bookmark, Bool)] = []
+        try? db?.query("SELECT id, book, section, progression, label, created, updated, deleted FROM bookmarks") { row in
+            result.append((Bookmark(id: row.string(0), book: row.string(1), section: row.int(2), progression: row.double(3),
+                                    label: row.string(4), created: Date(timeIntervalSince1970: row.double(5)),
+                                    updated: Date(timeIntervalSince1970: row.double(6))), row.int(7) != 0))
+        }
+        return result
+    }
+
+    func applySynced(_ bookmark: Bookmark, deleted: Bool) {
+        try? db?.execute("""
+            INSERT OR REPLACE INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, [bookmark.id, bookmark.book, bookmark.section, bookmark.progression, bookmark.label,
+                  bookmark.created.timeIntervalSince1970, bookmark.updated.timeIntervalSince1970, deleted ? 1 : 0])
+        NotificationCenter.default.post(name: Self.didChange, object: bookmark.book)
+    }
+
+    private static func syncHighlight(from row: SQLiteDatabase.Row) -> Highlight {
+        Highlight(id: row.string(0), book: row.string(1), section: row.int(2), start: row.int(3), length: row.int(4),
+                  text: row.string(5), color: HighlightColor(rawValue: row.string(6)) ?? .yellow, note: row.string(7),
+                  created: Date(timeIntervalSince1970: row.double(8)), updated: Date(timeIntervalSince1970: row.double(9)))
     }
 }

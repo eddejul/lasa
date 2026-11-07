@@ -11,6 +11,7 @@ enum Keychain {
         case geminiAPIKey = "gemini.apiKey"
         case syncRefreshToken = "sync.refreshToken"
         case syncAccessToken = "sync.accessToken"
+        case syncAnonKey = "sync.anonKey"
     }
 
     static func string(_ key: Key) -> String? {

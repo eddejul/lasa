@@ -12,6 +12,9 @@ enum SelfTest {
         bookName != nil
     }
 
+    /// Namnet som startar självtestet för fas 6 (repetition, inställningar, AI-svaret och synken).
+    static let fas6Name = "fas6"
+
     static var directory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("selftest", isDirectory: true)

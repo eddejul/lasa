@@ -118,6 +118,7 @@ final class PDFCurlReaderViewController: UIViewController {
         super.viewWillDisappear(animated)
         stopReading()
         guard isMovingFromParent else { return }
+        SyncEngine.shared.syncSoon()
         if chromeHidden {
             navigationController?.setNavigationBarHidden(false, animated: animated)
         }

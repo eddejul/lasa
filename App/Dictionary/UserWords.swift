@@ -300,3 +300,93 @@ extension UserWords {
         db
     }
 }
+
+// MARK: Synk (fas 6)
+
+/// Ett sparat ord som det skickas mellan enheterna, med repetitionen.
+struct SyncWord: Equatable {
+    var lemma: String
+    var language: String
+    var word = ""
+    var sentence = ""
+    var book = ""
+    var page = 0
+    var lookups = 1
+    var created: Double = 0
+    var updated: Double = 0
+    var deleted = false
+    var due: Double?
+    var interval: Double?
+    var ease: Double?
+    var reps: Int?
+    var lapses: Int?
+    var reviewUpdated: Double?
+
+    var key: String {
+        language + "|" + lemma
+    }
+}
+
+extension UserWords {
+
+    /// Alla sparade och borttagna ord, med repetitionen.
+    func wordsForSync() -> [SyncWord] {
+        var words: [String: SyncWord] = [:]
+        try? db?.query("SELECT word, lemma, language, sentence, book, page, lookups, created, updated FROM saved_words") { row in
+            let word = SyncWord(lemma: row.string(1), language: row.string(2), word: row.string(0),
+                                sentence: row.string(3), book: row.string(4), page: row.int(5), lookups: row.int(6),
+                                created: row.double(7), updated: row.double(8))
+            words[word.key] = word
+        }
+        try? db?.query("SELECT lemma, language, deleted FROM deleted_words") { row in
+            let key = row.string(1) + "|" + row.string(0)
+            if let existing = words[key], existing.updated >= row.double(2) {
+                return
+            }
+            words[key] = SyncWord(lemma: row.string(0), language: row.string(1), created: row.double(2),
+                                  updated: row.double(2), deleted: true)
+        }
+        try? db?.query("SELECT lemma, language, due, interval, ease, reps, lapses, updated FROM reviews") { row in
+            let key = row.string(1) + "|" + row.string(0)
+            guard var word = words[key], !word.deleted else { return }
+            word.due = row.double(2)
+            word.interval = row.double(3)
+            word.ease = row.double(4)
+            word.reps = row.int(5)
+            word.lapses = row.int(6)
+            word.reviewUpdated = row.double(7)
+            words[key] = word
+        }
+        return Array(words.values)
+    }
+
+    /// Sparar ett ord från en annan enhet med dess egna tider, eller tar bort det.
+    func applySynced(_ word: SyncWord) {
+        if word.deleted {
+            try? db?.execute("DELETE FROM saved_words WHERE lemma = ? AND language = ?", [word.lemma, word.language])
+            try? db?.execute("DELETE FROM reviews WHERE lemma = ? AND language = ?", [word.lemma, word.language])
+            try? db?.execute("INSERT OR REPLACE INTO deleted_words (lemma, language, deleted) VALUES (?, ?, ?)",
+                             [word.lemma, word.language, word.updated])
+            return
+        }
+        try? db?.execute("""
+            INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (lemma, language) DO UPDATE SET
+                word = excluded.word, sentence = excluded.sentence, book = excluded.book, page = excluded.page,
+                lookups = excluded.lookups, created = excluded.created, updated = excluded.updated
+            """, [word.word, word.lemma, word.language, word.sentence, word.book, word.page, word.lookups,
+                  word.created, word.updated])
+        try? db?.execute("DELETE FROM deleted_words WHERE lemma = ? AND language = ?", [word.lemma, word.language])
+        if let due = word.due, let reviewUpdated = word.reviewUpdated {
+            try? db?.execute("""
+                INSERT INTO reviews (lemma, language, due, interval, ease, reps, lapses, introduced, updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (lemma, language) DO UPDATE SET
+                    due = excluded.due, interval = excluded.interval, ease = excluded.ease, reps = excluded.reps,
+                    lapses = excluded.lapses, updated = excluded.updated
+                """, [word.lemma, word.language, due, word.interval ?? 0, word.ease ?? 2.5, word.reps ?? 0,
+                      word.lapses ?? 0, reviewUpdated, reviewUpdated])
+        }
+    }
+}

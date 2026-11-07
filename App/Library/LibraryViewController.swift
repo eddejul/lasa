@@ -20,15 +20,23 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         super.viewDidLoad()
         title = "Bibliotek"
         navigationItem.largeTitleDisplayMode = .always
-        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add,
-                                                            target: self,
-                                                            action: #selector(addTapped))
+        let settings = UIBarButtonItem(image: UIImage(systemName: "gearshape"), style: .plain,
+                                       target: self, action: #selector(settingsTapped))
+        settings.accessibilityLabel = "Inställningar"
+        navigationItem.rightBarButtonItems = [UIBarButtonItem(barButtonSystemItem: .add,
+                                                              target: self,
+                                                              action: #selector(addTapped)),
+                                              settings]
         let words = UIBarButtonItem(title: nil,
                                     image: UIImage(systemName: "character.book.closed"),
                                     primaryAction: nil,
                                     menu: UIMenu(children: [
                                         UIAction(title: "Sparade ord", image: UIImage(systemName: "bookmark")) { [weak self] _ in
                                             self?.navigationController?.pushViewController(SavedWordsViewController(),
+                                                                                           animated: true)
+                                        },
+                                        UIAction(title: "Repetera ord", image: UIImage(systemName: "rectangle.stack")) { [weak self] _ in
+                                            self?.navigationController?.pushViewController(WordReviewViewController(),
                                                                                            animated: true)
                                         },
                                         UIAction(title: "Om ordboken", image: UIImage(systemName: "info.circle")) { [weak self] _ in
@@ -52,6 +60,14 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         // Bara i simulatortestet i bygget: öppna testboken direkt.
         guard let name = SelfTest.bookName, !didStartSelfTest else { return }
         didStartSelfTest = true
+        if name == SelfTest.fas6Name {
+            // Fas 6 utan bok: repetition, inställningar, AI-svaret och synken mot en låtsasserver.
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                await Fas6SelfTest.run(from: self)
+            }
+            return
+        }
         if let book = books.first(where: { $0.url.lastPathComponent == name }) {
             open(book)
         } else {
@@ -90,6 +106,10 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
+    }
+
+    @objc private func settingsTapped() {
+        navigationController?.pushViewController(SettingsViewController(), animated: true)
     }
 
     // MARK: Lägg till

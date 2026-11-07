@@ -21,6 +21,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         openIncoming(connectionOptions.urlContexts)
     }
 
+    /// Synkar när appen kommer fram, om synken är inställd (fas 6).
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        guard !SelfTest.isActive else { return }
+        SyncEngine.shared.syncSoon()
+    }
+
     /// "Öppna i Läsa" från Filer eller en annan app medan appen redan är igång.
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
         openIncoming(URLContexts)

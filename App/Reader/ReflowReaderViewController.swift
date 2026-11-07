@@ -156,6 +156,7 @@ final class ReflowReaderViewController: UIViewController {
         super.viewWillDisappear(animated)
         stopReading()
         guard isMovingFromParent else { return }
+        defer { SyncEngine.shared.syncSoon() }
         if isShowingPages {
             saveLocation()
         }

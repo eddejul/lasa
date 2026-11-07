@@ -118,6 +118,7 @@ final class LibraryStore {
 
     func savePageIndex(_ index: Int, for book: Book) {
         defaults.set(index, forKey: positionKey(for: book))
+        markPositionChanged(for: book)
     }
 
     private func positionKey(for book: Book) -> String {
@@ -136,6 +137,33 @@ final class LibraryStore {
 
     func saveLocation(_ location: ReflowLocation, for book: Book) {
         defaults.set("\(location.chapter)|\(location.progression)", forKey: locationKey(for: book))
+        markPositionChanged(for: book)
+    }
+
+    // MARK: Synk av läspositionen (fas 6)
+
+    /// När läspositionen senast ändrades på den här enheten, eller kom från synken.
+    func positionDate(for book: Book) -> Date? {
+        let value = defaults.double(forKey: positionDateKey(for: book))
+        return value > 0 ? Date(timeIntervalSince1970: value) : nil
+    }
+
+    /// En läsposition från en annan enhet. Tiden följer med, så att den inte skickas tillbaka som ny.
+    func applySyncedPosition(section: Int, progression: Double, date: Date, for book: Book) {
+        if book.kind == .pdf {
+            defaults.set(section, forKey: positionKey(for: book))
+        } else {
+            defaults.set("\(section)|\(progression)", forKey: locationKey(for: book))
+        }
+        defaults.set(date.timeIntervalSince1970, forKey: positionDateKey(for: book))
+    }
+
+    private func markPositionChanged(for book: Book) {
+        defaults.set(Date().timeIntervalSince1970, forKey: positionDateKey(for: book))
+    }
+
+    private func positionDateKey(for book: Book) -> String {
+        "positionDate.\(book.url.lastPathComponent)"
     }
 
     private func locationKey(for book: Book) -> String {
