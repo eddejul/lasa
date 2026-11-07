@@ -45,6 +45,8 @@ enum Fas6SelfTest {
         SelfTest.log("Schema för ett ord med 3 dagar: " + labels.joined(separator: ", "))
         navigation.popToRootViewController(animated: false)
 
+        testDatabases()
+
         // AI-svaret: tolkningen av ett svar från Gemini, och att påhittade ord rensas bort.
         if let lookup = WordDictionary.shared?.lookup("vacker", sentence: "Alla var överens om att den var vacker.") {
             let candidates = GeminiClient.Candidates(lookup)
@@ -90,6 +92,32 @@ enum Fas6SelfTest {
         SelfTest.saveScreen(navigation.view, name: "05-installningar")
         navigation.popToRootViewController(animated: false)
         SelfTest.finish()
+    }
+
+    /// G8: databasernas versioner, trappan av uppdateringar och att en avbruten transaktion inte sparar något.
+    /// Trappan provas i en databas i minnet, så att användarens filer inte rörs.
+    private static func testDatabases() {
+        SelfTest.log("Databasernas versioner: markeringar \(AnnotationStore.shared.schemaVersion), "
+                     + "sparade ord \(UserWords.shared.schemaVersion) (ska vara 1 och 1)")
+        struct Stop: Error {}
+        do {
+            let memory = try SQLiteDatabase(path: ":memory:", readOnly: false)
+            let first = try memory.migrate(["CREATE TABLE t (a INTEGER);"])
+            let second = try memory.migrate(["CREATE TABLE t (a INTEGER);",
+                                             "ALTER TABLE t ADD COLUMN b TEXT NOT NULL DEFAULT '';"])
+            try memory.execute("INSERT INTO t (a, b) VALUES (1, 'ett')")
+            try? memory.transaction { () throws -> Void in
+                try memory.execute("INSERT INTO t (a, b) VALUES (2, 'två')")
+                throw Stop()
+            }
+            var rows = 0
+            try memory.query("SELECT COUNT(*) FROM t") { row in rows = row.int(0) }
+            SelfTest.log("Trappan: \(first.from) till \(first.to), sedan \(second.from) till \(second.to). "
+                         + "Rader efter en avbruten transaktion: \(rows) (ska vara 1)")
+        } catch {
+            SelfTest.log("FEL: databastestet: \(error)")
+        }
+        SelfTest.log("Fel vid sparning hittills: \(SaveProblems.count)")
     }
 
     private static func testSync(navigation: UINavigationController) async {

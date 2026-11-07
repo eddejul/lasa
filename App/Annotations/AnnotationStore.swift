@@ -104,13 +104,13 @@ final class AnnotationStore {
 
     private let db: SQLiteDatabase?
 
-    private init() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        let path = support.appendingPathComponent("markeringar.sqlite").path
-        db = try? SQLiteDatabase(path: path, readOnly: false)
-        try? db?.executeScript("""
-            PRAGMA journal_mode = WAL;
+    /// Namnet i felmeddelanden.
+    private static let name = "Markeringarna"
+
+    /// Databasens versioner, en trappa. Steg 1 är tabellerna som de var före G8, så en befintlig databas
+    /// (version 0) får bara versionsnumret. Lägg nya steg sist, till exempel `ALTER TABLE ... ADD COLUMN`.
+    static let migrations: [String] = [
+        """
             CREATE TABLE IF NOT EXISTS highlights (
                 id TEXT PRIMARY KEY,
                 book TEXT NOT NULL,
@@ -136,7 +136,65 @@ final class AnnotationStore {
                 deleted INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS bookmarks_book ON bookmarks (book, section);
-            """)
+            """,
+    ]
+
+    /// Databasens fil, till säkerhetskopian.
+    static var fileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("markeringar.sqlite")
+    }
+
+    private init() {
+        db = Self.open()
+    }
+
+    private static func open() -> SQLiteDatabase? {
+        let url = fileURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let db = try SQLiteDatabase(path: url.path, readOnly: false)
+            try db.executeScript("PRAGMA journal_mode = WAL;")
+            let versions = try db.migrate(migrations)
+            if versions.from != versions.to {
+                AppLog.shared.write("markeringar.sqlite: version \(versions.from) till \(versions.to)")
+            }
+            return db
+        } catch {
+            AppLog.shared.write("markeringar.sqlite gick inte att öppna: \(error)")
+            return nil
+        }
+    }
+
+    /// Databasens version, till självtestet och loggen.
+    var schemaVersion: Int {
+        (try? db?.userVersion()) ?? -1
+    }
+
+    /// Kör en skrivning i en transaktion: allt eller inget. Går det inte säger appen till.
+    @discardableResult
+    private func write(_ what: String, _ body: (SQLiteDatabase) throws -> Void) -> Bool {
+        guard let db = db else {
+            SaveProblems.report(Self.name, detail: "\(what): databasen gick inte att öppna")
+            return false
+        }
+        do {
+            try db.transaction { try body(db) }
+            return true
+        } catch {
+            SaveProblems.report(Self.name, detail: "\(what): \(error)")
+            return false
+        }
+    }
+
+    /// En läsning. Ett fel hamnar i loggen, och svaret blir tomt.
+    private func read(_ what: String, _ body: (SQLiteDatabase) throws -> Void) {
+        guard let db = db else { return }
+        do {
+            try body(db)
+        } catch {
+            AppLog.shared.write("Markeringar: \(what) kunde inte läsas: \(error)")
+        }
     }
 
     /// Nyckeln som en bok sparas under.
@@ -149,33 +207,39 @@ final class AnnotationStore {
     /// Bokens markeringar i läsordning.
     func highlights(book: String) -> [Highlight] {
         var result: [Highlight] = []
-        try? db?.query("""
-            SELECT id, book, section, start, length, text, color, note, created, updated
-            FROM highlights WHERE book = ? AND deleted = 0 ORDER BY section, start
-            """, [book]) { row in
-            result.append(Self.highlight(from: row))
+        read("bokens markeringar") { db in
+            try db.query("""
+                SELECT id, book, section, start, length, text, color, note, created, updated
+                FROM highlights WHERE book = ? AND deleted = 0 ORDER BY section, start
+                """, [book]) { row in
+                result.append(Self.highlight(from: row))
+            }
         }
         return result
     }
 
     func highlights(book: String, section: Int) -> [Highlight] {
         var result: [Highlight] = []
-        try? db?.query("""
-            SELECT id, book, section, start, length, text, color, note, created, updated
-            FROM highlights WHERE book = ? AND section = ? AND deleted = 0 ORDER BY start
-            """, [book, section]) { row in
-            result.append(Self.highlight(from: row))
+        read("sidans markeringar") { db in
+            try db.query("""
+                SELECT id, book, section, start, length, text, color, note, created, updated
+                FROM highlights WHERE book = ? AND section = ? AND deleted = 0 ORDER BY start
+                """, [book, section]) { row in
+                result.append(Self.highlight(from: row))
+            }
         }
         return result
     }
 
     func highlight(id: String) -> Highlight? {
         var result: Highlight?
-        try? db?.query("""
-            SELECT id, book, section, start, length, text, color, note, created, updated
-            FROM highlights WHERE id = ? AND deleted = 0
-            """, [id]) { row in
-            result = Self.highlight(from: row)
+        read("en markering") { db in
+            try db.query("""
+                SELECT id, book, section, start, length, text, color, note, created, updated
+                FROM highlights WHERE id = ? AND deleted = 0
+                """, [id]) { row in
+                result = Self.highlight(from: row)
+            }
         }
         return result
     }
@@ -196,7 +260,6 @@ final class AnnotationStore {
             if old.hasNote {
                 notes.append(old.note)
             }
-            markDeleted(table: "highlights", id: old.id, at: now)
         }
         var mergedText = text
         if !overlapping.isEmpty, newStart != start || newEnd != start + length {
@@ -212,7 +275,14 @@ final class AnnotationStore {
                                   note: notes.joined(separator: "\n\n"),
                                   created: now,
                                   updated: now)
-        insert(highlight)
+        // De gamla markeringarna tas bort och den nya läggs till i samma transaktion, så att en krasch
+        // emellan inte tappar markeringen med dess anteckningar.
+        write("markeringen") { db in
+            for old in overlapping {
+                try Self.markDeleted(db, table: "highlights", id: old.id, at: now)
+            }
+            try Self.insert(highlight, into: db)
+        }
         notify(book)
         return highlight
     }
@@ -220,17 +290,21 @@ final class AnnotationStore {
     func update(_ highlight: Highlight) {
         var changed = highlight
         changed.updated = Date()
-        insert(changed)
+        write("markeringen") { db in
+            try Self.insert(changed, into: db)
+        }
         notify(highlight.book)
     }
 
     func delete(_ highlight: Highlight) {
-        markDeleted(table: "highlights", id: highlight.id, at: Date())
+        write("borttagningen") { db in
+            try Self.markDeleted(db, table: "highlights", id: highlight.id, at: Date())
+        }
         notify(highlight.book)
     }
 
-    private func insert(_ highlight: Highlight) {
-        try? db?.execute("""
+    private static func insert(_ highlight: Highlight, into db: SQLiteDatabase) throws {
+        try db.execute("""
             INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
             """, [highlight.id, highlight.book, highlight.section, highlight.start, highlight.length, highlight.text,
@@ -255,17 +329,19 @@ final class AnnotationStore {
 
     func bookmarks(book: String) -> [Bookmark] {
         var result: [Bookmark] = []
-        try? db?.query("""
-            SELECT id, book, section, progression, label, created, updated
-            FROM bookmarks WHERE book = ? AND deleted = 0 ORDER BY section, progression
-            """, [book]) { row in
-            result.append(Bookmark(id: row.string(0),
-                                   book: row.string(1),
-                                   section: row.int(2),
-                                   progression: row.double(3),
-                                   label: row.string(4),
-                                   created: Date(timeIntervalSince1970: row.double(5)),
-                                   updated: Date(timeIntervalSince1970: row.double(6))))
+        read("bokmärkena") { db in
+            try db.query("""
+                SELECT id, book, section, progression, label, created, updated
+                FROM bookmarks WHERE book = ? AND deleted = 0 ORDER BY section, progression
+                """, [book]) { row in
+                result.append(Bookmark(id: row.string(0),
+                                       book: row.string(1),
+                                       section: row.int(2),
+                                       progression: row.double(3),
+                                       label: row.string(4),
+                                       created: Date(timeIntervalSince1970: row.double(5)),
+                                       updated: Date(timeIntervalSince1970: row.double(6))))
+            }
         }
         return result
     }
@@ -275,17 +351,21 @@ final class AnnotationStore {
         let now = Date()
         let bookmark = Bookmark(id: UUID().uuidString.lowercased(), book: book, section: section,
                                 progression: progression, label: label, created: now, updated: now)
-        try? db?.execute("""
-            INSERT INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-            """, [bookmark.id, book, section, progression, label,
-                  now.timeIntervalSince1970, now.timeIntervalSince1970])
+        write("bokmärket") { db in
+            try db.execute("""
+                INSERT INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                """, [bookmark.id, book, section, progression, label,
+                      now.timeIntervalSince1970, now.timeIntervalSince1970])
+        }
         notify(book)
         return bookmark
     }
 
     func delete(_ bookmark: Bookmark) {
-        markDeleted(table: "bookmarks", id: bookmark.id, at: Date())
+        write("borttagningen") { db in
+            try Self.markDeleted(db, table: "bookmarks", id: bookmark.id, at: Date())
+        }
         notify(bookmark.book)
     }
 
@@ -296,19 +376,21 @@ final class AnnotationStore {
         var highlights = 0
         var notes = 0
         var bookmarks = 0
-        try? db?.query("SELECT COUNT(*), SUM(CASE WHEN note <> '' THEN 1 ELSE 0 END) FROM highlights WHERE deleted = 0") { row in
-            highlights = row.int(0)
-            notes = row.int(1)
-        }
-        try? db?.query("SELECT COUNT(*) FROM bookmarks WHERE deleted = 0") { row in
-            bookmarks = row.int(0)
+        read("antalen") { db in
+            try db.query("SELECT COUNT(*), SUM(CASE WHEN note <> '' THEN 1 ELSE 0 END) FROM highlights WHERE deleted = 0") { row in
+                highlights = row.int(0)
+                notes = row.int(1)
+            }
+            try db.query("SELECT COUNT(*) FROM bookmarks WHERE deleted = 0") { row in
+                bookmarks = row.int(0)
+            }
         }
         return (highlights, notes, bookmarks)
     }
 
-    private func markDeleted(table: String, id: String, at date: Date) {
+    private static func markDeleted(_ db: SQLiteDatabase, table: String, id: String, at date: Date) throws {
         // Tabellnamnet kommer bara härifrån, aldrig från användaren.
-        try? db?.execute("UPDATE \(table) SET deleted = 1, updated = ? WHERE id = ?", [date.timeIntervalSince1970, id])
+        try db.execute("UPDATE \(table) SET deleted = 1, updated = ? WHERE id = ?", [date.timeIntervalSince1970, id])
     }
 
     private func notify(_ book: String) {
@@ -342,41 +424,50 @@ extension AnnotationStore {
     /// Alla markeringar, också borttagna, med flaggan för borttagen.
     func highlightsForSync() -> [(Highlight, Bool)] {
         var result: [(Highlight, Bool)] = []
-        try? db?.query("""
-            SELECT id, book, section, start, length, text, color, note, created, updated, deleted FROM highlights
-            """) { row in
-            result.append((Self.syncHighlight(from: row), row.int(10) != 0))
+        read("markeringarna till synken") { db in
+            try db.query("""
+                SELECT id, book, section, start, length, text, color, note, created, updated, deleted FROM highlights
+                """) { row in
+                result.append((Self.syncHighlight(from: row), row.int(10) != 0))
+            }
         }
         return result
     }
 
     /// Sparar en markering från en annan enhet med dess egna tider.
     func applySynced(_ highlight: Highlight, deleted: Bool) {
-        try? db?.execute("""
-            INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [highlight.id, highlight.book, highlight.section, highlight.start, highlight.length, highlight.text,
-                  highlight.color.rawValue, highlight.note, highlight.created.timeIntervalSince1970,
-                  highlight.updated.timeIntervalSince1970, deleted ? 1 : 0])
+        write("markeringen från synken") { db in
+            try db.execute("""
+                INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [highlight.id, highlight.book, highlight.section, highlight.start, highlight.length, highlight.text,
+                      highlight.color.rawValue, highlight.note, highlight.created.timeIntervalSince1970,
+                      highlight.updated.timeIntervalSince1970, deleted ? 1 : 0])
+        }
         NotificationCenter.default.post(name: Self.didChange, object: highlight.book)
     }
 
     func bookmarksForSync() -> [(Bookmark, Bool)] {
         var result: [(Bookmark, Bool)] = []
-        try? db?.query("SELECT id, book, section, progression, label, created, updated, deleted FROM bookmarks") { row in
-            result.append((Bookmark(id: row.string(0), book: row.string(1), section: row.int(2), progression: row.double(3),
-                                    label: row.string(4), created: Date(timeIntervalSince1970: row.double(5)),
-                                    updated: Date(timeIntervalSince1970: row.double(6))), row.int(7) != 0))
+        read("bokmärkena till synken") { db in
+            try db.query("SELECT id, book, section, progression, label, created, updated, deleted FROM bookmarks") { row in
+                result.append((Bookmark(id: row.string(0), book: row.string(1), section: row.int(2),
+                                        progression: row.double(3), label: row.string(4),
+                                        created: Date(timeIntervalSince1970: row.double(5)),
+                                        updated: Date(timeIntervalSince1970: row.double(6))), row.int(7) != 0))
+            }
         }
         return result
     }
 
     func applySynced(_ bookmark: Bookmark, deleted: Bool) {
-        try? db?.execute("""
-            INSERT OR REPLACE INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, [bookmark.id, bookmark.book, bookmark.section, bookmark.progression, bookmark.label,
-                  bookmark.created.timeIntervalSince1970, bookmark.updated.timeIntervalSince1970, deleted ? 1 : 0])
+        write("bokmärket från synken") { db in
+            try db.execute("""
+                INSERT OR REPLACE INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, [bookmark.id, bookmark.book, bookmark.section, bookmark.progression, bookmark.label,
+                      bookmark.created.timeIntervalSince1970, bookmark.updated.timeIntervalSince1970, deleted ? 1 : 0])
+        }
         NotificationCenter.default.post(name: Self.didChange, object: bookmark.book)
     }
 

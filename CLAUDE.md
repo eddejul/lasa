@@ -76,6 +76,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 ## Markeringar, bokmärken och sök (fas 4)
 
 * Allt sparas i `markeringar.sqlite` under Application Support (`AnnotationStore`), böckerna känns igen på filnamnet som läspositionen. Inget raderas: borttaget får `deleted = 1` och ny ändringstid, för synken.
+* Båda databaserna (`markeringar.sqlite`, `anvandarord.sqlite`) har ett versionsnummer (`PRAGMA user_version`) och en trappa av uppdateringar (`migrations` i `AnnotationStore` och `UserWords`, körs av `SQLiteDatabase.migrate`). Ett nytt fält blir ett nytt steg sist, ändra aldrig ett steg som redan finns. Varje skrivning går i en transaktion, och ett fel skrivs i loggen och visas för användaren (`SaveProblems`).
 * En markering är `section` plus ett teckenintervall i UTF-16. PDF: sidan och `PDFPage.string`. EPUB och text: kapitlet och kapitlets text (all text i body utom script och style). `text` sparas också, och skriptet letar upp markeringen via texten om platsen inte stämmer.
 * Markeringsläget (pennan): sidans vikning, menyn och ordfunktionen stängs av, och en `UILongPressGestureRecognizer` med tiden 0 följer fingret. Ett vanligt tryck på en markering öppnar `HighlightMenuViewController`.
 * PDF: markeringarna ritas som vyer ovanpå sidbilden i `PDFPageViewController` (ingen omritning av sidan). EPUB: `ReflowMarks.script` lägger span-element runt texten i den dolda webbvyn och sidan fotograferas om. `lasa.showPage` lämnar markeringarnas rutor, så att tryck på en markering hittas utan webbvyn.

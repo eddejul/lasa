@@ -96,6 +96,33 @@ final class SQLiteDatabase {
         }
     }
 
+    /// Databasens version (`PRAGMA user_version`). 0 för en ny databas, eller en som skapades före G8.
+    func userVersion() throws -> Int {
+        var version = 0
+        try query("PRAGMA user_version") { row in version = row.int(0) }
+        return version
+    }
+
+    /// Tar databasen till den senaste versionen. Steg n (räknat från 1) tar den från version n - 1 till n.
+    /// Varje steg körs i en egen transaktion tillsammans med det nya versionsnumret, så ett steg som
+    /// misslyckas lämnar databasen som den var. Steg som redan körts hoppas över.
+    /// Lägg alltid till nya steg sist, och ändra aldrig ett steg som redan finns i en utgiven version.
+    @discardableResult
+    func migrate(_ steps: [String]) throws -> (from: Int, to: Int) {
+        let start = try userVersion()
+        var version = start
+        while version < steps.count {
+            let sql = steps[version]
+            let next = version + 1
+            try transaction {
+                try executeScript(sql)
+                try executeScript("PRAGMA user_version = \(next)")
+            }
+            version = next
+        }
+        return (start, version)
+    }
+
     /// Kör `body` i en transaktion: allt sparas, eller inget om något kastar ett fel.
     /// En transaktion inuti en annan blir en del av den yttre.
     func transaction<T>(_ body: () throws -> T) throws -> T {
