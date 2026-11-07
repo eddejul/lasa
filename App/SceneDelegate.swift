@@ -28,9 +28,18 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     private func openIncoming(_ contexts: Set<UIOpenURLContext>) {
         guard let url = contexts.first?.url else { return }
+        // Vänta ett varv så att biblioteket hunnit visas. Vid kallstart syns annars inga felmeddelanden.
+        DispatchQueue.main.async { [weak self] in
+            self?.importAndOpen(url)
+        }
+    }
+
+    private func importAndOpen(_ url: URL) {
+        // Stäng zoom eller innehållsförteckning och gå tillbaka till biblioteket först.
+        library.navigationController?.dismiss(animated: false)
+        library.navigationController?.popToRootViewController(animated: false)
         do {
             let book = try LibraryStore.shared.importFile(at: url)
-            library.navigationController?.popToRootViewController(animated: false)
             library.reload()
             library.open(book)
         } catch {
