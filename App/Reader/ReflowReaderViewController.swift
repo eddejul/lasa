@@ -171,6 +171,7 @@ final class ReflowReaderViewController: UIViewController {
     // MARK: Öppna boken
 
     private func loadContent() {
+        WordDictionary.warmUpLanguageModels()
         spinner.startAnimating()
         let book = self.book
         Task { @MainActor [weak self] in
@@ -991,10 +992,7 @@ final class ReflowReaderViewController: UIViewController {
         let sourceRect = view.convert(anchor, from: page.view)
         let pageIndex = bookPageIndex(chapter: page.chapter, page: page.page ?? 0)
 
-        if let lookup = lookup, let lemma = lookup.entries.first?.lemma {
-            UserWords.shared.save(word: lookup.word, lemma: lemma, language: lookup.language,
-                                  sentence: sentence, book: book.title, pageIndex: pageIndex)
-        }
+        // Ordet sparas i Sparade ord av rutan, när den syns.
         SelfTest.log("Ord: \(found.word), mening: \(sentence), grundform: \(lookup?.entries.first?.lemma ?? "hittades inte"), "
                      + "uppslag \(Int(lookupTime.rounded())) ms")
 
@@ -1459,6 +1457,9 @@ extension ReflowReaderViewController {
                 finishPress()
                 await pause(1.5)
                 SelfTest.saveScreen(view.window ?? view, name: name)
+                // Ordet sparas när rutan syns, inte innan.
+                SelfTest.log("Senast sparade ord: \(UserWords.shared.savedWords().first?.word ?? "inget"). "
+                             + (LookupStats.shared.summary ?? "Ingen tid för rutan."))
                 dismiss(animated: false)
                 clearPressedWord()
                 return

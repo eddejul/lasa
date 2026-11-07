@@ -198,6 +198,7 @@ enum ReflowStyle {
       }
 
       async function setup(css, scale, w, h) {
+        linkCache = null;
         setViewport(Math.round(w));
         setStyle(css, scale);
         await resources();
@@ -212,17 +213,28 @@ enum ReflowStyle {
       }
 
       async function restyle(css, scale) {
+        linkCache = null;
         setStyle(css, scale);
         await frame();
         return measure();
       }
 
-      function links() {
-        var out = [];
+      // Alla länkars rutor i kapitlet, räknade en gång per layout. x räknas från kapitlets början,
+      // så att varje sida bara behöver välja sina. Förskjutningen är en ren transform, så rutan
+      // flyttas bara i sidled med den.
+      var linkCache = null;
+
+      function allLinks() {
         var w = pageWidth();
         var h = window.innerHeight;
+        var scroller = document.scrollingElement || root;
+        var key = w + 'x' + h + 'x' + Math.max(scroller.scrollWidth, root.scrollWidth);
+        if (linkCache && linkCache.key === key) {
+          return linkCache.items;
+        }
+        var items = [];
         var anchors = document.querySelectorAll('a[href]');
-        for (var i = 0; i < anchors.length && out.length < 300; i++) {
+        for (var i = 0; i < anchors.length; i++) {
           var href = anchors[i].href;
           if (typeof href !== 'string' || !href) {
             continue;
@@ -230,11 +242,28 @@ enum ReflowStyle {
           var rects = anchors[i].getClientRects();
           for (var k = 0; k < rects.length; k++) {
             var r = rects[k];
-            if (r.width < 1 || r.height < 1 || r.right <= 0 || r.left >= w || r.bottom <= 0 || r.top >= h) {
+            if (r.width < 1 || r.height < 1 || r.bottom <= 0 || r.top >= h) {
               continue;
             }
-            out.push({ x: r.left, y: r.top, w: r.width, h: r.height, href: href });
+            items.push({ x: r.left + offset, y: r.top, w: r.width, h: r.height, href: href });
           }
+        }
+        linkCache = { key: key, items: items };
+        return items;
+      }
+
+      // Länkarna på sidan som syns.
+      function links() {
+        var out = [];
+        var w = pageWidth();
+        var items = allLinks();
+        for (var i = 0; i < items.length && out.length < 300; i++) {
+          var item = items[i];
+          var x = item.x - offset;
+          if (x + item.w <= 0 || x >= w) {
+            continue;
+          }
+          out.push({ x: x, y: item.y, w: item.w, h: item.h, href: item.href });
         }
         return out;
       }

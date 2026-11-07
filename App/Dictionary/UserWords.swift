@@ -36,6 +36,8 @@ final class UserWords {
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         let path = support.appendingPathComponent("anvandarord.sqlite").path
         db = try? SQLiteDatabase(path: path, readOnly: false)
+        // WAL: en sparning blir en snabb skrivning i loggfilen utan att vänta på disken varje gång.
+        try? db?.executeScript("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")
         try? db?.executeScript("""
             CREATE TABLE IF NOT EXISTS saved_words (
                 id INTEGER PRIMARY KEY,
@@ -84,14 +86,16 @@ final class UserWords {
     /// Sparar ett uppslaget ord. Har det slagits upp förut räknas det upp, och meningen byts mot den senaste.
     func save(word: String, lemma: String, language: WordLanguage, sentence: String, book: String, pageIndex: Int) {
         let now = Date().timeIntervalSince1970
-        try? db?.execute("""
-            INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-            ON CONFLICT (lemma, language) DO UPDATE SET
-                word = excluded.word, sentence = excluded.sentence, book = excluded.book,
-                page = excluded.page, lookups = lookups + 1, updated = excluded.updated
-            """, [word, lemma, language.rawValue, sentence, book, pageIndex, now, now])
-        try? db?.execute("DELETE FROM deleted_words WHERE lemma = ? AND language = ?", [lemma, language.rawValue])
+        try? db?.transaction {
+            try db?.execute("""
+                INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT (lemma, language) DO UPDATE SET
+                    word = excluded.word, sentence = excluded.sentence, book = excluded.book,
+                    page = excluded.page, lookups = lookups + 1, updated = excluded.updated
+                """, [word, lemma, language.rawValue, sentence, book, pageIndex, now, now])
+            try db?.execute("DELETE FROM deleted_words WHERE lemma = ? AND language = ?", [lemma, language.rawValue])
+        }
     }
 
     /// De sparade orden, senast uppslaget först.

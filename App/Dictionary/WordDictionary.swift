@@ -457,9 +457,31 @@ final class WordDictionary {
 
     // MARK: Språk och ordklass ur meningen
 
+    /// Språkmodellerna skapas en gång. De används under ett lås, eftersom de värms i bakgrunden.
+    private static let languageLock = NSLock()
+    private static let recognizer = NLLanguageRecognizer()
+    private static let tagger = NLTagger(tagSchemes: [.lexicalClass])
+    private static var warmedUp = false
+
+    /// Laddar språkmodellerna i bakgrunden, så att första uppslaget inte väntar på dem.
+    /// Anropas när en bok öppnas. Gör inget andra gången.
+    static func warmUpLanguageModels() {
+        languageLock.lock()
+        let first = !warmedUp
+        warmedUp = true
+        languageLock.unlock()
+        guard first else { return }
+        DispatchQueue.global(qos: .utility).async {
+            _ = guessLanguage(of: "The book was on the table.")
+            _ = englishPos(of: "book", in: "The book was on the table.", range: nil)
+        }
+    }
+
     /// Svenska eller engelska, efter meningen. Oavgjort, eller för lite text, blir svenska.
     static func guessLanguage(of sentence: String) -> WordLanguage {
-        let recognizer = NLLanguageRecognizer()
+        languageLock.lock()
+        defer { languageLock.unlock() }
+        recognizer.reset()
         recognizer.languageConstraints = [.swedish, .english]
         recognizer.processString(sentence)
         let hypotheses = recognizer.languageHypotheses(withMaximum: 2)
@@ -480,7 +502,8 @@ final class WordDictionary {
         guard location != NSNotFound, let index = Range(NSRange(location: location, length: 0), in: sentence)?.lowerBound else {
             return nil
         }
-        let tagger = NLTagger(tagSchemes: [.lexicalClass])
+        languageLock.lock()
+        defer { languageLock.unlock() }
         tagger.string = sentence
         tagger.setLanguage(.english, range: sentence.startIndex..<sentence.endIndex)
         let (tag, _) = tagger.tag(at: index, unit: .word, scheme: .lexicalClass)

@@ -123,6 +123,8 @@ final class WordPopupViewController: UITableViewController {
     private var hiddenCount = 0
     private var aiState = AIState.idle
     var onReady: (() -> Void)?
+    /// Ordet som ska sparas i Sparade ord. Det sparas först när rutan syns, så att rutan inte väntar på disken.
+    private var pendingSave: (word: String, lemma: String, language: WordLanguage)?
 
     init(lookup: WordLookup?, context: Context) {
         self.lookup = lookup
@@ -154,6 +156,10 @@ final class WordPopupViewController: UITableViewController {
                         onDismiss: @escaping () -> Void) {
         let popup = WordPopupViewController(lookup: lookup, context: context)
         popup.onReady = onReady
+        // Ett ord som slagits upp i en bok sparas med meningen.
+        if context.book != nil, let lookup = lookup, let lemma = lookup.entries.first?.lemma {
+            popup.pendingSave = (lookup.word, lemma, lookup.language)
+        }
         let navigation = WordPopupNavigationController(rootViewController: popup)
         navigation.onDismiss = onDismiss
 
@@ -216,6 +222,31 @@ final class WordPopupViewController: UITableViewController {
         onReady = nil
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        savePendingWord()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        savePendingWord()
+    }
+
+    private func savePendingWord() {
+        guard let pending = pendingSave, let book = context.book else { return }
+        pendingSave = nil
+        UserWords.shared.save(word: pending.word, lemma: pending.lemma, language: pending.language,
+                              sentence: context.sentence, book: book, pageIndex: context.pageIndex ?? 0)
+    }
+
+    /// Sparat, eller sparas så fort rutan syns.
+    private func isSaved(lemma: String) -> Bool {
+        if let pending = pendingSave, pending.lemma == lemma, pending.language == language {
+            return true
+        }
+        return UserWords.shared.isSaved(lemma: lemma, language: language)
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let height = min(max(tableView.contentSize.height, 120), 560)
@@ -273,7 +304,7 @@ final class WordPopupViewController: UITableViewController {
         if lookup?.otherLanguageAvailable == true {
             actions.append(.switchLanguage)
         }
-        if context.book != nil, let lemma = entry?.lemma, UserWords.shared.isSaved(lemma: lemma, language: language) {
+        if context.book != nil, let lemma = entry?.lemma, isSaved(lemma: lemma) {
             actions.append(.unsave)
         }
         actions.append(.about)
@@ -518,6 +549,7 @@ final class WordPopupViewController: UITableViewController {
 
         case .unsave:
             if let lemma = entry?.lemma {
+                pendingSave = nil
                 UserWords.shared.delete(lemma: lemma, language: lookup.language)
                 rebuild()
             }

@@ -33,6 +33,8 @@ final class SQLiteDatabase {
 
     private var handle: OpaquePointer?
     private var statements: [String: OpaquePointer] = [:]
+    /// Hur många transaktioner som är öppna just nu.
+    private var depth = 0
 
     /// Öppnar en fil. En skrivskyddad fil (ordboken i appen) öppnas som oföränderlig, vilket är snabbast.
     init(path: String, readOnly: Bool) throws {
@@ -91,6 +93,25 @@ final class SQLiteDatabase {
     func executeScript(_ sql: String) throws {
         guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else {
             throw Failure(description: errorMessage)
+        }
+    }
+
+    /// Kör `body` i en transaktion: allt sparas, eller inget om något kastar ett fel.
+    /// En transaktion inuti en annan blir en del av den yttre.
+    func transaction<T>(_ body: () throws -> T) throws -> T {
+        if depth > 0 {
+            return try body()
+        }
+        try executeScript("BEGIN IMMEDIATE")
+        depth += 1
+        defer { depth -= 1 }
+        do {
+            let result = try body()
+            try executeScript("COMMIT")
+            return result
+        } catch {
+            try? executeScript("ROLLBACK")
+            throw error
         }
     }
 

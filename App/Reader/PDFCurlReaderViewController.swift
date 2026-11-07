@@ -104,6 +104,7 @@ final class PDFCurlReaderViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         PageTurnSound.shared.prepare()
+        WordDictionary.warmUpLanguageModels()
         startSelfTestIfNeeded()
     }
 
@@ -656,11 +657,7 @@ final class PDFCurlReaderViewController: UIViewController {
         let sourceRect = view.convert(anchor, from: pressed.page.view)
         let pageIndex = pressed.page.pageIndex
 
-        if let lookup = lookup, let lemma = lookup.entries.first?.lemma {
-            UserWords.shared.save(word: lookup.word, lemma: lemma, language: lookup.language,
-                                  sentence: found.sentence, book: book.title, pageIndex: pageIndex)
-        }
-
+        // Ordet sparas i Sparade ord av rutan, när den syns.
         let context = WordPopupViewController.Context(sentence: found.sentence,
                                                       rangeInSentence: found.rangeInSentence,
                                                       book: book.title,
