@@ -21,6 +21,7 @@ final class PDFPageViewController: UIViewController {
     private let renderer: PDFPageRenderer
     private let imageView = UIImageView()
     private let spineShade = CAGradientLayer()
+    private var highlightViews: [UIView] = []
     private var paperColor: UIColor
     private var contentInsets: UIEdgeInsets
 
@@ -64,6 +65,30 @@ final class PDFPageViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         layoutImage()
+    }
+
+    /// Var sidbilden ligger i bladet. Nil när bilden inte är ritad än, då går det inte att slå upp ord.
+    var imageFrame: CGRect? {
+        guard isViewLoaded, !isBlank, imageView.image != nil else { return nil }
+        return imageView.frame
+    }
+
+    /// Markerar ett ord som slås upp. Rutorna är i bladets koordinater.
+    func showHighlight(_ rects: [CGRect]) {
+        clearHighlight()
+        for rect in rects {
+            let highlight = UIView(frame: rect.insetBy(dx: -2, dy: -1))
+            highlight.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.35)
+            highlight.layer.cornerRadius = 3
+            highlight.isUserInteractionEnabled = false
+            view.addSubview(highlight)
+            highlightViews.append(highlight)
+        }
+    }
+
+    func clearHighlight() {
+        highlightViews.forEach { $0.removeFromSuperview() }
+        highlightViews.removeAll()
     }
 
     /// Nytt tema eller ny storlek. Den gamla bilden visas tills den nya är ritad.

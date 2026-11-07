@@ -6,7 +6,11 @@ import UIKit
 /// Stående: en sida i taget med ryggen till vänster. Liggande på iPad: ett uppslag med ryggen i mitten,
 /// där omslaget ligger ensamt till höger som i en tryckt bok.
 /// Tryck i kanterna eller dra för att bläddra. Tryck i mitten för menyn, dubbeltryck i mitten för att zooma.
+/// Håll fingret på ett ord för att slå upp det i ordboken.
 final class PDFCurlReaderViewController: UIViewController {
+
+    /// Hur länge fingret ska ligga still på ett ord innan det slås upp.
+    static let wordPressDuration: TimeInterval = 0.35
 
     private enum Mode: Equatable {
         case single, spread
@@ -28,6 +32,9 @@ final class PDFCurlReaderViewController: UIViewController {
     private let bottomBar = ReaderBottomBar()
     private var chromeTap: UITapGestureRecognizer?
     private var zoomTap: UITapGestureRecognizer?
+    private var wordPress: UILongPressGestureRecognizer?
+    private weak var highlightedPage: PDFPageViewController?
+    private weak var toastLabel: UILabel?
     private var contentsItem: UIBarButtonItem?
     private var themeItem: UIBarButtonItem?
 
@@ -331,8 +338,14 @@ final class PDFCurlReaderViewController: UIViewController {
         chrome.require(toFail: zoom)
         view.addGestureRecognizer(chrome)
 
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(handleWordPress(_:)))
+        press.minimumPressDuration = Self.wordPressDuration
+        press.delegate = self
+        view.addGestureRecognizer(press)
+
         zoomTap = zoom
         chromeTap = chrome
+        wordPress = press
     }
 
     @objc private func toggleChrome() {
@@ -491,6 +504,123 @@ final class PDFCurlReaderViewController: UIViewController {
         present(navigation, animated: true)
     }
 
+    // MARK: Ordboken
+
+    /// Håll fingret på ett ord: ordet markeras, slås upp och visas i en ruta vid ordet.
+    /// Det sparas också i Sparade ord tillsammans med meningen.
+    @objc private func handleWordPress(_ press: UILongPressGestureRecognizer) {
+        guard press.state == .began, presentedViewController == nil else { return }
+        let started = CACurrentMediaTime()
+        let point = press.location(in: view)
+
+        guard let page = visiblePages.first(where: { candidate in
+            !candidate.isBlank && candidate.view.bounds.contains(candidate.view.convert(point, from: view))
+        }) else { return }
+
+        // Trycket ska inte också vika sidan eller visa menyn när fingret lyfts.
+        cancelPageGestures()
+
+        let local = page.view.convert(point, from: view)
+        guard let pdfPage = document.page(at: page.pageIndex),
+              let imageFrame = page.imageFrame,
+              let pagePoint = PDFPageGeometry.pagePoint(for: local, imageFrame: imageFrame, page: pdfPage) else {
+            return
+        }
+        guard let found = PDFWordFinder.word(on: pdfPage, at: pagePoint) else {
+            if !PDFWordFinder.pageHasText(pdfPage) {
+                showToast("Sidan har ingen text att slå upp. Den är troligen skannad.")
+            }
+            return
+        }
+        guard let dictionary = WordDictionary.shared else {
+            showMessage(title: "Ordboken saknas", message: "Den här versionen av appen byggdes utan ordboken.")
+            return
+        }
+
+        let hidden = UserWords.shared.hiddenPairs
+        var lookup: WordLookup?
+        for candidate in found.candidates {
+            lookup = dictionary.lookup(candidate,
+                                       sentence: found.sentence,
+                                       rangeInSentence: found.rangeInSentence,
+                                       hidden: hidden)
+            if lookup != nil { break }
+        }
+        let lookupTime = (CACurrentMediaTime() - started) * 1000
+        Haptics.shared.wordTapped()
+
+        let rects = found.pageRects.map { PDFPageGeometry.viewRect(for: $0, imageFrame: imageFrame, page: pdfPage) }
+        page.showHighlight(rects)
+        highlightedPage = page
+        let anchor = rects.first(where: { $0.insetBy(dx: -6, dy: -6).contains(local) })
+            ?? rects.first
+            ?? CGRect(x: local.x, y: local.y, width: 1, height: 1)
+        let sourceRect = view.convert(anchor, from: page.view)
+
+        if let lookup = lookup, let lemma = lookup.entries.first?.lemma {
+            UserWords.shared.save(word: lookup.word, lemma: lemma, language: lookup.language,
+                                  sentence: found.sentence, book: book.title, pageIndex: page.pageIndex)
+        }
+
+        let context = WordPopupViewController.Context(sentence: found.sentence,
+                                                      rangeInSentence: found.rangeInSentence,
+                                                      book: book.title,
+                                                      pageIndex: page.pageIndex,
+                                                      triedWord: found.candidates.first ?? "")
+        WordPopupViewController.present(
+            lookup: lookup,
+            context: context,
+            from: self,
+            sourceView: view,
+            sourceRect: sourceRect,
+            onReady: {
+                LookupStats.shared.record(lookup: lookupTime, ready: (CACurrentMediaTime() - started) * 1000)
+            },
+            onDismiss: { [weak self] in
+                self?.highlightedPage?.clearHighlight()
+                self?.highlightedPage = nil
+            })
+    }
+
+    /// Avbryter pappersvikningens och menyns tryck som redan har börjat.
+    private func cancelPageGestures() {
+        var recognizers = pageController?.gestureRecognizers ?? []
+        recognizers += [chromeTap, zoomTap].compactMap { $0 }
+        for recognizer in recognizers where recognizer.isEnabled {
+            recognizer.isEnabled = false
+            recognizer.isEnabled = true
+        }
+    }
+
+    /// Ett kort meddelande nere på sidan som försvinner av sig självt.
+    private func showToast(_ text: String) {
+        toastLabel?.removeFromSuperview()
+        let label = PaddedLabel()
+        label.text = text
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        label.font = .preferredFont(forTextStyle: .subheadline)
+        label.textColor = .white
+        label.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
+        label.layer.cornerRadius = 12
+        label.layer.masksToBounds = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.alpha = 0
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -60),
+            label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
+        ])
+        toastLabel = label
+        UIView.animate(withDuration: 0.2) { label.alpha = 1 }
+        UIView.animate(withDuration: 0.4, delay: 2.5, options: []) {
+            label.alpha = 0
+        } completion: { _ in
+            label.removeFromSuperview()
+        }
+    }
+
     // MARK: Bakgrund
 
     private func themeMenu() -> UIMenu {
@@ -575,6 +705,9 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
         let position = touch.location(in: view).x / width
         let inMiddle = position > 0.3 && position < 0.7
 
+        if gestureRecognizer === wordPress {
+            return true
+        }
         if gestureRecognizer === chromeTap || gestureRecognizer === zoomTap {
             return inMiddle
         }

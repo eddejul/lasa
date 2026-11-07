@@ -30,9 +30,11 @@ Pusha inte flera orelaterade ändringar i samma commit. Varje runda tar flera mi
 ```
 App/
   AppDelegate.swift, SceneDelegate.swift
-  Library/   bibliotek, import, lagring
-  Reader/    läsare, rendering, pappersvikning
-  Support/   haptik och små hjälpare
+  Library/     bibliotek, import, lagring
+  Reader/      läsare, rendering, pappersvikning
+  Dictionary/  ordboken, ordet under fingret, ordrutan, sparade ord
+  Support/     haptik och små hjälpare
+  Resources/   lasa-ordbok.sqlite läggs här av bygget, checkas inte in
 Config/Info.plist
 docs/SPEC.md
 tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
@@ -49,7 +51,11 @@ tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
 
 ## Ordboken (fas 2)
 
-* Offline SQLite, byggd av `tools/dictionary/build.py` från Swesaurus, SALDO, Open English WordNet och Folkets lexikon. Se licenser i specen.
+* Offline SQLite, byggd av `tools/dictionary/build.py` från Synlex, Swesaurus, SALDO, Open English WordNet och Folkets lexikon. Se licenser i specen och `tools/dictionary/README.md`.
+* Bygget i molnet har två jobb: Ordboken (Linux, bygger databasen och testrapporten) och Appen (Mac, lägger databasen i `App/Resources` före XcodeGen). Källfilerna och databasen sparas i Actions cache, så databasen byggs bara om när skripten eller testlistan ändras.
+* Uppslagslogiken finns två gånger: `App/Dictionary/WordDictionary.swift` och `tools/dictionary/lookup.py` (som testrapporten använder). Ändras den ena ska den andra ändras i samma commit.
+* Ord slås upp när fingret hålls stilla på ordet i 0,35 s (`wordPressDuration`). Ett vanligt tryck i mitten är fortfarande menyn, och i kanterna bläddring.
+* Det användaren gör (sparade ord, dolda synonympar) ligger i `anvandarord.sqlite` under Application Support, aldrig i ordboksfilen.
 * Svenska Akademiens data (SO, SAOL) får aldrig kopieras in. Den visas bara via svenska.se i en `SFSafariViewController`.
 * Samma databasfil ska fungera i Windows-appen senare.
 

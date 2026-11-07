@@ -22,6 +22,21 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add,
                                                             target: self,
                                                             action: #selector(addTapped))
+        let words = UIBarButtonItem(title: nil,
+                                    image: UIImage(systemName: "character.book.closed"),
+                                    primaryAction: nil,
+                                    menu: UIMenu(children: [
+                                        UIAction(title: "Sparade ord", image: UIImage(systemName: "bookmark")) { [weak self] _ in
+                                            self?.navigationController?.pushViewController(SavedWordsViewController(),
+                                                                                           animated: true)
+                                        },
+                                        UIAction(title: "Om ordboken", image: UIImage(systemName: "info.circle")) { [weak self] _ in
+                                            self?.navigationController?.pushViewController(AboutDictionaryViewController(),
+                                                                                           animated: true)
+                                        },
+                                    ]))
+        words.accessibilityLabel = "Ordboken"
+        navigationItem.leftBarButtonItem = words
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: Self.cellID)
         reload()
     }

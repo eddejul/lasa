@@ -66,7 +66,7 @@ Tauri med foliate-js (EPUB) och pdf.js (PDF). Samma ordboksfil och samma logik f
 
 ### 5.1 Flöde
 
-1. Användaren trycker på ett ord.
+1. Användaren håller fingret på ett ord (0,35 s). Ett vanligt tryck i mitten visar menyn och i kanterna bläddrar det, så ordfunktionen kan inte ligga på ett vanligt tryck. Vald i fas 2, Edvin bedömer det på iPaden.
 2. Appen tar fram ordet och meningen runt det.
    * PDF: `PDFPage.selectionForWord(at:)` på tryckpunkten, omräknad till sidans koordinater. Avstavade ord över radbrytning ("kun-" + "skap") slås ihop.
    * EPUB/text: litet JavaScript i webbvyn med `document.caretRangeFromPoint` som utökas till hela ordet.
@@ -92,7 +92,8 @@ Tauri med foliate-js (EPUB) och pdf.js (PDF). Samma ordboksfil och samma logik f
 
 | Behov | Källa | Licens |
 |---|---|---|
-| Svenska synonymer | Swesaurus (Språkbanken), bygger på Folkets synonymlexikon | CC BY 4.0 |
+| Svenska synonymer och betyg | Folkets synonymlexikon Synlex (KTH) | fri med upphovsnotis |
+| Vilken betydelse en svensk synonym hör till | Swesaurus (Språkbanken), bygger på Folkets synonymlexikon | CC BY 4.0 |
 | Svenska böjningsformer | SALDO morfologi (Språkbanken) | öppen, kontrollera vid nedladdning |
 | Engelska synonymer och definitioner | Open English WordNet | CC BY 4.0 |
 | Engelska till svenska | Folkets lexikon (KTH) | CC BY-SA 2.5 |
@@ -120,6 +121,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 
 Kvalitetsregler:
 * Visa bara synonympar med betyg 3 eller högre på Synlex femgradiga skala. Tröskeln ligger i en konstant så den kan justeras.
+* Paren tas från Synlex, och Swesaurus används bara för att placera dem i rätt betydelse. Swesaurus egna par utan betyg (wiktionary, beräknade par) gav fel som "giltig" och "ogiltig", se `tools/dictionary/README.md`.
 * Testlista: `tools/dictionary/testwords.txt` med 150 ord ur riktig kurslitteratur. Skriptet skriver ut appens svar för varje ord så att Edvin kan jämföra med svenska.se.
 * Knapp "Fel synonym" i popupen döljer paret lokalt.
 
