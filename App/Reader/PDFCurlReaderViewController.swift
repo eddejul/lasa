@@ -1335,6 +1335,37 @@ extension PDFCurlReaderViewController {
         await pause(0.5)
     }
 
+    /// Ett fel i ritningen ska ge ett nytt försök, och två fel i följd en text på sidan.
+    fileprivate func selfTestRenderFailure() async {
+        let start = currentIndex
+        let once = min(start + 4, renderer.pageCount - 1)
+        let twice = min(start + 6, renderer.pageCount - 1)
+        guard once != start, twice != once else {
+            SelfTest.log("Sidfel: boken är för kort för testet")
+            return
+        }
+        renderer.simulateFailures(1, at: once)
+        jump(to: once)
+        let shown = await waitForImages()
+        let failedOnce = visiblePages.contains { $0.showsFailure }
+        SelfTest.log("Sidfel en gång: \(shown && !failedOnce ? "ritades om och syns" : "FEL, sidan syns inte")")
+
+        renderer.simulateFailures(2, at: twice)
+        jump(to: twice)
+        var failed = false
+        for _ in 0..<30 {
+            if visiblePages.contains(where: { $0.pageIndex == twice && $0.showsFailure }) {
+                failed = true
+                break
+            }
+            await pause(0.1)
+        }
+        SelfTest.log("Sidfel två gånger: \(failed ? "texten visas" : "FEL, ingen text")")
+        SelfTest.saveScreen(view, name: "02b-sidfel")
+        jump(to: start)
+        _ = await waitForImages()
+    }
+
     fileprivate func runSelfTest() async {
         let saved = AnnotationStore.shared.totalCounts()
         SelfTest.log("PDF med \(document.pageCount) sidor. Sparat från tidigare starter: \(saved.highlights) markeringar, "
@@ -1385,6 +1416,24 @@ extension PDFCurlReaderViewController {
         }
         await pause(0.6)
         SelfTest.saveScreen(view, name: "02-markering")
+
+        // En anteckning som sveps bort ska sparas, inte försvinna.
+        if let highlight = AnnotationStore.shared.highlights(book: bookKey).last {
+            editNote(highlightID: highlight.id)
+            if let editor = await waitForPresented(NoteEditorViewController.self) {
+                await pause(0.6)
+                editor.simulateSwipeAway(typing: "Svept anteckning.")
+                await pause(0.6)
+                let note = AnnotationStore.shared.highlight(id: highlight.id)?.note ?? ""
+                SelfTest.log("Anteckning som sveptes bort: \(note == "Svept anteckning." ? "sparad" : "FEL, \(note)")")
+            } else {
+                SelfTest.log("FEL: anteckningen öppnades inte")
+            }
+            await dismissPresented()
+        }
+
+        // En sidbild som inte kan ritas ritas om en gång, och annars står det på sidan.
+        await selfTestRenderFailure()
 
         toggleBookmark()
         await pause(0.4)

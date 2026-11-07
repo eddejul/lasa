@@ -153,13 +153,15 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
 }
 
 /// Skriv eller ändra anteckningen till en markering.
-final class NoteEditorViewController: UIViewController {
+/// Sveps arket bort sparas texten, som i Anteckningar. Bara Avbryt kastar den.
+final class NoteEditorViewController: UIViewController, UIAdaptivePresentationControllerDelegate {
 
     var onSave: ((String) -> Void)?
 
     private let quote: String
     private let initialNote: String
     private let textView = UITextView()
+    private var saved = false
 
     init(quote: String, note: String) {
         self.quote = quote
@@ -178,7 +180,36 @@ final class NoteEditorViewController: UIViewController {
         editor.onSave = onSave
         let navigation = UINavigationController(rootViewController: editor)
         navigation.modalPresentationStyle = presenter.traitCollection.userInterfaceIdiom == .pad ? .formSheet : .pageSheet
+        // Delegaten får veta när arket sveps bort, så att texten kan sparas.
+        navigation.presentationController?.delegate = editor
         presenter.present(navigation, animated: true)
+    }
+
+    /// Texten som den skulle sparas: utan blanktecken i början och slutet.
+    private var currentText: String {
+        (textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Arket sveptes bort. Spara om texten ändrats.
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        saveIfChanged()
+    }
+
+    private func saveIfChanged() {
+        guard !saved else { return }
+        let text = currentText
+        guard text != initialNote.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+        saved = true
+        onSave?(text)
+    }
+
+    /// Självtestet: skriv en text och gör som om arket svepts bort.
+    func simulateSwipeAway(typing text: String) {
+        textView.text = text
+        guard let controller = navigationController?.presentationController else { return }
+        dismiss(animated: false) { [weak self] in
+            self?.presentationControllerDidDismiss(controller)
+        }
     }
 
     override func viewDidLoad() {
@@ -224,13 +255,15 @@ final class NoteEditorViewController: UIViewController {
     }
 
     @objc private func cancelTapped() {
+        saved = true
         dismiss(animated: true)
     }
 
     @objc private func saveTapped() {
-        let text = textView.text ?? ""
+        let text = currentText
+        saved = true
         dismiss(animated: true) { [onSave] in
-            onSave?(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            onSave?(text)
         }
     }
 }

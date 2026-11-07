@@ -260,11 +260,43 @@ final class PDFPageViewController: UIViewController {
             return
         }
         let index = pageIndex
-        renderer.requestImage(for: index) { [weak self] image in
+        renderer.requestImage(for: index, completion: { [weak self] image in
             guard let self = self, self.pageIndex == index else { return }
             self.imageView.image = image
+            self.setFailureShown(false)
             self.view.setNeedsLayout()
+        }, failure: { [weak self] in
+            // Renderaren har redan försökt två gånger. Står en äldre bild kvar (efter byte av tema) får den stå kvar.
+            guard let self = self, self.pageIndex == index, self.imageView.image == nil else { return }
+            self.setFailureShown(true)
+        })
+    }
+
+    /// Texten som visas på en sida som inte kunde ritas.
+    private var failureLabel: UILabel?
+
+    var showsFailure: Bool {
+        failureLabel != nil
+    }
+
+    private func setFailureShown(_ shown: Bool) {
+        guard shown != showsFailure else { return }
+        if !shown {
+            failureLabel?.removeFromSuperview()
+            failureLabel = nil
+            return
         }
+        let label = UILabel()
+        label.text = "Sidan kunde inte visas.\nBläddra bort och tillbaka för att försöka igen."
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        label.font = .preferredFont(forTextStyle: .callout)
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = .secondaryLabel
+        label.isUserInteractionEnabled = false
+        view.addSubview(label)
+        failureLabel = label
+        view.setNeedsLayout()
     }
 
     /// Ytan som sidan får. Den beror bara på vyns storlek och läsarens fasta marginaler,
@@ -305,6 +337,12 @@ final class PDFPageViewController: UIViewController {
                                   width: shadeWidth,
                                   height: bounds.height)
         CATransaction.commit()
+
+        if let label = failureLabel, area.width > 0 {
+            let width = min(area.width - 32, 420)
+            let height = label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+            label.frame = CGRect(x: area.midX - width / 2, y: area.midY - height / 2, width: width, height: height)
+        }
 
         guard area.width > 0, area.height > 0,
               let image = imageView.image,

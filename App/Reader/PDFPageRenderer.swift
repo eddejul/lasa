@@ -37,14 +37,22 @@ final class PDFPageRenderer {
 
     private final class PendingRender {
         let operation: Operation
+        /// 0 första gången, 1 när ritningen görs om efter ett fel.
+        let attempt: Int
         var completions: [(UIImage) -> Void] = []
+        /// Anropas om sidan inte gick att rita, inte ens andra gången.
+        var failures: [() -> Void] = []
         /// En sida som visas just nu och väntar på sin bild. Den får aldrig avbrytas som onödig förritning.
         var requested = false
 
-        init(operation: Operation) {
+        init(operation: Operation, attempt: Int) {
             self.operation = operation
+            self.attempt = attempt
         }
     }
+
+    /// Självtestet: så många ritningar i följd av en sida som ska misslyckas.
+    private var simulatedFailures: [Int: Int] = [:]
 
     init?(url: URL, pageCount: Int) {
         guard let worker = PDFRenderWorker(url: url) else { return nil }
@@ -87,8 +95,9 @@ final class PDFPageRenderer {
     }
 
     /// Bilden för en sida som ska visas. Finns den kommer den direkt, annars så fort den är ritad.
-    /// Den går före all förritning.
-    func requestImage(for index: Int, completion: @escaping (UIImage) -> Void) {
+    /// Den går före all förritning. Misslyckas ritningen görs den om en gång, och går det inte heller
+    /// anropas `failure`.
+    func requestImage(for index: Int, completion: @escaping (UIImage) -> Void, failure: (() -> Void)? = nil) {
         guard isValid(index) else { return }
         if let image = cachedImage(for: index) {
             completion(image)
@@ -98,6 +107,17 @@ final class PDFPageRenderer {
         render.requested = true
         render.operation.queuePriority = .veryHigh
         render.completions.append(completion)
+        if let failure = failure {
+            render.failures.append(failure)
+        }
+    }
+
+    /// Självtestet: nästa `count` ritningar av sidan misslyckas. Sidans bild glöms, så att den ritas igen.
+    func simulateFailures(_ count: Int, at index: Int) {
+        simulatedFailures[index] = count
+        images[index] = nil
+        recentlyUsed.removeAll { $0 == index }
+        pending.removeValue(forKey: index)?.operation.cancel()
     }
 
     /// Sidorna som ska ritas i förväg, viktigast först. Förritning som inte längre behövs avbryts.
@@ -122,7 +142,7 @@ final class PDFPageRenderer {
         index >= 0 && index < pageCount
     }
 
-    private func startRender(_ index: Int, priority: Operation.QueuePriority) -> PendingRender {
+    private func startRender(_ index: Int, priority: Operation.QueuePriority, attempt: Int = 0) -> PendingRender {
         let generation = self.generation
         let size = self.size
         let scale = self.scale
@@ -138,7 +158,7 @@ final class PDFPageRenderer {
                 self?.finish(index, image: image, generation: generation)
             }
         }
-        let render = PendingRender(operation: operation)
+        let render = PendingRender(operation: operation, attempt: attempt)
         pending[index] = render
         queue.addOperation(operation)
         return render
@@ -146,13 +166,37 @@ final class PDFPageRenderer {
 
     private func finish(_ index: Int, image: UIImage?, generation: Int) {
         guard generation == self.generation, let render = pending.removeValue(forKey: index) else { return }
-        guard let image = image else { return }
+        var image = image
+        if let left = simulatedFailures[index], left > 0 {
+            simulatedFailures[index] = left - 1
+            image = nil
+        }
+        guard let image = image else {
+            failed(index, render: render)
+            return
+        }
         if render.requested || workingSet.contains(index) {
             images[index] = image
             touch(index)
             trim()
         }
         render.completions.forEach { $0(image) }
+    }
+
+    /// En ritning som misslyckades görs om en gång. Andra gången får de väntande bladen veta det.
+    private func failed(_ index: Int, render: PendingRender) {
+        if render.attempt == 0, render.requested || workingSet.contains(index) {
+            AppLog.shared.write("Sidbild \(index + 1) kunde inte ritas, försöker igen")
+            let retry = startRender(index, priority: render.requested ? .veryHigh : .normal, attempt: 1)
+            retry.requested = render.requested
+            retry.completions = render.completions
+            retry.failures = render.failures
+            return
+        }
+        if render.attempt > 0 {
+            AppLog.shared.write("Sidbild \(index + 1) kunde inte ritas efter ett nytt försök")
+        }
+        render.failures.forEach { $0() }
     }
 
     private func touch(_ index: Int) {
@@ -200,6 +244,10 @@ private final class PDFRenderWorker {
         let requested = CGSize(width: size.width * scale / factor,
                                height: size.height * scale / factor)
         let image = page.thumbnail(of: requested, for: .mediaBox)
+        // En tom bild betyder att ritningen misslyckades.
+        guard image.size.width >= 1, image.size.height >= 1, image.cgImage != nil || image.ciImage != nil else {
+            return nil
+        }
         return PageImageStyler.apply(theme, to: image)
     }
 
