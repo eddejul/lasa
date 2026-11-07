@@ -3,6 +3,8 @@ import UIKit
 
 /// Ett ord som hittats på en PDF-sida, med meningen runt det.
 struct FoundWord {
+    /// Var ordet börjar i sidans text. Samma värde betyder samma ord, när fingret flyttas.
+    let location: Int
     /// Formerna att slå upp, i tur och ordning tills ordboken hittar en. Ett avstavat ord över en
     /// radbrytning kommer först ihopslaget ("kunskap"), sedan med bindestreck ("EU-land"), sist bara
     /// delen man tryckte på.
@@ -30,30 +32,17 @@ enum PDFWordFinder {
         return string.contains { $0.isLetter }
     }
 
-    static func word(on page: PDFPage, at point: CGPoint) -> FoundWord? {
+    /// Ordet närmast punkten. `tolerance` är hur långt bort (i sidans enheter) ett ord får ligga,
+    /// ungefär en fingertopp. Ordet som innehåller punkten vinner, annars det som ligger närmast.
+    /// Förr valdes ordet till vänster när fingret landade i ett mellanrum, det gav fel ord.
+    static func word(on page: PDFPage, at point: CGPoint, tolerance: CGFloat) -> FoundWord? {
         guard let string = page.string, !string.isEmpty else { return nil }
         let text = string as NSString
-        let length = text.length
-
-        var index = page.characterIndex(at: point)
-        if index < 0 || index >= length || !isWordCharacter(text.character(at: index)) {
-            // En bit till vänster, om man tryckte precis efter ordet.
-            index = index - 1
-        }
-        guard index >= 0, index < length, isWordCharacter(text.character(at: index)) else {
+        guard let core = nearestWord(on: page, text: text, at: point, tolerance: tolerance) else {
             return fallback(on: page, at: point)
         }
-
-        var start = index
-        while start > 0, isWordCharacter(text.character(at: start - 1)) || isInnerJoiner(text, at: start - 1) {
-            start -= 1
-        }
-        var end = index + 1
-        while end < length, isWordCharacter(text.character(at: end)) || isInnerJoiner(text, at: end) {
-            end += 1
-        }
-
-        let core = NSRange(location: start, length: end - start)
+        let start = core.location
+        let end = NSMaxRange(core)
         var parts = [core]
 
         // Avstavat över radbrytningen: "kun-" på en rad och "skap" på nästa.
@@ -98,10 +87,59 @@ enum PDFWordFinder {
             }
         }
 
-        return FoundWord(candidates: candidates, sentence: sentence, rangeInSentence: range, pageRects: rects)
+        return FoundWord(location: core.location, candidates: candidates, sentence: sentence,
+                         rangeInSentence: range, pageRects: rects)
     }
 
     // MARK: Internt
+
+    /// Provar punkter runt fingret, samlar orden som träffas och tar det som ligger närmast.
+    private static func nearestWord(on page: PDFPage, text: NSString, at point: CGPoint,
+                                    tolerance: CGFloat) -> NSRange? {
+        let steps: [CGFloat] = [0, -1, 1, -2, 2, -3, 3]
+        let dx = tolerance / 3
+        let dy = tolerance / 4
+        var ranges: [Int: NSRange] = [:]
+        for row in [0, 1, -1] as [CGFloat] {
+            for step in steps {
+                let probe = CGPoint(x: point.x + step * dx, y: point.y + row * dy)
+                let index = page.characterIndex(at: probe)
+                guard index >= 0, index < text.length, isWordCharacter(text.character(at: index)) else { continue }
+                let range = wordRange(around: index, in: text)
+                ranges[range.location] = range
+            }
+        }
+        var best: (range: NSRange, distance: CGFloat)?
+        for range in ranges.values {
+            guard let bounds = page.selection(for: range)?.bounds(for: page), bounds.width > 0 else { continue }
+            let distance = Self.distance(from: point, to: bounds)
+            if let current = best, current.distance <= distance {
+                continue
+            }
+            best = (range, distance)
+        }
+        guard let found = best, found.distance <= tolerance else { return nil }
+        return found.range
+    }
+
+    private static func wordRange(around index: Int, in text: NSString) -> NSRange {
+        var start = index
+        while start > 0, isWordCharacter(text.character(at: start - 1)) || isInnerJoiner(text, at: start - 1) {
+            start -= 1
+        }
+        var end = index + 1
+        while end < text.length, isWordCharacter(text.character(at: end)) || isInnerJoiner(text, at: end) {
+            end += 1
+        }
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Avståndet från en punkt till en ruta, 0 om punkten ligger i rutan.
+    private static func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
+        let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+        let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+        return (dx * dx + dy * dy).squareRoot()
+    }
 
     private static func isWordCharacter(_ character: unichar) -> Bool {
         guard let scalar = Unicode.Scalar(character) else { return false }
@@ -211,7 +249,7 @@ enum PDFWordFinder {
             return nil
         }
         let rects = selection.selectionsByLine().map { $0.bounds(for: page) }.filter { $0.width > 0 }
-        return FoundWord(candidates: [word], sentence: word,
+        return FoundWord(location: -1, candidates: [word], sentence: word,
                          rangeInSentence: NSRange(location: 0, length: (word as NSString).length),
                          pageRects: rects)
     }
@@ -237,6 +275,14 @@ enum PDFPageGeometry {
         let size = CGSize(width: aspect.width * scale, height: aspect.height * scale)
         return CGRect(x: imageFrame.midX - size.width / 2, y: imageFrame.midY - size.height / 2,
                       width: size.width, height: size.height)
+    }
+
+    /// Hur många av sidans enheter en punkt på skärmen motsvarar.
+    static func pageUnitsPerPoint(imageFrame: CGRect, page: PDFPage) -> CGFloat {
+        let (shown, _) = displayed(page)
+        let area = content(in: imageFrame, aspect: shown.size)
+        guard area.width > 0 else { return 1 }
+        return shown.width / area.width
     }
 
     /// En punkt i bladets vy (y nedåt) till sidans koordinater (y uppåt).
