@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Läsa",
+  "version": "0.5.0",
+  "identifier": "se.edvin.lasa",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Läsa",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 640,
+        "minHeight": 480,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob: data:; connect-src 'self' ipc: http://ipc.localhost blob: data:; frame-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "publisher": "Edvin",
+    "category": "Education",
+    "shortDescription": "Läsapp för PDF, EPUB och textfiler med ordfunktion",
+    "longDescription": "Läsa visar kurslitteratur i PDF, EPUB och text. Dubbelklicka på ett ord för synonymer, betydelse och svensk översättning, utan internet.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "resources/lasa-ordbok.sqlite": "lasa-ordbok.sqlite"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Swedish"]
+      },
+      "wix": {
+        "language": "sv-SE"
+      }
+    }
+  }
+}
