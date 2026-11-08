@@ -1632,7 +1632,9 @@ extension ReflowReaderViewController {
 
     /// O4: de sparade orden har ändrats, eller strecken slogs av eller på: lägg in dem igen i kapitlen som syns.
     @objc fileprivate func savedWordMarksChanged() {
-        for chapter in Set(visiblePages.filter { !$0.isBlank }.map(\.chapter)) {
+        // Även kapitel som är laddade men inte syns, så att nästa kapitel också har strecken.
+        let shown = Set(visiblePages.filter { !$0.isBlank }.map(\.chapter))
+        for chapter in shown.union(renderer?.loadedChapters ?? []) {
             reloadMarks(inChapter: chapter)
         }
     }

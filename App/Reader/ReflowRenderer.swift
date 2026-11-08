@@ -893,6 +893,11 @@ extension ReflowRenderer {
         pump()
     }
 
+    /// Kapitlen som ligger laddade i webbvyerna (O4: strecken läggs in i dem igen när orden ändras).
+    var loadedChapters: [Int] {
+        views.filter { $0.state == .loaded }.map(\.chapter)
+    }
+
     /// Lägger in ett kapitels markeringar på nytt och kastar kapitlets sidbilder, så att de ritas om.
     func reloadMarks(in chapter: Int, completion: @escaping () -> Void) {
         guard views.contains(where: { $0.chapter == chapter && $0.state == .loaded }) else {
