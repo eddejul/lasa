@@ -262,6 +262,14 @@ final class ContinueCell: UICollectionViewCell {
     let button = UIButton(type: .system)
     var onContinue: (() -> Void)?
 
+    /// U10: omslaget trycks ner lite också i Fortsätt läsa.
+    override var isHighlighted: Bool {
+        didSet {
+            guard isHighlighted != oldValue else { return }
+            CoverPress.apply(isHighlighted, to: cover)
+        }
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         card.layer.cornerRadius = 14
@@ -324,8 +332,9 @@ final class ContinueCell: UICollectionViewCell {
         let inset: CGFloat = 16
         let coverHeight = card.bounds.height - inset * 2
         let coverWidth = (coverHeight / 1.5).rounded()
-        cover.frame = CGRect(x: inset, y: inset, width: coverWidth, height: coverHeight)
-        let x = cover.frame.maxX + 20
+        cover.bounds = CGRect(x: 0, y: 0, width: coverWidth, height: coverHeight)
+        cover.center = CGPoint(x: inset + coverWidth / 2, y: inset + coverHeight / 2)
+        let x = inset + coverWidth + 20
         let width = max(card.bounds.width - x - inset, 40)
         var y: CGFloat = inset + 2
         eyebrow.frame = CGRect(x: x, y: y, width: width, height: 16)
