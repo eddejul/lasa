@@ -1446,7 +1446,11 @@ extension PDFCurlReaderViewController {
             if let editor = await waitForPresented(NoteEditorViewController.self) {
                 await pause(0.6)
                 let hasDelegate = editor.simulateSwipeAway(typing: "Svept anteckning.")
-                await pause(0.6)
+                // Arket försvinner först när tangentbordet gått ner, det kan ta en stund i simulatorn.
+                for _ in 0..<40 where presentedViewController != nil {
+                    await pause(0.1)
+                }
+                await pause(0.3)
                 let note = AnnotationStore.shared.highlight(id: highlight.id)?.note ?? ""
                 SelfTest.log("Anteckning som sveptes bort: \(note == "Svept anteckning." ? "sparad" : "FEL, \(note)"). "
                              + "Delegaten för svepet: \(hasDelegate ? "satt" : "FEL, saknas")")
