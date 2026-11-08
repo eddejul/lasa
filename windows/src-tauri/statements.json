@@ -160,6 +160,25 @@
             "UPDATE bookmarks SET book = (SELECT b.id FROM books b WHERE b.sha256 = bookmarks.book ORDER BY b.missing, b.added LIMIT 1) WHERE book IN (SELECT sha256 FROM books WHERE sha256 <> '') AND book NOT IN (SELECT id FROM books)",
             "INSERT INTO meta (key, value) VALUES ('legacy_book_keys_moved', '1') ON CONFLICT (key) DO UPDATE SET value = excluded.value"
           ]
+        },
+        {
+          "_om": [
+            "Fynd 5 (granskningen 8 november): version 0.5.0 till 0.7.0 tog bort hela bokraden vid Ta bort men lämnade",
+            "markeringar och bokmärken under kontrollsumman. Steget ger varje sådan kontrollsumma en borttagen bokrad",
+            "(missing = 1, sha256 = kontrollsumman, nytt id, tom filtyp och tomt filnamn) och flyttar raderna dit, så att",
+            "samma fil ger restore i bookmatch.js när den läggs till igen. Finns redan en bok med kontrollsumman flyttas",
+            "raderna till den. Körs efter G3, och även på en databas där G3 redan är gjord, så länge det finns sådana rader.",
+            "Bara book som ser ut som en kontrollsumma (64 tecken 0 till 9 och a till f) räknas, aldrig ett id."
+          ],
+          "key": "legacy_removed_books_moved",
+          "pending": "SELECT (SELECT COUNT(*) FROM highlights WHERE length(book) = 64 AND book NOT GLOB '*[^0-9a-f]*' AND book NOT IN (SELECT id FROM books)) + (SELECT COUNT(*) FROM bookmarks WHERE length(book) = 64 AND book NOT GLOB '*[^0-9a-f]*' AND book NOT IN (SELECT id FROM books))",
+          "backup": "bibliotek före borttagna böcker",
+          "steps": [
+            "INSERT INTO books (id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, sha256, missing, modified) SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (random() & 3), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6))), 'Borttagen bok', '', '', '', '', 0, MIN(created), 0, '', 0, '', book, 1, 0 FROM (SELECT book, created FROM highlights UNION ALL SELECT book, created FROM bookmarks) WHERE length(book) = 64 AND book NOT GLOB '*[^0-9a-f]*' AND book NOT IN (SELECT id FROM books) AND book NOT IN (SELECT sha256 FROM books) GROUP BY book",
+            "UPDATE highlights SET book = (SELECT b.id FROM books b WHERE b.sha256 = highlights.book ORDER BY b.missing, b.added LIMIT 1) WHERE book IN (SELECT sha256 FROM books WHERE sha256 <> '') AND book NOT IN (SELECT id FROM books)",
+            "UPDATE bookmarks SET book = (SELECT b.id FROM books b WHERE b.sha256 = bookmarks.book ORDER BY b.missing, b.added LIMIT 1) WHERE book IN (SELECT sha256 FROM books WHERE sha256 <> '') AND book NOT IN (SELECT id FROM books)",
+            "INSERT INTO meta (key, value) VALUES ('legacy_removed_books_moved', '1') ON CONFLICT (key) DO UPDATE SET value = excluded.value"
+          ]
         }
       ]
     }

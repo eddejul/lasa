@@ -34,7 +34,8 @@ Läsa behöver Microsoft Edge WebView2, som redan finns i Windows 11. Saknas den
   ny OCR), frågar Sensus: Ersätt och behåll markeringarna, Ersätt och börja om, Behåll båda (den nya heter då
   `Bok 2.pdf`) eller Avbryt. **Ta bort** tar bort boken ur biblioteket, men markeringar och läsposition finns
   kvar: lägger du till samma fil igen kommer allt tillbaka, och en fil med liknande namn (`Bok (OCR) 2.pdf`)
-  ger frågan Ny version av boken, behåll markeringarna?
+  ger frågan Ny version av boken, behåll markeringarna? Frågan visar både den borttagna bokens och den nya
+  filens namn, eftersom siffror inte räknas (`Föreläsning 3.pdf` och `Föreläsning 4.pdf` liknar varandra).
   Medan filerna läses in visas hur långt det har kommit. Låsta (lösenord) och trasiga PDF:er läggs inte till,
   och appen säger varför.
 * **Bläddra:** högerpil och vänsterpil, PageDown och PageUp, mellanslag (Skift och mellanslag bakåt),
@@ -138,7 +139,10 @@ I mappen `%APPDATA%\se.edvin.lasa`:
   `file_name` (namnet på filen som lades till, som `file` på iPaden), `missing` (borttagen ur biblioteket,
   raden finns kvar) och `modified`. Böcker från före version 0.8.0 flyttas en gång när appen startar
   (`moves` i `statements.json`): först en kopia, `bibliotek före bokens id <tid>.sqlite` i datamappen, sedan
-  flytten i en transaktion. Den går att köra om.
+  flytten i en transaktion. Den går att köra om. Version 0.5.0 till 0.7.0 tog bort hela raden vid Ta bort men
+  lämnade markeringar och bokmärken under kontrollsumman. Från 0.8.1 får varje sådan kontrollsumma en
+  borttagen rad (`missing = 1`, tom filtyp och tomt filnamn) med kopian `bibliotek före borttagna böcker
+  <tid>.sqlite` först, så att boken kommer tillbaka med markeringarna när samma fil läggs till igen.
 * `bibliotek.sqlite`: biblioteket, läspositioner (med ändringstid för synken) och inställningar, även
   synkens adress och e-post. Tabellerna `highlights` och `bookmarks` har samma kolumner som iPadens
   `markeringar.sqlite` (book är bokens id): section, start, length (UTF-16) och text, som i docs/SYNK.md.
@@ -221,8 +225,9 @@ lägg den där och anropa `read('namn', [...])` eller `write(...)` i `src/js/sto
   uppslagen, de namngivna frågorna och AI-knappen (Gemini besvaras av testet).
 * `python windows/tests/e2e_fas8.py --dictionary <lasa-ordbok.sqlite> --books <mapp> --out <mapp>`: startar själv
   `dev/server.py` (port 8963) med egna datamappar. G3: påhittade data från 0.7.0, flytten med kopian före, en
-  andra start, namnbyte, ny version, Behåll båda, Ersätt och börja om, Ta bort och tillbaka. W10: Rulla och
-  Bläddra med uppslagen, ordfunktionen, markeringar, sök och läspositionen.
+  andra start, namnbyte, ny version, Behåll båda, Ersätt och börja om, Ta bort och tillbaka, och en bok som
+  togs bort i 0.7.0 som läggs till igen med markeringen kvar. W10: Rulla och Bläddra med uppslagen,
+  ordfunktionen, markeringar, sök och läspositionen.
 * `dev/server.py --open <fil> ...` gör som Öppna med: filerna läggs till och den första öppnas.
 
 **Bygget:** workflow `Windows build` (`.github/workflows/windows-build.yml`) körs vid push till `main`
