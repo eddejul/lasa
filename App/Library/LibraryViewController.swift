@@ -55,6 +55,7 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        Theme.style(tableView)
         reload()
     }
 
@@ -359,6 +360,11 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
 
         var content = cell.defaultContentConfiguration()
         content.text = book.title
+        // U1: boktitlar i New York, resten i systemfonten.
+        content.textProperties.font = Theme.serif(.body)
+        content.textProperties.color = Theme.current.ink
+        content.imageProperties.tintColor = Theme.current.accent
+        cell.backgroundColor = Theme.current.surface
         // Böcker i undermappar (G3) visar mappen, till exempel PDF, RETA30.
         content.secondaryText = book.folder.map { "\(book.kindLabel), \($0)" } ?? book.kindLabel
         content.secondaryTextProperties.color = .secondaryLabel

@@ -70,11 +70,7 @@ final class ReaderChrome {
     func install() {
         guard let controller = controller else { return }
         // Menyraden ligger ovanpå sidan med en egen bakgrund, så att knapparna syns mot texten.
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithDefaultBackground()
-        controller.navigationItem.standardAppearance = appearance
-        controller.navigationItem.scrollEdgeAppearance = appearance
-        controller.navigationItem.compactAppearance = appearance
+        applyAppearance()
         controller.navigationItem.rightBarButtonItems = [themeItem, readerItem, searchItem, markItem, bookmarkItem,
                                                          contentsItem]
     }
@@ -101,13 +97,27 @@ final class ReaderChrome {
         themeItem.menu = makeThemeMenu()
     }
 
-    /// Menyraden och reglaget följer bakgrunden: mörka på mörkt papper, ljusa annars.
+    /// Menyraden och reglaget följer bakgrunden: papperets färg, mörka på mörkt papper (U1).
     func applyStyle(for theme: ReaderTheme) {
         guard let controller = controller else { return }
+        self.theme = theme
         let style: UIUserInterfaceStyle = theme.isDark ? .dark : .light
         controller.overrideUserInterfaceStyle = style
         controller.navigationController?.overrideUserInterfaceStyle = style
+        applyAppearance()
         controller.setNeedsStatusBarAppearanceUpdate()
+    }
+
+    /// Menyradens bakgrund är sidans papper med en hårlinje under, knapparna i temats accentfärg.
+    private func applyAppearance() {
+        guard let controller = controller else { return }
+        let palette = Theme.palette(for: theme)
+        let appearance = Theme.readerAppearance(palette)
+        controller.navigationItem.standardAppearance = appearance
+        controller.navigationItem.scrollEdgeAppearance = appearance
+        controller.navigationItem.compactAppearance = appearance
+        controller.navigationController?.navigationBar.tintColor = palette.accent
+        bottomBar.apply(palette)
     }
 
     private func makeThemeMenu() -> UIMenu {

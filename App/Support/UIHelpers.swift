@@ -4,6 +4,18 @@ import UIKit
 /// så att läsaren kan dölja det i helskärm.
 final class NavigationController: UINavigationController {
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        Theme.style(navigationBar)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: Theme.didChange,
+                                               object: nil)
+    }
+
+    /// Temat byttes (U1): menyraden målas om.
+    @objc private func themeChanged() {
+        Theme.style(navigationBar)
+    }
+
     override var childForStatusBarHidden: UIViewController? {
         topViewController
     }

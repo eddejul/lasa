@@ -363,6 +363,23 @@ enum Fas6SelfTest {
         AppExpiry.overrideDate = nil
         libraryList?.reload()
 
+        // U1: biblioteket i alla fyra bakgrunder. Papper är förvalt.
+        let savedTheme = ReaderTheme.current
+        SelfTest.log("Bakgrund från början: \(ReaderTheme.effective.title), Följ systemet: \(ReaderTheme.followsSystem)")
+        for option in ReaderTheme.allCases {
+            ReaderTheme.current = option
+            Theme.apply()
+            if let list = libraryList {
+                Theme.style(list.tableView)
+                list.reload()
+            }
+            await pause(0.6)
+            SelfTest.saveScreen(library.navigationController?.view ?? library.view, name: "07-bibliotek-\(option.rawValue)")
+        }
+        ReaderTheme.current = savedTheme
+        Theme.apply()
+        libraryList?.reload()
+
         // Säkerhetskopian: spara, ändra, återställ.
         let positionKey = "position.kopieprov.pdf"
         UserWords.shared.save(word: "kopieprov", lemma: "kopieprov", language: .swedish,

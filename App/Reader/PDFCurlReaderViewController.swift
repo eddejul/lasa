@@ -23,7 +23,7 @@ final class PDFCurlReaderViewController: UIViewController {
 
     private var pageController: UIPageViewController?
     private var mode: Mode = .single
-    private var theme = ReaderTheme.current
+    private var theme = ReaderTheme.effective
 
     /// Sidan man läser. I ett uppslag en av de två sidorna som syns.
     private var currentIndex: Int
@@ -145,6 +145,8 @@ final class PDFCurlReaderViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = theme.paperColor
+        NotificationCenter.default.addObserver(self, selector: #selector(appThemeChanged), name: Theme.didChange,
+                                               object: nil)
         setUpNavigationBar()
         setUpBottomBar()
         setUpTaps()
@@ -754,10 +756,26 @@ final class PDFCurlReaderViewController: UIViewController {
 
     // MARK: Bakgrund
 
-    private func setTheme(_ newTheme: ReaderTheme) {
+    /// Följ systemet bytte bakgrund medan boken är öppen (U1).
+    @objc private func appThemeChanged() {
+        setTheme(ReaderTheme.effective, remember: false)
+    }
+
+    /// `remember`: ett val i menyn sparas, gäller hela appen och stänger av Följ systemet (U1).
+    private func setTheme(_ newTheme: ReaderTheme, remember: Bool = true) {
+        let store = remember && (newTheme != ReaderTheme.current || ReaderTheme.followsSystem)
+        if store {
+            ReaderTheme.followsSystem = false
+            ReaderTheme.current = newTheme
+        }
+        // Resten av appen byter efter läsaren, när den här funktionen är klar.
+        defer {
+            if store {
+                Theme.apply()
+            }
+        }
         guard newTheme != theme else { return }
         theme = newTheme
-        ReaderTheme.current = newTheme
         chrome.updateThemeMenu(newTheme)
         view.backgroundColor = newTheme.paperColor
         applyThemeToChrome()
@@ -1408,6 +1426,32 @@ extension PDFCurlReaderViewController {
         SelfTest.log(line)
         AppLog.shared.write("Självtest G5: " + line)
         SelfTest.saveScreen(view, name: "02-foto-senare")
+
+        // U1: vad bakgrunden kostar ovanpå en färdigritad fotad sida, i bakgrunden med ett eget dokument.
+        let url = book.url
+        let size = renderSize(for: view.bounds.size, mode: mode)
+        let scale = displayScale
+        let cost = await Task.detached(priority: .userInitiated) { () -> String in
+            guard let copy = PDFDocument(url: url), let page = copy.page(at: 1) else { return "ingen sida" }
+            var parts: [String] = []
+            let drawStart = CACurrentMediaTime()
+            let image = page.thumbnail(of: CGSize(width: size.width * scale, height: size.height * scale),
+                                       for: .mediaBox)
+            parts.append("ritning \(Int(((CACurrentMediaTime() - drawStart) * 1000).rounded())) ms "
+                         + "(\(Int(image.size.width * image.scale)) x \(Int(image.size.height * image.scale)) px)")
+            for theme in ReaderTheme.allCases {
+                var times: [Double] = []
+                for _ in 0..<3 {
+                    let start = CACurrentMediaTime()
+                    _ = PageImageStyler.apply(theme, to: image)
+                    times.append((CACurrentMediaTime() - start) * 1000)
+                }
+                parts.append("\(theme.title) \(Int((times.sorted()[1]).rounded())) ms")
+            }
+            return parts.joined(separator: ", ")
+        }.value
+        SelfTest.log("Bakgrundens kostnad på en fotad sida (U1, mittvärde av tre): \(cost)")
+        AppLog.shared.write("Självtest U1: bakgrundens kostnad: \(cost)")
     }
 
     fileprivate func runSelfTest() async {
@@ -1560,6 +1604,10 @@ extension PDFCurlReaderViewController {
         await pause(0.8)
         _ = await waitForImages()
         SelfTest.saveScreen(view, name: "10-morkt")
+        setTheme(.white)
+        await pause(0.8)
+        _ = await waitForImages()
+        SelfTest.saveScreen(view, name: "10b-vitt")
         setTheme(savedTheme)
 
         await selfTestFoldWork()

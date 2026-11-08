@@ -35,7 +35,7 @@ final class ReflowReaderViewController: UIViewController {
     private var pageController: UIPageViewController?
     private var controllerMode: Mode = .single
     private var mode: Mode = .single
-    private var theme = ReaderTheme.current
+    private var theme = ReaderTheme.effective
     private var typography = ReaderTypography.current
 
     /// Den sparade platsen, som används tills första sidan visas.
@@ -159,6 +159,8 @@ final class ReflowReaderViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = theme.paperColor
+        NotificationCenter.default.addObserver(self, selector: #selector(appThemeChanged), name: Theme.didChange,
+                                               object: nil)
 
         // Webbvyerna ligger längst ner, under ett papper, så att de aldrig syns.
         webHost.isUserInteractionEnabled = false
@@ -800,10 +802,26 @@ final class ReflowReaderViewController: UIViewController {
 
     // MARK: Bakgrund
 
-    private func setTheme(_ newTheme: ReaderTheme) {
+    /// Följ systemet bytte bakgrund medan boken är öppen (U1).
+    @objc private func appThemeChanged() {
+        setTheme(ReaderTheme.effective, remember: false)
+    }
+
+    /// `remember`: ett val i menyn sparas, gäller hela appen och stänger av Följ systemet (U1).
+    private func setTheme(_ newTheme: ReaderTheme, remember: Bool = true) {
+        let store = remember && (newTheme != ReaderTheme.current || ReaderTheme.followsSystem)
+        if store {
+            ReaderTheme.followsSystem = false
+            ReaderTheme.current = newTheme
+        }
+        // Resten av appen byter efter läsaren, när den här funktionen är klar.
+        defer {
+            if store {
+                Theme.apply()
+            }
+        }
         guard newTheme != theme else { return }
         theme = newTheme
-        ReaderTheme.current = newTheme
         chrome.updateThemeMenu(newTheme)
         view.backgroundColor = newTheme.paperColor
         paperCover.backgroundColor = newTheme.paperColor
@@ -1330,6 +1348,14 @@ extension ReflowReaderViewController {
         await pause(0.4)
         _ = await waitUntilShown()
         SelfTest.saveScreen(view, name: "10-sepia")
+        setTheme(.white)
+        await pause(0.4)
+        _ = await waitUntilShown()
+        SelfTest.saveScreen(view, name: "10b-vitt")
+        setTheme(.paper)
+        await pause(0.4)
+        _ = await waitUntilShown()
+        SelfTest.saveScreen(view, name: "10c-papper")
 
         setTheme(savedTheme)
         setTypography(savedTypography)

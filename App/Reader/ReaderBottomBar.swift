@@ -43,4 +43,13 @@ final class ReaderBottomBar: UIView {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) används inte")
     }
+
+    /// Temats färger (U1): sidans papper i stället för systemets glas, reglaget i accentfärgen.
+    func apply(_ palette: Palette) {
+        background.effect = nil
+        background.backgroundColor = palette.page.withAlphaComponent(0.97)
+        slider.minimumTrackTintColor = palette.accent
+        slider.maximumTrackTintColor = palette.rule
+        pageButton.tintColor = palette.inkSoft
+    }
 }

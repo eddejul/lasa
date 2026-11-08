@@ -5,6 +5,7 @@ import UIKit
 final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
     private enum Row {
+        case followSystem
         case pageSound
         case geminiKey
         case geminiModel
@@ -57,6 +58,11 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         rebuild()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        Theme.style(tableView)
+    }
+
     @objc private func syncFinished() {
         rebuild()
     }
@@ -70,7 +76,9 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
             syncRows += [.syncPassword, .syncSignIn]
         }
         sections = [
-            Section(title: "Läsaren", rows: [.pageSound], footer: nil),
+            Section(title: "Utseende och läsaren", rows: [.followSystem, .pageSound],
+                    footer: "Med Följ systemet blir appen mörk när iPaden är i mörkt läge och har annars "
+                        + "bakgrunden du valt i läsaren. Väljer du en bakgrund i läsaren stängs Följ systemet av."),
             Section(title: "Förklaring med AI", rows: [.geminiKey, .geminiModel, .geminiTest],
                     footer: "Knappen Förklara i meningen i ordrutan använder Google Gemini. En gratis nyckel skapas i "
                         + "Google AI Studio (aistudio.google.com, Get API key). Nyckeln sparas bara i iPadens nyckelring. "
@@ -141,6 +149,19 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         cell.selectionStyle = .default
         var content = UIListContentConfiguration.valueCell()
         switch row {
+        case .followSystem:
+            content.text = "Följ systemet"
+            let toggle = UISwitch()
+            toggle.isOn = ReaderTheme.followsSystem
+            toggle.addAction(UIAction { [weak self, weak toggle] _ in
+                ReaderTheme.followsSystem = toggle?.isOn ?? false
+                Theme.apply()
+                if let table = self?.tableView {
+                    Theme.style(table)
+                }
+            }, for: .valueChanged)
+            cell.accessoryView = toggle
+            cell.selectionStyle = .none
         case .pageSound:
             content.text = "Bläddringsljud"
             let toggle = UISwitch()

@@ -68,6 +68,8 @@ enum ReflowStyle {
         switch theme {
         case .white:
             css += "html { background-color: #ffffff !important; }\n"
+        case .paper:
+            css += colorOverrides(paper: "#fbf8f2", text: "#1e1c19", link: "#2d5b84", extra: "")
         case .sepia:
             css += colorOverrides(paper: "#f4ecd8", text: "#3b2f23", link: "#8a4b1f", extra: "")
         case .dark:

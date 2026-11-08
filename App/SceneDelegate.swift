@@ -15,10 +15,26 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         let window = UIWindow(windowScene: windowScene)
         window.rootViewController = navigation
-        window.makeKeyAndVisible()
+        ReaderTheme.systemIsDark = windowScene.traitCollection.userInterfaceStyle == .dark
         self.window = window
+        // U1: temat på fönstret, menyraderna och tabellerna innan något visas.
+        Theme.apply()
+        window.makeKeyAndVisible()
 
         openIncoming(connectionOptions.urlContexts)
+    }
+
+    /// Systemet bytte mellan ljust och mörkt: med Följ systemet byter appen tema (U1).
+    func windowScene(_ windowScene: UIWindowScene, didUpdate previousCoordinateSpace: UICoordinateSpace,
+                     interfaceOrientation previousInterfaceOrientation: UIInterfaceOrientation,
+                     traitCollection previousTraitCollection: UITraitCollection) {
+        let dark = windowScene.traitCollection.userInterfaceStyle == .dark
+        guard dark != ReaderTheme.systemIsDark else { return }
+        let before = ReaderTheme.effective
+        ReaderTheme.systemIsDark = dark
+        if ReaderTheme.effective != before {
+            Theme.apply()
+        }
     }
 
     /// Synkar när appen kommer fram, om synken är inställd (fas 6), och sparar dagens säkerhetskopia (G1).
