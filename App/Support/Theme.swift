@@ -98,7 +98,7 @@ enum Theme {
         UITableViewCell.appearance().backgroundColor = palette.surface
         let navigation = navigationAppearance(palette)
         UINavigationBar.appearance().standardAppearance = navigation
-        UINavigationBar.appearance().scrollEdgeAppearance = navigation
+        UINavigationBar.appearance().scrollEdgeAppearance = navigationAppearance(palette, atEdge: true)
         UINavigationBar.appearance().compactAppearance = navigation
         UIToolbar.appearance().barTintColor = palette.canvas
         for scene in UIApplication.shared.connectedScenes {
@@ -113,11 +113,17 @@ enum Theme {
     }
 
     /// Menyraden i biblioteket och listorna: canvas-bakgrund, bläck och stora rubriker i New York.
-    static func navigationAppearance(_ palette: Palette) -> UINavigationBarAppearance {
+    /// `atEdge`: överst i en lista, genomskinlig som systemets egen (den stora rubriken syns då, även i
+    /// simulatorns bilder i iOS 26).
+    static func navigationAppearance(_ palette: Palette, atEdge: Bool = false) -> UINavigationBarAppearance {
         let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = palette.canvas
-        appearance.shadowColor = palette.rule
+        if atEdge {
+            appearance.configureWithTransparentBackground()
+        } else {
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = palette.canvas
+            appearance.shadowColor = palette.rule
+        }
         appearance.titleTextAttributes = [.foregroundColor: palette.ink,
                                           .font: serif(.headline, size: 17, weight: .semibold)]
         appearance.largeTitleTextAttributes = [.foregroundColor: palette.ink,
@@ -143,7 +149,7 @@ enum Theme {
         guard let bar = bar else { return }
         let appearance = navigationAppearance(current)
         bar.standardAppearance = appearance
-        bar.scrollEdgeAppearance = appearance
+        bar.scrollEdgeAppearance = navigationAppearance(current, atEdge: true)
         bar.compactAppearance = appearance
         bar.tintColor = current.accent
     }
