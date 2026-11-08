@@ -196,8 +196,10 @@ final class NoteEditorViewController: UIViewController, UIAdaptivePresentationCo
     }
 
     private func saveIfChanged() {
-        guard !saved else { return }
         let text = currentText
+        SelfTest.log("Anteckningsarket stängs: sparad förut \(saved), ändrad \(text != initialNote), "
+                     + "mottagare \(onSave == nil ? "saknas" : "finns")")
+        guard !saved else { return }
         guard text != initialNote.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
         saved = true
         onSave?(text)
@@ -207,7 +209,9 @@ final class NoteEditorViewController: UIViewController, UIAdaptivePresentationCo
     /// Samma sak som delegaten ovan, men oberoende av den.
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        if isBeingDismissed || navigationController?.isBeingDismissed == true {
+        let dismissed = isBeingDismissed || navigationController?.isBeingDismissed == true
+        SelfTest.log("Anteckningsarket försvann, stängt: \(dismissed)")
+        if dismissed {
             saveIfChanged()
         }
     }
