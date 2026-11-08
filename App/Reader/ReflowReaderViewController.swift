@@ -916,6 +916,25 @@ final class ReflowReaderViewController: UIViewController {
         let contents = BookContentsViewController(entries: entries,
                                                   currentRow: currentRow,
                                                   emptyText: "Boken har ingen innehållsförteckning.")
+        // K10: hur mycket av kapitlet som lästs, när kapitlets sidor är mätta. Bara på kapitlets första rad.
+        if let counts = renderer?.allPageCounts() {
+            var read: [Int: Set<Int>] = [:]
+            for key in ReadingLog.shared.readPageKeys(book: bookKey) {
+                let parts = key.split(separator: ":")
+                if parts.count == 2, let chapter = Int(parts[0]), let slot = Int(parts[1]) {
+                    read[chapter, default: []].insert(slot)
+                }
+            }
+            contents.detailText = { row in
+                guard row < targets.count else { return nil }
+                let chapter = targets[row].chapter
+                guard targets.firstIndex(where: { $0.chapter == chapter }) == row, chapter < counts.count,
+                      counts[chapter] > 0, let slots = read[chapter] else { return nil }
+                let share = Double(slots.filter { $0 < counts[chapter] }.count) / Double(counts[chapter])
+                guard share > 0 else { return nil }
+                return share >= 0.9 ? "Läst" : "\(Int((share * 100).rounded())) % läst"
+            }
+        }
         contents.onSelect = { [weak self] row in
             guard row < targets.count else { return }
             self?.dismiss(animated: true)

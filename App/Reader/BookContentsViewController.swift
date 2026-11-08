@@ -9,6 +9,8 @@ final class BookContentsViewController: UITableViewController {
     }
 
     var onSelect: ((Int) -> Void)?
+    /// K10: en rad under titeln, till exempel hur mycket av kapitlet som lästs. Nil: ingen rad.
+    var detailText: ((Int) -> String?)?
 
     private static let cellID = "entry"
     private let entries: [Entry]
@@ -71,6 +73,8 @@ final class BookContentsViewController: UITableViewController {
         content.textProperties.numberOfLines = 0
         content.textProperties.font = .preferredFont(forTextStyle: entry.level == 0 ? .headline : .body)
         content.textProperties.color = indexPath.row == currentRow ? (tableView.tintColor ?? .systemBlue) : .label
+        content.secondaryText = detailText?(indexPath.row)
+        content.secondaryTextProperties.color = .secondaryLabel
         content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 10,
                                                                    leading: 16 + CGFloat(min(entry.level, 4)) * 18,
                                                                    bottom: 10,
