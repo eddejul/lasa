@@ -370,6 +370,13 @@ final class AnnotationStore {
                   highlight.updated.timeIntervalSince1970, RectsJSON.encode(highlight.rects)])
     }
 
+    /// En ny version av boken (G3): de sparade rutorna kan ha flyttat sig, så de räknas om från den nya filen.
+    func clearRects(book: String) {
+        write("markeringarnas rutor") { db in
+            try db.execute("UPDATE highlights SET rects = '' WHERE book = ?", [book])
+        }
+    }
+
     /// Sparar rutor som räknats fram efteråt (G6). Ändringstiden rörs inte, så synken skickar inget nytt.
     func setRects(_ rects: [CGRect], forHighlight id: String) {
         write("markeringens rutor") { db in

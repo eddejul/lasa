@@ -300,6 +300,8 @@ final class BookRegistry {
             record.missing = false
             changed.append(record)
             AppLog.shared.write("Ny version av \(question.record.file) behåller markeringarna: \(file.path)")
+            // Markeringarnas rutor på sidan (G6) räknas om från den nya filen.
+            store.clearRects(book: record.id)
         } else {
             var old = question.record
             old.missing = true
@@ -328,8 +330,10 @@ final class BookRegistry {
             }
             return id
         case .newVersion(let id):
-            // Samma plats: filen har ersatts, och frågan ställdes vid importen. Den tar över bokens id.
+            // Samma plats: filen har ersatts, och frågan ställdes vid importen. Den tar över bokens id,
+            // och markeringarnas rutor (G6) räknas om från den nya filen.
             if var record = records.first(where: { $0.id == id }), record.file == file.path {
+                store.clearRects(book: id)
                 record.sha256 = hash
                 record.size = file.size
                 record.modified = file.modified
