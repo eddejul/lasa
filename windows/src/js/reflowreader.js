@@ -3,7 +3,7 @@
 
 import '../vendor/foliate-js/view.js';
 import { Overlayer } from '../vendor/foliate-js/overlayer.js';
-import { chapterNodes, rangeFromOffsets } from './chaptertext.js';
+import { chapterNodes, offsetsFromRange, rangeFromOffsets, relocate } from './chaptertext.js';
 import { MAX_HITS, breathe, excerpt, findAll, foldQuery } from './search.js';
 import { makeTextBook } from './textbook.js';
 import { reflowCandidates, sentenceAround } from './wordfind.js';
@@ -193,8 +193,9 @@ export class ReflowReader {
     });
   }
 
-  onLoad({ doc }) {
+  onLoad({ doc, index }) {
     this.applyFontSize(doc);
+    doc.addEventListener('mouseup', (event) => this.onSelectionEnd(doc, index, event));
     doc.addEventListener('dblclick', (event) => this.handleWord(doc, event));
     doc.addEventListener('contextmenu', (event) => {
       event.preventDefault();
@@ -210,7 +211,7 @@ export class ReflowReader {
 
   /** Sidornas händelse: index är sektionen i foliate-js, fraction andelen av den. Vyns sammanställning
    *  (CFI, plats i boken, innehåll) finns redan i view.lastLocation. */
-  onRelocateEvent({ index, fraction: sectionFraction, reason }) {
+  onRelocateEvent({ index, fraction: sectionFraction, reason, size }) {
     const detail = this.view?.lastLocation ?? {};
     const total = detail.location?.total ?? 0;
     const current = (detail.location?.current ?? 0) + 1;
@@ -219,6 +220,7 @@ export class ReflowReader {
     if (total) parts.push(`plats ${Math.min(current, total)} av ${total}`);
     this.lastPage = detail.location?.current ?? 0;
     const position = { cfi: detail.cfi };
+    this.lastSize = size;
     // Synkens plats: kapitlet bland bokens dokument och andelen av kapitlet (bara EPUB).
     const section = this.view?.book?.resources ? this.documentOfSection?.[index] : null;
     if (Number.isInteger(section)) {
@@ -230,6 +232,10 @@ export class ReflowReader {
       page: this.lastPage,
       fraction: detail.fraction ?? 0,
       position,
+      // Platsen för bokmärken: kapitlet, var sidan börjar i kapitlet och hur stor del av kapitlet den är.
+      place: { section: this.documentIndex(index), progression: Math.min(Math.max(Number(sectionFraction) || 0, 0), 1),
+        extent: Number(size) || 0 },
+      placeLabel: parts.join(', '),
       // 'anchor' är när sidorna ritas om på samma ställe (typsnitt som laddas, fönstret som ändras).
       // Det är ingen flytt och ska inte ge positionen en ny ändringstid.
       moved: reason !== 'anchor',
@@ -238,6 +244,46 @@ export class ReflowReader {
 
   get book() {
     return this.view?.book;
+  }
+
+  /** Musen släpps i ett kapitel: markerad text blir ett förslag till markering. Dubbelklick räknas inte. */
+  onSelectionEnd(doc, index, event) {
+    if (event.button !== 0 || event.detail !== 1) return;
+    const selection = doc.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return;
+    const info = chapterNodes(doc);
+    const offsets = offsetsFromRange(doc, selection.getRangeAt(0), info);
+    if (!offsets) return;
+    let { start, end } = offsets;
+    while (start < end && /\s/.test(info.text[start])) start += 1;
+    while (end > start && /\s/.test(info.text[end - 1])) end -= 1;
+    if (end <= start || !/[\p{L}\p{N}]/u.test(info.text.slice(start, end))) return;
+    const range = selection.getRangeAt(0);
+    const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+    this.onSelect?.({ section: this.documentIndex(index), start, end, sectionText: info.text,
+      rect: this.frameRect(doc, rects[0] ?? range.getBoundingClientRect()), clear: () => doc.getSelection()?.removeAllRanges() });
+  }
+
+  /** Kapitlets namn (bland bokens dokument), för listan med markeringar. */
+  chapterLabel(section) {
+    const index = this.sectionOfDocument?.[section] ?? section;
+    return (this.view ? this.sectionLabels()[index] : '') || `Kapitel ${section + 1}`;
+  }
+
+  /** Går till ett kapitel (bland bokens dokument) och en andel av det, som ett bokmärke. */
+  goToPlace(section, progression) {
+    const index = this.sectionOfDocument?.[section] ?? section;
+    return this.view?.renderer.goTo({ index, anchor: Math.min(Math.max(Number(progression) || 0, 0), 0.9999) });
+  }
+
+  /** Går till en markering: kapitlet, och sidan där markeringens text står. */
+  showMark(section, text, mark) {
+    const index = this.sectionOfDocument?.[section] ?? section;
+    return this.view?.renderer.goTo({ index, anchor: (doc) => {
+      const info = chapterNodes(doc);
+      const place = relocate(info.text, mark);
+      return (place && rangeFromOffsets(doc, place.start, place.end, info)) ?? 0;
+    } });
   }
 
   // Markeringar och sökträffar, ritade av foliate-js (overlayer.js) ovanpå kapitlet.

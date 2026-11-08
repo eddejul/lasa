@@ -27,7 +27,7 @@ export const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const MAX_CANVAS_PIXELS = 16e6;
 
 export class PdfReader {
-  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, getMarks = null }) {
+  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, getMarks = null, onSelect = null, onMarkClick = null }) {
     this.kind = 'pdf';
     this.stage = stage;
     this.onRelocate = onRelocate;
@@ -35,6 +35,8 @@ export class PdfReader {
     this.onMessage = onMessage;
     // Markeringarna på en sida: [{ id, start, end, color, note }] i sidans text (se annotations.js).
     this.getMarks = getMarks;
+    this.onSelect = onSelect; // text markerad med musen: { section, start, end, sectionText, rect, clear }
+    this.onMarkClick = onMarkClick; // klick på en markering: (mark, rect)
     this.searchHit = null; // { section, start, end } när en sökträff visas
     this.texts = new Map(); // sidindex -> sidans text, för sökningen
     this.fit = fit; // 'auto', 'page' eller 'width'
@@ -49,10 +51,21 @@ export class PdfReader {
     this.onPointer = this.onPointer.bind(this);
     this.stage.addEventListener('dblclick', this.onPointer);
     this.stage.addEventListener('contextmenu', this.onPointer);
+    this.onMouseUp = this.onMouseUp.bind(this);
+    this.stage.addEventListener('mouseup', this.onMouseUp);
     let timer = null;
+    // Fönstret ändrar storlek: rita om sidan som visas, eller den som är på väg att visas. Det första
+    // anropet (när observationen börjar) och anrop utan ändrad storlek hoppas över, annars kunde en
+    // bläddring direkt efter att boken öppnats skrivas över av en omritning av den förra sidan.
     this.resizeObserver = new ResizeObserver(() => {
+      const { width, height } = this.stage.getBoundingClientRect();
+      const size = `${Math.round(width)}x${Math.round(height)}`;
+      if (size === this.observedSize) return;
+      const first = this.observedSize === undefined;
+      this.observedSize = size;
+      if (first) return;
       clearTimeout(timer);
-      timer = setTimeout(() => this.show(this.current[0], { keepScroll: true }), 150);
+      timer = setTimeout(() => this.show(this.target ?? this.current[0], { keepScroll: true }), 150);
     });
   }
 
@@ -229,6 +242,7 @@ export class PdfReader {
     if (!this.pdf) return;
     const token = ++this.token;
     index = Math.min(Math.max(0, index), this.count - 1);
+    this.target = index;
     const view = this.spreadElement;
     const scrolled = keepScroll && view.scrollHeight > 0 ? view.scrollTop / view.scrollHeight : 0;
     const entries = [];
@@ -278,7 +292,8 @@ export class PdfReader {
       label = differs ? `Sida ${name(first)} (${first + 1} av ${this.count})` : `Sida ${first + 1} av ${this.count}`;
     }
     const last = this.current[this.current.length - 1];
-    return { label, page: first, fraction: this.count > 1 ? last / (this.count - 1) : 1, position: { page: first } };
+    return { label, page: first, fraction: this.count > 1 ? last / (this.count - 1) : 1, position: { page: first },
+      place: { pages: [...this.current] } };
   }
 
   // Markeringar och sökträffar
@@ -332,6 +347,69 @@ export class PdfReader {
       }
     }
     return null;
+  }
+
+  /** Platsen i sidans text för en punkt i textlagret (en gräns i en markering). */
+  pointOffset(entry, container, offset) {
+    if (container.nodeType === Node.TEXT_NODE) {
+      const i = entry.indexOf.get(container.parentElement);
+      if (i !== undefined) return entry.offsets[i] + Math.min(offset, container.data.length);
+    }
+    const boundary = document.createRange();
+    try {
+      boundary.setStart(container, offset);
+    } catch {
+      return null;
+    }
+    for (let i = 0; i < entry.divs.length; i++) {
+      if (boundary.comparePoint(entry.divs[i], 0) >= 0) return entry.offsets[i];
+    }
+    return entry.text.length;
+  }
+
+  /** Musen släpps: text som har markerats blir ett förslag till markering, ett klick på en markering
+   *  öppnar dess meny. Dubbelklick (ordfunktionen) räknas inte. */
+  onMouseUp(event) {
+    if (event.button !== 0 || event.detail !== 1) return;
+    const selection = window.getSelection();
+    if (!selection.rangeCount || selection.isCollapsed) {
+      const hit = this.markAt(event.clientX, event.clientY);
+      if (hit) this.onMarkClick?.(hit.mark, new DOMRect(event.clientX - 10, event.clientY - 10, 20, 20));
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const element = (node) => (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
+    const pageElement = element(range.startContainer)?.closest?.('.pdf-page') ?? element(range.endContainer)?.closest?.('.pdf-page');
+    if (!pageElement) return;
+    const index = Number(pageElement.dataset.page);
+    const entry = this.cache.get(index);
+    if (!entry?.text) return;
+    let start = this.pointOffset(entry, range.startContainer, range.startOffset);
+    let end = pageElement.contains(range.endContainer) ? this.pointOffset(entry, range.endContainer, range.endOffset) : entry.text.length;
+    if (start === null || end === null) return;
+    // En markering över två sidor stannar vid sidans slut, som på iPaden.
+    if (!pageElement.contains(range.startContainer)) start = 0;
+    while (start < end && /\s/.test(entry.text[start])) start += 1;
+    while (end > start && /\s/.test(entry.text[end - 1])) end -= 1;
+    if (end <= start || !/[\p{L}\p{N}]/u.test(entry.text.slice(start, end))) return;
+    const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+    const first = rects[0] ?? range.getBoundingClientRect();
+    this.onSelect?.({ section: index, start, end, sectionText: entry.text, rect: first,
+      clear: () => window.getSelection().removeAllRanges() });
+  }
+
+  /** Går till ett bokmärke (sidan). */
+  goToPlace(section) {
+    return this.show(section);
+  }
+
+  /** Visar en markering: sidan, och rullar till den om sidan rullas. */
+  async showMark(section, text, mark) {
+    await this.show(section);
+    const entry = this.cache.get(section);
+    const marks = entry ? (this.getMarks?.(section, entry.text) ?? []) : [];
+    const found = marks.find((m) => m.id === mark.id);
+    if (found) this.scrollToMark(section, found.start, found.end);
   }
 
   // Sök
@@ -429,15 +507,24 @@ export class PdfReader {
     }
   }
 
+  /** Sidorna som visas, eller som är på väg att visas. Flera snabba tryck på en pil räknas då från
+   *  sidan som är på väg, inte från den som syntes när det första trycket kom. */
+  targetPages() {
+    const pages = this.target === undefined ? this.current : this.slotsFor(this.target).filter((page) => page !== null);
+    return pages.length ? pages : this.current;
+  }
+
   next() {
-    const last = this.current[this.current.length - 1];
+    const pages = this.targetPages();
+    const last = pages[pages.length - 1];
     if (last + 1 < this.count) return this.show(last + 1);
     return null;
   }
 
   /** atEnd: börja längst ned på sidan före (när man rullar uppåt förbi sidans topp). */
   prev({ atEnd = false } = {}) {
-    if (this.current[0] > 0) return this.show(this.current[0] - 1, { atEnd });
+    const first = this.targetPages()[0];
+    if (first > 0) return this.show(first - 1, { atEnd });
     return null;
   }
 
@@ -557,6 +644,7 @@ export class PdfReader {
     this.resizeObserver.disconnect();
     this.stage.removeEventListener('dblclick', this.onPointer);
     this.stage.removeEventListener('contextmenu', this.onPointer);
+    this.stage.removeEventListener('mouseup', this.onMouseUp);
     for (const index of [...this.cache.keys()]) this.forget(index);
     closePdf(this.pdf);
     this.pdf = null;

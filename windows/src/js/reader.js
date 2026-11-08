@@ -2,6 +2,9 @@
 // Själva sidorna ritas av PdfReader (PDF) eller ReflowReader (EPUB och text).
 
 import { inTauri, readBookFile } from './backend.js';
+import {
+  BookAnnotations, closeMarkMenu, editNote, isMarkMenuOpen, lastColor, renderMarksPanel, showHighlightMenu, showSelectionMenu,
+} from './annotations.js';
 import { bookErrorMessage } from './bookerrors.js';
 import { closeWordPopup, isWordPopupOpen, showWordPopup } from './popup.js';
 import { PdfReader } from './pdfreader.js';
@@ -38,6 +41,9 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   const slider = el('input', { type: 'range', class: 'page-slider', min: '0', max: '1000', value: '0', 'aria-label': 'Plats i boken' });
   const panel = el('div', { class: 'reader-panel', hidden: true });
 
+  const annotations = new BookAnnotations(book);
+  const bookmarkButton = el('button', { class: 'toolbar-button bookmark-button', onclick: () => toggleBookmark(),
+    title: 'Bokmärke på sidan (B)', 'aria-pressed': 'false', dataset: { testid: 'bookmark-button' } }, 'Bokmärke');
   const toolbar = el('header', { class: 'toolbar reader-toolbar' },
     el('button', { class: 'toolbar-button', onclick: () => onBack(), title: 'Tillbaka till biblioteket (Esc)' }, '‹ Bibliotek'),
     el('div', { class: 'reader-title', title: book.title }, book.title),
@@ -48,6 +54,9 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
       book.format === 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => goToPage() }, 'Gå till sida') : null,
       book.format === 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('zoom'), dataset: { testid: 'zoom-button' } }, 'Visning') : null,
       book.format !== 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('type'), title: 'Typsnitt och storlek' }, 'Aa') : null,
+      el('button', { class: 'toolbar-button', onclick: () => togglePanel('marks'), title: 'Markeringar och bokmärken',
+        dataset: { testid: 'marks-button' } }, 'Markeringar'),
+      bookmarkButton,
       el('button', { class: 'toolbar-button', onclick: () => togglePanel('theme'), dataset: { testid: 'theme-button' } }, 'Tema'),
       el('button', { class: 'toolbar-button', onclick: () => onSavedWords() }, 'Sparade ord'),
       el('button', { class: 'toolbar-button', onclick: () => onAbout() }, 'Om ordboken')));
@@ -78,8 +87,18 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     baseline = key;
     return savePosition(book.id, location.position, location.fraction);
   };
+  let currentPlace = null;
+  let currentPlaceLabel = '';
+  const updateBookmarkButton = () => {
+    const marked = annotations.bookmarksAt(currentPlace).length > 0;
+    bookmarkButton.classList.toggle('active', marked);
+    bookmarkButton.setAttribute('aria-pressed', String(marked));
+  };
   const onRelocate = (next) => {
     label.textContent = next.label;
+    currentPlace = next.place ?? null;
+    currentPlaceLabel = next.placeLabel ?? next.label;
+    updateBookmarkButton();
     if (document.activeElement !== slider) slider.value = String(Math.round(next.fraction * 1000));
     // Medan boken öppnas sparas inget, platsen blir utgångsläget när den har öppnats klart.
     if (baseline === null) {
@@ -149,7 +168,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (document.querySelector('#modal-layer .modal-backdrop')) return;
     if (event.key === 'Escape') {
-      if (isWordPopupOpen()) closeWordPopup();
+      if (isMarkMenuOpen()) closeMarkMenu();
+      else if (isWordPopupOpen()) closeWordPopup();
       else if (!panel.hidden) togglePanel(null);
       else onBack();
       event.preventDefault();
@@ -165,6 +185,9 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     } else if (down || up) {
       event.preventDefault();
       step(down ? 1 : -1);
+    } else if ((event.key === 'b' || event.key === 'B') && !event.shiftKey) {
+      event.preventDefault();
+      toggleBookmark();
     } else if (event.key === 'Home') {
       event.preventDefault();
       reader.goToFraction(0);
@@ -206,12 +229,83 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   };
   const onPointerDown = () => {
     if (isWordPopupOpen()) closeWordPopup();
+    if (isMarkMenuOpen()) closeMarkMenu();
+    clearTimeout(markClickTimer);
   };
+
+  // Markeringar: färgval när text markeras med musen, meny vid klick på en markering.
+  const getMarks = (section, text) => annotations.marksFor(section, text);
+  const addHighlight = async (selection, color) => {
+    const highlight = await annotations.add(selection, color);
+    selection.clear();
+    reader.refreshMarks();
+    refreshMarksPanel();
+    return highlight;
+  };
+  const writeNote = async (highlight) => {
+    const note = await editNote(highlight);
+    if (note === null) return;
+    await annotations.update(highlight.id, { note });
+    reader.refreshMarks();
+    refreshMarksPanel();
+  };
+  const onSelect = (selection) => {
+    if (isWordPopupOpen()) return;
+    showSelectionMenu(selection.rect, {
+      onColor: (color) => addHighlight(selection, color),
+      onNote: async () => writeNote(await addHighlight(selection, lastColor())),
+    });
+  };
+  // Ett klick på en markering väntar en kort stund, så att ett dubbelklick (ordfunktionen) inte öppnar menyn.
+  let markClickTimer = null;
+  const onMarkClick = (mark, rect) => {
+    clearTimeout(markClickTimer);
+    markClickTimer = setTimeout(() => {
+      const highlight = annotations.get(mark.id);
+      if (!highlight || isWordPopupOpen()) return;
+      showHighlightMenu(rect, highlight, {
+        onColor: async (color) => {
+          await annotations.update(highlight.id, { color });
+          reader.refreshMarks();
+          refreshMarksPanel();
+        },
+        onNote: () => writeNote(highlight),
+        onDelete: async () => {
+          await annotations.remove(highlight.id);
+          reader.refreshMarks();
+          refreshMarksPanel();
+          toast('Markeringen togs bort.', 2);
+        },
+      });
+    }, 280);
+  };
+  stage.addEventListener('mousedown', () => clearTimeout(markClickTimer));
+
+  async function toggleBookmark() {
+    if (!currentPlace) return;
+    const label = book.format === 'pdf' ? `Sida ${reader.pageName(currentPlace.pages[0])}` : currentPlaceLabel;
+    const added = await annotations.toggleBookmark(currentPlace, label);
+    updateBookmarkButton();
+    refreshMarksPanel();
+    toast(added ? 'Bokmärke på sidan.' : 'Bokmärket togs bort.', 2);
+  }
+
+  const placeName = (section) => (book.format === 'pdf' ? `s. ${reader.pageName(section)}` : reader.chapterLabel(section));
+  function refreshMarksPanel() {
+    if (panel.dataset.name !== 'marks') return;
+    renderMarksPanel(panel, annotations, {
+      onClose: () => togglePanel(null),
+      onGoToBookmark: (bookmark) => reader.goToPlace(bookmark.section, bookmark.progression),
+      onGoToHighlight: (highlight) => reader.showMark(highlight.section, highlight.text, highlight),
+      placeName,
+      onChanged: updateBookmarkButton,
+    });
+  }
 
   const reader = book.format === 'pdf'
     ? new PdfReader(stage, { onRelocate, onWord, onMessage: (message) => toast(message),
-      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1 })
-    : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown });
+      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, getMarks, onSelect, onMarkClick })
+    : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks, onSelect, onMarkClick });
 
   document.addEventListener('keydown', onKey);
   // Provkörningen i webbläsaren (dev/server.py) når läsaren härifrån. Finns inte i appen.
@@ -260,6 +354,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     panel.hidden = false;
     if (name === 'search') {
       renderSearchPanel(panel, reader, searchState, { onClose: () => togglePanel(null) });
+    } else if (name === 'marks') {
+      refreshMarksPanel();
     } else if (name === 'toc') {
       const items = await reader.toc();
       const list = (entries, depth) => el('ul', { class: `toc-list depth-${depth}` }, entries.map((entry) => el('li', {},
@@ -340,6 +436,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     async close() {
       document.removeEventListener('keydown', onKey);
       setThemeListener(null);
+      clearTimeout(markClickTimer);
+      closeMarkMenu();
       closeWordPopup();
       await save();
       reader.destroy();
@@ -349,6 +447,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   setThemeListener((theme) => reader.setSettings?.({ theme }));
 
   await markOpened(book.id);
+  await annotations.load();
   try {
     // Bokfilen läses först nu, så att läsaren och Öppnar boken syns direkt.
     const bytes = await readBookFile(book.id, book.ext);

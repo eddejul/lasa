@@ -510,3 +510,41 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .shortcuts-table th, .shortcuts-table td { text-align: left; vertical-align: top; padding: 6px 4px; border-top: 1px solid var(--border); }
 .shortcuts-table th { font-weight: 600; width: 42%; padding-right: 12px; }
 .shortcuts-table td { color: var(--muted); }
+
+/* Markeringar: färgval, meny, anteckning och listan */
+.mark-menu {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.mark-color { width: 26px; height: 26px; border-radius: 13px; border: 2px solid transparent; }
+.mark-color.selected { border-color: var(--text); }
+.mark-color:hover { transform: scale(1.1); }
+.mark-color.color-yellow { background: rgb(255 204 26); }
+.mark-color.color-green { background: rgb(92 204 102); }
+.mark-color.color-blue { background: rgb(89 158 255); }
+.mark-color.color-pink { background: rgb(255 115 168); }
+.mark-action { padding: 4px 8px; border-radius: 6px; color: var(--accent); white-space: nowrap; font-size: 14px; }
+.mark-action:hover { background: var(--surface-2); }
+.mark-action.danger { color: var(--danger); }
+.note-dialog { width: min(520px, 100%); }
+.note-quote { margin: 0 0 10px; padding: 6px 10px; font-family: Georgia, serif; line-height: 1.4; max-height: 120px; overflow: auto; border-left: 4px solid; }
+.note-quote.color-yellow, .marks-quote.color-yellow { border-color: rgb(255 204 26); }
+.note-quote.color-green, .marks-quote.color-green { border-color: rgb(92 204 102); }
+.note-quote.color-blue, .marks-quote.color-blue { border-color: rgb(89 158 255); }
+.note-quote.color-pink, .marks-quote.color-pink { border-color: rgb(255 115 168); }
+.note-input { resize: vertical; font-family: inherit; line-height: 1.4; }
+.marks-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.marks-go { flex: 1; text-align: left; padding: 7px 8px; border-radius: 6px; display: flex; flex-direction: column; gap: 3px; width: 100%; }
+.marks-go:hover { background: var(--surface-2); }
+.marks-label { font-size: 12px; color: var(--muted); }
+.marks-quote { font-family: Georgia, serif; font-size: 14px; line-height: 1.4; padding-left: 8px; border-left: 4px solid; overflow-wrap: anywhere; }
+.marks-note { font-size: 13px; line-height: 1.4; white-space: pre-line; overflow-wrap: anywhere; }
+.bookmark-button.active { background: var(--accent); color: var(--accent-text); }

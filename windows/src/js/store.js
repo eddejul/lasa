@@ -63,6 +63,31 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS highlights (
+  id TEXT PRIMARY KEY,
+  book TEXT NOT NULL,
+  section INTEGER NOT NULL,
+  start INTEGER NOT NULL,
+  length INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  color TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created REAL NOT NULL,
+  updated REAL NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS highlights_book ON highlights (book, section);
+CREATE TABLE IF NOT EXISTS bookmarks (
+  id TEXT PRIMARY KEY,
+  book TEXT NOT NULL,
+  section INTEGER NOT NULL,
+  progression REAL NOT NULL,
+  label TEXT NOT NULL,
+  created REAL NOT NULL,
+  updated REAL NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS bookmarks_book ON bookmarks (book, section);
 `;
 // position_updated: när läspositionen senast flyttades av läsaren eller kom från synken (sekunder).
 const BOOK_COLUMNS_ADDED = [
@@ -163,6 +188,59 @@ export async function savePosition(id, position, progress) {
 export async function applySyncedPosition(id, position, updated) {
   await library.run('UPDATE books SET position = ?, position_updated = ? WHERE id = ?',
     [JSON.stringify(position), updated, id]);
+}
+
+// Markeringar, anteckningar och bokmärken (W1). Samma tabeller och fält som markeringar.sqlite på iPaden
+// (App/Annotations/AnnotationStore.swift) och som synken i docs/SYNK.md: book är bokens id (SHA-256),
+// section och ett teckenintervall (start, length) i UTF-16, och text. Inget raderas: borttaget får
+// deleted = 1 och ny ändringstid, så att en framtida synk kan föra borttagningen vidare.
+
+export const HIGHLIGHT_COLORS = ['yellow', 'green', 'blue', 'pink'];
+const HIGHLIGHT_COLUMNS = 'id, book, section, start, length, text, color, note, created, updated';
+
+function highlightFromRow([id, book, section, start, length, text, color, note, created, updated]) {
+  return { id, book, section, start, length, text, color: HIGHLIGHT_COLORS.includes(color) ? color : 'yellow', note, created, updated };
+}
+
+/** Bokens markeringar i läsordning. */
+export async function bookHighlights(book) {
+  const rows = await library.all(`SELECT ${HIGHLIGHT_COLUMNS} FROM highlights WHERE book = ? AND deleted = 0
+    ORDER BY section, start`, [book]);
+  return rows.map(highlightFromRow);
+}
+
+/** Sparar en markering (ny eller ändrad). updated blir nu. */
+export async function saveHighlight(highlight) {
+  const time = now();
+  const row = { ...highlight, created: highlight.created ?? time, updated: time };
+  await library.run(`INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+  [row.id, row.book, row.section, row.start, row.length, row.text, row.color, row.note ?? '', row.created, row.updated]);
+  return row;
+}
+
+export async function deleteHighlight(id) {
+  await library.run('UPDATE highlights SET deleted = 1, updated = ? WHERE id = ?', [now(), id]);
+}
+
+/** Bokens bokmärken i läsordning. */
+export async function bookBookmarks(book) {
+  const rows = await library.all(`SELECT id, book, section, progression, label, created, updated FROM bookmarks
+    WHERE book = ? AND deleted = 0 ORDER BY section, progression`, [book]);
+  return rows.map(([id, bookId, section, progression, label, created, updated]) =>
+    ({ id, book: bookId, section, progression, label, created, updated }));
+}
+
+export async function addBookmark({ book, section, progression, label }) {
+  const time = now();
+  const bookmark = { id: crypto.randomUUID().toLowerCase(), book, section, progression, label, created: time, updated: time };
+  await library.run(`INSERT INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, [bookmark.id, book, section, progression, label, time, time]);
+  return bookmark;
+}
+
+export async function deleteBookmark(id) {
+  await library.run('UPDATE bookmarks SET deleted = 1, updated = ? WHERE id = ?', [now(), id]);
 }
 
 // Sparade ord

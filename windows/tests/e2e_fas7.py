@@ -307,7 +307,177 @@ def shortcuts(page, books, out):
     back_to_library(page)
 
 
-STEPS = [search_in_books, shortcuts]
+def db_rows(page, sql, params=None):
+    return page.evaluate("""async ([sql, params]) => (await fetch('/api/user_query', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ db: 'bibliotek', sql, params }) })).json()""",
+                         [sql, params or []])
+
+
+def drag_select(page, start, end):
+    page.mouse.move(start["x"], start["y"])
+    page.mouse.down()
+    page.mouse.move((start["x"] + end["x"]) / 2, (start["y"] + end["y"]) / 2, steps=4)
+    page.mouse.move(end["x"], end["y"], steps=4)
+    page.mouse.up()
+
+
+def word_edges(page, word, occurrence=0):
+    """Vänsterkant och högerkant (i fönstret) för ett ord i PDF:ens textlager."""
+    return page.evaluate("""([word, occurrence]) => {
+      let seen = 0;
+      for (const span of document.querySelectorAll('.pdf-spread .textLayer span')) {
+        const node = span.firstChild;
+        if (!node || node.nodeType !== 3) continue;
+        let at = node.data.indexOf(word);
+        while (at >= 0) {
+          if (seen++ === occurrence) {
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + word.length);
+            const r = range.getBoundingClientRect();
+            return { left: { x: r.left + 1, y: r.top + r.height / 2 }, right: { x: r.right - 1, y: r.top + r.height / 2 } };
+          }
+          at = node.data.indexOf(word, at + 1);
+        }
+      }
+      return null;
+    }""", [word, occurrence])
+
+
+def highlights_and_bookmarks(page, books, out):
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    page.keyboard.press('Home')
+    page.keyboard.press('ArrowRight')
+    check(wait_for(lambda: page.locator('.page-label').inner_text().startswith('Sida 2')), f'sida 2: {page.locator(".page-label").inner_text()}')
+    page.wait_for_function("document.querySelectorAll('.pdf-spread .textLayer span').length > 5")
+    a = word_edges(page, 'Gatorna')
+    b = word_edges(page, 'smala')
+    check(a is not None and b is not None, 'hittade orden att markera')
+    drag_select(page, a["left"], b["right"])
+    check(wait_for(lambda: page.locator('[data-testid="mark-menu"]').count() == 1), 'färgvalet visas när text markeras')
+    page.screenshot(path=os.path.join(out, "f06-fargval.png"))
+    page.locator('[data-testid="mark-green"]').click()
+    check(wait_for(lambda: page.locator('.pdf-mark.color-green').count() >= 1), 'grön markering syns på sidan')
+    rows = db_rows(page, "SELECT section, start, length, text, color, deleted FROM highlights")
+    check(len(rows) == 1 and rows[0][0] == 1 and rows[0][3].startswith('Gatorna var smala') and rows[0][4] == 'green',
+          f'markeringen sparas med sida, plats och text: {rows}')
+    text = page.evaluate("lasaTest.reader.cache.get(1).text")
+    check(rows and text[rows[0][1]:rows[0][1] + rows[0][2]] == rows[0][3], 'start och length pekar på texten i sidans text')
+
+    # Klick på markeringen: anteckning
+    box = page.locator('.pdf-mark.color-green').first.bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    check(wait_for(lambda: page.locator('[data-testid="mark-delete"]').count() == 1), 'klick på markeringen öppnar menyn')
+    page.locator('[data-testid="mark-note"]').click()
+    page.wait_for_selector('[data-testid="note-input"]')
+    page.locator('[data-testid="note-input"]').fill('Bilden av staden som skydd.')
+    page.locator('[data-testid="note-save"]').click()
+    check(wait_for(lambda: page.locator('.pdf-mark.has-note').count() >= 1), 'markeringen med anteckning får ett streck')
+    check(db_rows(page, "SELECT note FROM highlights WHERE deleted = 0") == [['Bilden av staden som skydd.']], 'anteckningen sparas')
+
+    # Dubbelklick på ett ord i markeringen slår fortfarande upp ordet
+    point = word_edges(page, 'Gatorna')
+    page.mouse.dblclick((point["left"]["x"] + point["right"]["x"]) / 2, point["left"]["y"])
+    check(wait_for(lambda: page.locator('.popup [data-testid="header"]').count() == 1), 'dubbelklick i en markering slår upp ordet')
+    page.wait_for_timeout(400)
+    check(page.locator('[data-testid="mark-menu"]').count() == 0, 'och öppnar inte markeringens meny')
+    page.keyboard.press('Escape')
+
+    # Bokmärke med B, och listan
+    page.mouse.click(5, 300)
+    page.keyboard.press('b')
+    check(wait_for(lambda: 'active' in (page.locator('[data-testid="bookmark-button"]').get_attribute('class') or '')),
+          'B lägger ett bokmärke (knappen visar det)')
+    page.keyboard.press('ArrowRight')
+    check(wait_for(lambda: 'active' not in (page.locator('[data-testid="bookmark-button"]').get_attribute('class') or '')),
+          'på nästa sida finns inget bokmärke')
+    page.locator('[data-testid="marks-button"]').click()
+    check(wait_for(lambda: page.locator('[data-testid="bookmark-row"]').count() == 1
+                   and page.locator('[data-testid="highlight-row"]').count() == 1), 'listan visar bokmärket och markeringen')
+    check('Bilden av staden' in page.locator('[data-testid="highlight-row"]').inner_text(), 'anteckningen syns i listan')
+    page.screenshot(path=os.path.join(out, "f07-markeringar-pdf.png"))
+    page.locator('[data-testid="highlight-row"]').click()
+    check(wait_for(lambda: page.locator('.page-label').inner_text().startswith('Sida 2')), 'klick i listan går till markeringen')
+    page.keyboard.press('Escape')
+
+    # Finns kvar efter omladdning (läspositionen sparas efter 0,4 sekunder)
+    page.wait_for_timeout(800)
+    page.reload()
+    page.wait_for_selector('[data-testid="book"]')
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    check(wait_for(lambda: page.locator('.pdf-mark.color-green').count() >= 1), 'markeringen finns kvar efter omladdning')
+    check('active' in (page.locator('[data-testid="bookmark-button"]').get_attribute('class') or ''), 'bokmärket finns kvar')
+
+    # Ta bort
+    box = page.locator('.pdf-mark.color-green').first.bounding_box()
+    page.mouse.click(box["x"] + 4, box["y"] + box["height"] / 2)
+    page.locator('[data-testid="mark-delete"]').click()
+    check(wait_for(lambda: page.locator('.pdf-mark').count() == 0), 'Ta bort tar bort markeringen')
+    check(db_rows(page, "SELECT deleted FROM highlights") == [[1]], 'borttagen markering finns kvar som deleted = 1 (för synken)')
+    back_to_library(page)
+
+    # EPUB: markering i ett kapitel
+    open_book(page, 'Testbok för Läsa')
+    check(wait_for(lambda: any(f.url.startswith('blob:') for f in page.frames), 15), 'EPUB-kapitel laddat')
+    page.locator('[data-testid="toc-button"]').click()
+    page.locator('.toc-item').filter(has_text=re.compile(r'^(kap4|Kapitel 4: English)$')).click()
+    page.wait_for_timeout(1200)
+    found = None
+    for frame in page.frames:
+        if not frame.url.startswith('blob:'):
+            continue
+        rect = frame.evaluate("""() => {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const at = node.data.indexOf('The morning was quiet');
+            if (at < 0) continue;
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + 'The morning was quiet'.length);
+            const rects = [...range.getClientRects()];
+            if (!rects.length || rects[0].left < 0 || rects[0].left > innerWidth) continue;
+            return { x1: rects[0].left + 1, y: rects[0].top + rects[0].height / 2, x2: rects[0].right - 1 };
+          }
+          return null;
+        }""")
+        if rect:
+            box = frame.frame_element().bounding_box()
+            found = ({"x": box["x"] + rect["x1"], "y": box["y"] + rect["y"]}, {"x": box["x"] + rect["x2"], "y": box["y"] + rect["y"]})
+            break
+    check(found is not None, 'hittade texten att markera i EPUB:en')
+    if found:
+        drag_select(page, found[0], found[1])
+        check(wait_for(lambda: page.locator('[data-testid="mark-menu"]').count() == 1), 'färgvalet visas i EPUB')
+        page.locator('[data-testid="mark-yellow"]').click()
+        check(wait_for(lambda: page.evaluate("[...lasaTest.reader.annotations.values()].filter(a => a.kind === 'mark').length") == 1),
+              'markeringen ritas i kapitlet')
+        rows = db_rows(page, "SELECT section, start, length, text, color FROM highlights WHERE deleted = 0")
+        check(len(rows) == 1 and rows[0][3] == 'The morning was quiet' and rows[0][4] == 'yellow', f'EPUB-markeringen sparas: {rows}')
+        if rows:
+            chapter = page.evaluate("""(section) => {
+              const index = lasaTest.reader.sectionOfDocument[section];
+              const doc = lasaTest.reader.loadedDoc(index);
+              const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+              let text = '';
+              while (walker.nextNode()) {
+                const parent = walker.currentNode.parentNode.localName;
+                if (parent !== 'script' && parent !== 'style') text += walker.currentNode.data;
+              }
+              return text;
+            }""", rows[0][0])
+            check(chapter[rows[0][1]:rows[0][1] + rows[0][2]] == 'The morning was quiet',
+                  'start och length gäller kapitlets text (all text i body, som på iPaden)')
+        page.wait_for_timeout(300)
+        page.screenshot(path=os.path.join(out, "f08-markering-epub.png"))
+        page.keyboard.press('b')
+        check(wait_for(lambda: len(db_rows(page, "SELECT section FROM bookmarks WHERE deleted = 0")) == 2), 'bokmärke i EPUB')
+    back_to_library(page)
+
+
+STEPS = [search_in_books, shortcuts, highlights_and_bookmarks]
 
 
 def main():
