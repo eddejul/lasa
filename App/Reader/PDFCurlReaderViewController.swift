@@ -76,7 +76,8 @@ final class PDFCurlReaderViewController: UIViewController {
         guard let document = PDFDocument(url: book.url),
               !document.isLocked,
               document.pageCount > 0,
-              let renderer = PDFPageRenderer(url: book.url, pageCount: document.pageCount) else {
+              let renderer = PDFPageRenderer(url: book.url, pageCount: document.pageCount,
+                                             cacheKey: Self.diskCacheKey(for: book)) else {
             return nil
         }
         self.book = book
@@ -1465,7 +1466,60 @@ extension PDFCurlReaderViewController {
         _ = await waitForImages()
     }
 
+    /// Nyckeln för sidbilderna på disk (G5): bokens id, och filens storlek och ändringstid, så att en ny
+    /// version av filen (som behållit bokens id) inte visar gamla bilder.
+    static func diskCacheKey(for book: Book) -> String {
+        let values = try? book.url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let size = values?.fileSize ?? 0
+        let date = Int(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)
+        return "\(book.id)-\(size)-\(date)"
+    }
+
+    /// G5: en fotad PDF (en stor JPEG per sida). Första varvet ritas sidorna utan förritning, andra varvet
+    /// kommer de från disken. Tiderna hamnar i självtestets logg och i loggen i Filer.
+    fileprivate func selfTestPhotoPDF() async {
+        renderer.prefillEnabled = false
+        _ = await waitForImages()
+        SelfTest.saveScreen(view, name: "01-foto")
+        renderer.resetTimes()
+        for _ in 0..<6 {
+            turnPage(forward: true)
+            await pause(1.2)
+        }
+        _ = await waitForImages()
+        await renderer.waitUntilIdle()
+        let drawn = renderer.statsSummary
+        let stored = renderer.diskCount()
+
+        renderer.resetTimes()
+        renderer.forgetImagesInMemory()
+        jump(to: 0)
+        _ = await waitForImages()
+        for _ in 0..<6 {
+            turnPage(forward: true)
+            await pause(1.2)
+        }
+        _ = await waitForImages()
+        let fromDisk = renderer.statsSummary
+
+        renderer.prefillEnabled = true
+        turnPage(forward: true)
+        await pause(1.0)
+        await renderer.waitUntilIdle()
+        let line = "Fotad PDF med \(document.pageCount) sidor. Första varvet (ritas): \(drawn) "
+            + "Sidbilder på disken efter första varvet: \(stored). Andra varvet (minnet tömt): \(fromDisk) "
+            + "Med förritning: \(renderer.diskCount()) sidbilder på disken."
+        SelfTest.log(line)
+        AppLog.shared.write("Självtest G5: " + line)
+        SelfTest.saveScreen(view, name: "02-foto-senare")
+    }
+
     fileprivate func runSelfTest() async {
+        if SelfTest.bookName == "foto.pdf" {
+            await selfTestPhotoPDF()
+            SelfTest.finish()
+            return
+        }
         let saved = AnnotationStore.shared.totalCounts()
         SelfTest.log("PDF med \(document.pageCount) sidor. Sparat från tidigare starter: \(saved.highlights) markeringar, "
                      + "\(saved.notes) anteckningar, \(saved.bookmarks) bokmärken")

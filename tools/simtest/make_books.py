@@ -337,6 +337,77 @@ def make_pdf(path, rng):
     path.write_bytes(bytes(data))
 
 
+def make_photo_pdf(path, rng):
+    """G5: en fotad PDF som Edvins kamerafoton av kursböcker: tolv sidor, var och en en stor JPEG
+    (2400 x 3200) utan textlager. Bilden görs som BMP och omvandlas till JPEG med macOS sips.
+    Varje sida har en egen kopia av bilden, så att PDFKit avkodar varje sida för sig."""
+    import subprocess
+    import tempfile
+    width, height = 2400, 3200
+    row_size = width * 3
+    rows = []
+    for variant in range(48):
+        row = bytearray(row_size)
+        base = 205 + variant % 30
+        for x in range(0, width):
+            shade = base - (x * 40) // width + rng.randint(-12, 12)
+            if variant % 7 == 0 and 200 < x < 2200 and rng.random() < 0.35:
+                shade = 40 + rng.randint(0, 30)
+            shade = max(0, min(255, shade))
+            row[x * 3:x * 3 + 3] = bytes((shade - 8 if shade > 8 else shade, shade, shade + 6 if shade < 249 else shade))
+        rows.append(bytes(row))
+    pixels = bytearray()
+    for y in range(height):
+        pixels += rows[(y * 7 + (y // 60) * 13) % len(rows)]
+    header = b"BM" + (54 + len(pixels)).to_bytes(4, "little") + b"\0\0\0\0" + (54).to_bytes(4, "little")
+    info = ((40).to_bytes(4, "little") + width.to_bytes(4, "little") + height.to_bytes(4, "little")
+            + (1).to_bytes(2, "little") + (24).to_bytes(2, "little") + b"\0" * 24)
+    with tempfile.TemporaryDirectory() as folder:
+        bmp = Path(folder) / "sida.bmp"
+        jpg = Path(folder) / "sida.jpg"
+        bmp.write_bytes(header + info + bytes(pixels))
+        result = subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "80", str(bmp), "--out", str(jpg)],
+                                capture_output=True)
+        if result.returncode != 0 or not jpg.exists():
+            print("sips saknas, ingen fotad PDF")
+            return
+        image = jpg.read_bytes()
+
+    objects = []
+
+    def add(body):
+        objects.append(body)
+        return len(objects)
+
+    catalog = add(None)
+    page_tree = add(None)
+    kids = []
+    page_w, page_h = 595, 793
+    for number in range(12):
+        xobject = add(("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB "
+                       "/BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n" % (width, height, len(image)))
+                      .encode("ascii") + image + b"\nendstream")
+        stream = ("q %d 0 0 %d 0 0 cm /Im%d Do Q" % (page_w, page_h, number)).encode("ascii")
+        contents = add(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+        kids.append(add(("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] "
+                         "/Resources << /XObject << /Im%d %d 0 R >> >> /Contents %d 0 R >>"
+                         % (page_tree, page_w, page_h, number, xobject, contents)).encode("ascii")))
+    objects[catalog - 1] = ("<< /Type /Catalog /Pages %d 0 R >>" % page_tree).encode("ascii")
+    objects[page_tree - 1] = ("<< /Type /Pages /Kids [%s] /Count %d >>"
+                              % (" ".join(f"{kid} 0 R" for kid in kids), len(kids))).encode("ascii")
+    data = bytearray(b"%PDF-1.4\n%\xe5\xe4\xf6\n")
+    offsets = []
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(data))
+        data += b"%d 0 obj\n" % index + body + b"\nendobj\n"
+    xref = len(data)
+    data += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        data += b"%010d 00000 n \n" % offset
+    data += b"trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, catalog, xref)
+    path.write_bytes(bytes(data))
+
+
 def main():
     folder = Path(sys.argv[1] if len(sys.argv) > 1 else "build/testbooks")
     folder.mkdir(parents=True, exist_ok=True)
@@ -346,6 +417,8 @@ def main():
     make_md(folder / "test.md", rng)
     make_rtf(folder / "test.rtf", rng)
     make_pdf(folder / "test.pdf", rng)
+    if sys.platform == "darwin":
+        make_photo_pdf(folder / "foto.pdf", random.Random(11))
     for item in sorted(folder.iterdir()):
         print(item.name, item.stat().st_size)
 

@@ -50,7 +50,8 @@ plistlib.dump({"location.test.txt": "0|0.0", "positionDate.test.txt": 1700000000
 PLIST
 
 status=0
-for BOOK in test.epub test.md test.txt test.rtf test.pdf; do
+for BOOK in test.epub test.md test.txt test.rtf test.pdf foto.pdf; do
+  [ -f "$BOOKS/$BOOK" ] || { echo "== $BOOK saknas, hoppar över"; continue; }
   STEM="${BOOK//./-}"
   echo "== $BOOK"
   rm -f "$DATA/Documents/selftest/$STEM.klar"
