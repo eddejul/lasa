@@ -180,6 +180,15 @@ final class ReadingLog {
         return ReadingWeek.ranges(positions, step: step)
     }
 
+    /// Nycklarna för bokens lästa sidor (PDF: sidans plats i filen), till Innehåll.
+    func readPageKeys(book: String) -> Set<String> {
+        var keys = Set(pending.keys.filter { $0.book == book }.map(\.page))
+        AnnotationStore.shared.readBooks { db in
+            try db.query("SELECT DISTINCT page FROM reading_log WHERE book = ?", [book]) { _ = keys.insert($0.string(0)) }
+        }
+        return keys
+    }
+
     // MARK: Dagsmålet
 
     private static let goalKey = "reading.goal_minutes"

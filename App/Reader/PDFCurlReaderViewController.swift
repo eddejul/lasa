@@ -825,6 +825,11 @@ final class PDFCurlReaderViewController: UIViewController {
 
     @objc private func showContents() {
         let outline = OutlineViewController(document: document, currentIndex: currentIndex)
+        outline.pageText = { [weak self] index in
+            self?.printedLabel(for: index) ?? String(index + 1)
+        }
+        outline.pageCount = document.pageCount
+        outline.readPages = Set(ReadingLog.shared.readPageKeys(book: bookKey).compactMap { Int($0) })
         outline.onSelectPage = { [weak self] index in
             self?.dismiss(animated: true)
             self?.hop(to: index)

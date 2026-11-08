@@ -13,6 +13,11 @@ final class OutlineViewController: UITableViewController {
 
     var onSelectPage: ((Int) -> Void)?
     var onGoToPage: (() -> Void)?
+    /// K2: bokens sidnummer för en sida i filen. Nil: PDF:ens egen sidetikett.
+    var pageText: ((Int) -> String)?
+    /// K10: sidorna (från 0) som läsloggen räknat som lästa. Ett kapitel visar läst eller hur mycket.
+    var readPages: Set<Int> = []
+    var pageCount = 0
 
     private static let cellID = "entry"
     private static let maxEntries = 3000
@@ -92,7 +97,10 @@ final class OutlineViewController: UITableViewController {
 
         var content = UIListContentConfiguration.valueCell()
         content.text = entry.title
-        content.secondaryText = entry.pageLabel
+        content.secondaryText = entry.pageIndex.flatMap { pageText?($0) } ?? entry.pageLabel
+        if let read = readText(row: indexPath.row) {
+            content.secondaryText = [content.secondaryText, read].compactMap { $0 }.joined(separator: ", ")
+        }
         content.textProperties.numberOfLines = 0
         content.textProperties.font = .preferredFont(forTextStyle: entry.level == 0 ? .headline : .body)
         if isCurrent {
@@ -114,6 +122,18 @@ final class OutlineViewController: UITableViewController {
         tableView.deselectRow(at: indexPath, animated: true)
         guard let index = entries[indexPath.row].pageIndex else { return }
         onSelectPage?(index)
+    }
+
+    /// K10: läst, eller hur stor del av kapitlet som lästs (till nästa kapitel på samma eller högre nivå).
+    private func readText(row: Int) -> String? {
+        guard !readPages.isEmpty, let start = entries[row].pageIndex else { return nil }
+        let level = entries[row].level
+        let next = entries[(row + 1)...].first { $0.level <= level && ($0.pageIndex ?? -1) > start }?.pageIndex
+        let end = max(next ?? pageCount, start + 1)
+        let read = (start..<end).filter { readPages.contains($0) }.count
+        guard read > 0 else { return nil }
+        let share = Double(read) / Double(end - start)
+        return share >= 0.9 ? "läst" : "\(Int((share * 100).rounded())) % läst"
     }
 
     // MARK: Bokmärkena i PDF:en
