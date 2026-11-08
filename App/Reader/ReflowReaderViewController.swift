@@ -1018,8 +1018,22 @@ final class ReflowReaderViewController: UIViewController {
                 let waiting = self.visiblePages.filter { page in
                     !page.isBlank && (!page.hasImage || page.isStale) && !page.showsFailure
                 }
+                // Edvin 8 nov kväll: bladen hade bilder, men bilderna var tomma, så kontrollen såg inget fel.
+                // Ett blad som visar en bild utan text räknas nu också som väntande och får en ny bild.
+                var emptyPages: [ReflowPageViewController] = []
+                for page in self.visiblePages where !page.isBlank && page.hasImage && !page.isStale {
+                    guard let image = page.currentImage else { continue }
+                    let paper = self.theme.paperColor
+                    let empty = await Task.detached(priority: .utility) {
+                        SnapshotInk.isBlank(image, paper: paper)
+                    }.value
+                    if empty {
+                        emptyPages.append(page)
+                    }
+                }
+                guard !Task.isCancelled else { return }
                 let seconds = Int((CACurrentMediaTime() - started).rounded())
-                if waiting.isEmpty, self.pendingJump == nil {
+                if waiting.isEmpty, emptyPages.isEmpty, self.pendingJump == nil {
                     if attempt > 1 {
                         AppLog.shared.write("Aa (\(change)): sidan syntes efter cirka \(seconds) s")
                     }
@@ -1028,6 +1042,7 @@ final class ReflowReaderViewController: UIViewController {
                 let state = self.visiblePages.map { page in
                     "kap \(page.chapter + 1) blad \(page.slot + 1)\(page.hasImage ? "" : " utan bild")"
                         + "\(page.isStale ? " gammal" : "")"
+                        + "\(emptyPages.contains { $0 === page } ? " tom bild" : "")"
                 }.joined(separator: ", ")
                 AppLog.shared.write("Aa (\(change)): efter \(seconds) s väntar \(waiting.count) blad (\(state)), "
                                     + "hopp \(self.pendingJump.map { "till kap \($0.chapter + 1)" } ?? "inget"), "
@@ -1041,8 +1056,13 @@ final class ReflowReaderViewController: UIViewController {
                     self.deferredShow = nil
                     self.show(chapter: deferred.chapter, page: deferred.page)
                 }
+                for page in emptyPages {
+                    if let number = page.page {
+                        self.renderer?.discard(ReflowPage(chapter: page.chapter, page: number))
+                    }
+                }
                 self.keepNeighbours()
-                waiting.forEach { $0.reloadImage() }
+                (waiting + emptyPages).forEach { $0.reloadImage() }
             }
         }
     }
@@ -2433,6 +2453,8 @@ extension ReflowReaderViewController {
             ("Ojusterat", [.justify(false)]),
             ("Sepia", [.theme(.sepia)]),
             ("Tätt efter varandra", [.larger, .theme(.dark), .font(.charter), .margin(2), .theme(.paper), .smaller]),
+            // Edvin 8 nov kväll: sidan blev blank för gott vid byte mellan Vitt och Mörkt.
+            ("Vitt och Mörkt växlat", [.theme(.white), .theme(.dark), .theme(.white), .theme(.dark)]),
             ("Återställ", [.reset]),
         ]
         var blank = 0
@@ -2452,6 +2474,12 @@ extension ReflowReaderViewController {
             SelfTest.log("Aa med rutan öppen, \(name): \(shown ? "sidan klar" : "FEL, sidan kom inte") efter "
                          + "\(milliseconds) ms, bläck \(String(format: "%.1f", ink)) %"
                          + "\(ink < 0.5 ? " FEL, BLANK" : ""). Nyckel \(typography.key), bakgrund \(theme.rawValue)")
+            if theme.isDark, let styles = renderer?.webViewStyles {
+                // Webbvyerna ska behålla ljust läge även när läsaren är mörk (färgerna kommer ur vår stil).
+                let dark = styles.filter { $0 == .dark }.count
+                SelfTest.log("Aa med rutan öppen, \(name): läsaren mörk, webbvyer i mörkt läge \(dark) av "
+                             + "\(styles.count)\(dark > 0 ? " FEL" : "")")
+            }
         }
         logState("Aa med rutan öppen, sist")
         SelfTest.saveScreen(view, name: "16-aa-oppen")

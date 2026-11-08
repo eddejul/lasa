@@ -77,6 +77,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Tryckzonerna (8 nov) ligger i `ReaderTapZones` (`WordPressGesture.swift`, G12): bläddring i ett kantband om 18 procent av bredden (56 till 110 punkter), resten är menyn. Ändra där, inte i läsarna.
 * EPUB och text: marginalen upptill och nedtill (`makeLayout`) rymmer menyradens fasta höjd (`navigationBarHeight`) och nederkantens (`ReaderBottomBar.height`), så att menyn bara ligger över marginalen. Fasta mått, aldrig menyns läge.
 * Accenten i `Theme` är neutral grå (Edvin 8 nov, som Apple Books), inte blå. Vitt sätter textfärg i EPUB. Efter en ändring i Aa kontrollerar `watchVisiblePages` att bladen får nya bilder och skriver annars i `AppLog`. Självtestet gör ändringarna via rutan med rutan öppen och räknar bläck (`SelfTest.inkPercent`).
+* EPUB-läsarens webbvyer har alltid ljust läge (`overrideUserInterfaceStyle = .light` i `ChapterView`). Bytet mellan Vitt och Mörkt slog annars om ljusläget i alla tre webbvyerna samtidigt, kapitlet hann inte bli klart på iPaden och sidan blev blank för gott (Edvin 8 nov kväll). Färgerna sätts bara av `ReflowStyle`. `SnapshotInk.isBlank` räknar både bara papper och en enda färg (även helt genomskinligt) som tom, och en tom sidbild tas om efter 0,5, 1 och 1,5 sekunder.
 * Markeringsraden (U5, `HighlightMenuViewController`) pekar på markeringens hela ruta (`markRects(id:)` på sidorna) och läggs ovanför den, eller under när det inte finns plats.
 
 ## EPUB och textfiler (fas 3)

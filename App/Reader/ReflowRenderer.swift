@@ -102,8 +102,11 @@ final class ReflowRenderer {
     /// Självtestet: så många mätningar i följd av ett kapitel som ska misslyckas.
     private var simulatedFailures: [Int: Int] = [:]
     private var images: [ReflowPage: ReflowSnapshot] = [:]
-    /// Edvin 8 nov: en sidbild med bara papper (ingen text) tas om, högst två gånger per sida och stil.
+    /// Edvin 8 nov: en sidbild utan text (bara papper eller en enda färg) tas om, högst tre gånger per sida och stil.
     private var blankRetries: [ReflowPage: Int] = [:]
+    private static let blankRetryLimit = 3
+    /// Tidigast då en sida utan text tas om (pausen mellan försöken).
+    private var blankRetryNotBefore: [ReflowPage: CFTimeInterval] = [:]
     private var recentlyUsed: [ReflowPage] = []
     private var workingSet: [ReflowPage] = []
     private var waiting: [ReflowPage: [(ReflowSnapshot) -> Void]] = [:]
@@ -163,6 +166,7 @@ final class ReflowRenderer {
         images.removeAll()
         recentlyUsed.removeAll()
         blankRetries.removeAll()
+        blankRetryNotBefore.removeAll()
 
         if layoutChanged {
             counts.removeAll()
@@ -429,7 +433,11 @@ final class ReflowRenderer {
 
         // Sidbilder: först de som syns, sedan förritning.
         let wanted = waitingOrder + (isTurning ? [] : workingSet)
+        let now = CACurrentMediaTime()
         for page in wanted where images[page] == nil {
+            if let notBefore = blankRetryNotBefore[page], now < notBefore {
+                continue
+            }
             guard let view = readyView(for: page.chapter), !view.busy, view.styleKey == styleKey else { continue }
             guard page.page >= 0, page.page < view.pageCount else {
                 waiting[page] = nil
@@ -674,26 +682,36 @@ final class ReflowRenderer {
                     self.pump()
                     return
                 }
-                // Edvin 8 nov: sidan kunde bli blank efter en ändring i Aa. En bild med bara papper sparas inte
-                // de två första gångerna, så att sidan tas om. Kontrollen görs utanför huvudtråden.
+                // Edvin 8 nov: sidan kunde bli blank efter en ändring i Aa. En bild utan text (bara papper eller en
+                // enda färg) sparas inte de tre första gångerna. Sidan tas om efter en paus som växer (0,5, 1 och
+                // 1,5 sekunder), så att webbvyn hinner rita klart. Kontrollen görs utanför huvudtråden.
                 let paper = self.theme.paperColor
                 let tries = self.blankRetries[page] ?? 0
                 Task { @MainActor [weak self, weak view] in
-                    var blank = false
-                    if tries < 2 {
-                        blank = await Task.detached(priority: .userInitiated) {
-                            SnapshotInk.isBlank(image, paper: paper)
-                        }.value
-                    }
+                    let blank = await Task.detached(priority: .userInitiated) {
+                        SnapshotInk.isBlank(image, paper: paper)
+                    }.value
                     guard let self = self, let view = view, self.endJob(job, on: view) else { return }
-                    if blank {
+                    if blank, tries < Self.blankRetryLimit {
+                        let delay = 0.5 * Double(tries + 1)
                         self.blankRetries[page] = tries + 1
+                        self.blankRetryNotBefore[page] = CACurrentMediaTime() + delay
                         AppLog.shared.write("Sidbild utan text (kapitel \(page.chapter + 1), sida \(page.page + 1)), "
-                                            + "tas om, försök \(tries + 1)")
+                                            + "tas om efter \(String(format: "%.1f", delay)) s, försök \(tries + 1)")
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                            self?.pump()
+                        }
                         self.pump()
                         return
                     }
+                    if blank {
+                        // En sida som verkligen är tom (det finns sådana i EPUB:er) visas efter försöken.
+                        AppLog.shared.write("Sidbild utan text (kapitel \(page.chapter + 1), sida \(page.page + 1)) "
+                                            + "visas efter \(tries) nya försök")
+                    }
                     self.blankRetries[page] = nil
+                    self.blankRetryNotBefore[page] = nil
                     self.snapshotTimes = Array((self.snapshotTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(50))
                     self.store(ReflowSnapshot(image: image, links: links, marks: marks), for: page)
                     self.pump()
@@ -735,7 +753,11 @@ final class ReflowRenderer {
     }
 }
 
-/// Om en sidbild bara är papper (ingen text, ingen bild). Körs utanför huvudtråden.
+/// Om en sidbild saknar text och bild: bara papper, eller en enda färg över hela bilden (helt genomskinlig,
+/// vit i Mörkt och så vidare). Körs utanför huvudtråden.
+///
+/// Edvin 8 nov kväll: den första kontrollen jämförde bara med papperets färg. En genomskinlig eller helvit
+/// bild efter ett byte till Mörkt skiljer sig från papperet och godkändes, och sidan stod då blank för gott.
 enum SnapshotInk {
 
     static func isBlank(_ image: UIImage, paper: UIColor) -> Bool {
@@ -750,13 +772,23 @@ enum SnapshotInk {
             guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
                                           bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
                                           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.clear(CGRect(x: 0, y: 0, width: width, height: height))
             context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
             let bytes = buffer.bindMemory(to: UInt8.self)
+            // Den första punkten är sidans hörn, alltid marginal.
+            let first = [Int(bytes[0]), Int(bytes[1]), Int(bytes[2]), Int(bytes[3])]
+            var onlyPaper = true
+            var oneColor = true
             var index = 0
             while index < width * height * 4 {
-                let difference = abs(Int(bytes[index]) - reference[0]) + abs(Int(bytes[index + 1]) - reference[1])
-                    + abs(Int(bytes[index + 2]) - reference[2])
-                if difference > 30 {
+                let r = Int(bytes[index]), g = Int(bytes[index + 1]), b = Int(bytes[index + 2]), a = Int(bytes[index + 3])
+                if onlyPaper, abs(r - reference[0]) + abs(g - reference[1]) + abs(b - reference[2]) > 30 {
+                    onlyPaper = false
+                }
+                if oneColor, abs(r - first[0]) + abs(g - first[1]) + abs(b - first[2]) + abs(a - first[3]) > 30 {
+                    oneColor = false
+                }
+                if !onlyPaper && !oneColor {
                     return false
                 }
                 index += 4
@@ -875,6 +907,11 @@ final class ChapterView: NSObject, WKNavigationDelegate {
         webView.navigationDelegate = self
         webView.isUserInteractionEnabled = false
         webView.isOpaque = false
+        // Edvin 8 nov kväll: sidan blev blank för gott vid byte mellan Vitt och Mörkt, men inte mellan två ljusa
+        // bakgrunder. Bara det bytet slår om läsarens ljusläge, och då gjorde alla tre dolda webbvyer om sina
+        // kapitel samtidigt för det nya läget (loggen: "Kapitel 8 kunde inte laddas eller mätas" direkt efter
+        // bytet). Färgerna kommer helt ur vår egen stil (ReflowStyle), så webbvyerna behåller alltid ljust läge.
+        webView.overrideUserInterfaceStyle = .light
         webView.allowsLinkPreview = false
         webView.accessibilityElementsHidden = true
         let scrollView = webView.scrollView
@@ -979,6 +1016,19 @@ extension ReflowRenderer {
             self?.invalidate(chapter: chapter)
             completion()
         }
+    }
+
+    /// Webbvyernas ljusläge, till självtestet. Ska alltid vara ljust (se `ChapterView`).
+    var webViewStyles: [UIUserInterfaceStyle] {
+        views.map { $0.webView.traitCollection.userInterfaceStyle }
+    }
+
+    /// Kastar en sidbild som visade sig vara tom, så att bladet får en ny när det ber om den (Edvin 8 nov kväll).
+    func discard(_ page: ReflowPage) {
+        images[page] = nil
+        recentlyUsed.removeAll { $0 == page }
+        blankRetries[page] = nil
+        blankRetryNotBefore[page] = nil
     }
 
     /// Kastar ett kapitels färdiga sidbilder. De som syns görs om när bladen ber om dem.
