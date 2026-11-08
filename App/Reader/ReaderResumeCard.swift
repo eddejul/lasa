@@ -75,10 +75,12 @@ final class ReaderResumeCard: UIView {
                 lines.append(highlight.text)
             }
         }
+        if let last = stack.arrangedSubviews.last {
+            stack.setCustomSpacing(18, after: last)
+        }
         let hint = label("Tryck för att läsa vidare", font: .systemFont(ofSize: 12, weight: .medium), color: palette.inkFaint)
         hint.textAlignment = .center
         stack.addArrangedSubview(hint)
-        stack.setCustomSpacing(18, before: hint)
         summary = lines.joined(separator: " | ")
 
         let width = card.widthAnchor.constraint(equalTo: widthAnchor, constant: -48)
