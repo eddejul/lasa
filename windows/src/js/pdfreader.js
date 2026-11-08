@@ -1,6 +1,7 @@
 // PDF-läsaren: pdf.js ritar sidorna på en canvas och lägger ett osynligt textlager ovanpå, så att ord
 // kan hittas och markeras. Uppslag med två sidor när fönstret är brett (omslaget ensamt till höger,
-// sedan 2 och 3, 4 och 5, som i en tryckt bok och som på iPaden), annars en sida.
+// sedan 2 och 3, 4 och 5, som i en tryckt bok och som på iPaden), annars en sida. Bläddra visar en sida
+// eller ett uppslag i taget, Rulla (W10) alla sidor efter varandra i en lång remsa.
 //
 // Visning: Hela sidan (sidan eller uppslaget ryms i fönstret) eller Sidbredd (en sida så bred som
 // fönstret, och man rullar nedåt). Automatiskt väljer Sidbredd när en hel sida skulle bli för liten
@@ -17,6 +18,9 @@ const SCROLLBAR = 18;
 // En sida åt gången: högst 4. Uppslag: högst 6 (tre uppslag).
 const MAX_CACHED_PAGES = 4;
 const MAX_CACHED_PAGES_SPREAD = 6;
+// Rulla (W10): sidorna som syns och några runt dem. En sida per rad: högst 6. Två sidor per rad: högst 10.
+const SCROLL_CACHED_PAGES = 6;
+const SCROLL_CACHED_PAGES_TWO = 10;
 // Uppslag när fönstrets yta är så här mycket bredare än hög.
 const SPREAD_RATIO = 1.15;
 // Under den här skalan (1 = PDF:ens egen storlek) blir en hel sida svår att läsa, och Automatiskt
@@ -31,9 +35,14 @@ export const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const MAX_CANVAS_PIXELS = 8e6;
 
 export class PdfReader {
-  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, spread = 'auto', getMarks = null, onSelect = null,
-    onMarkClick = null }) {
+  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, spread = 'auto', flow = 'paged', getMarks = null,
+    onSelect = null, onMarkClick = null }) {
     this.kind = 'pdf';
+    // Bläddra ('paged', en sida eller ett uppslag i taget) eller Rulla ('scroll', alla sidor efter varandra).
+    this.flow = flow === 'scroll' ? 'scroll' : 'paged';
+    this.inflight = new Map();
+    this.near = new Set();
+    this.onScroll = this.onScroll.bind(this);
     this.spread = ['auto', 'one', 'two'].includes(spread) ? spread : 'auto';
     this.stage = stage;
     this.onRelocate = onRelocate;
@@ -95,13 +104,14 @@ export class PdfReader {
 
   /** Om sidan rullas (Sidbredd, läsbar storlek eller inzoomat) i stället för att rymmas i fönstret. */
   get scrollMode() {
-    return this.effectiveFit !== 'page' || this.zoom > 1;
+    return this.flow === 'scroll' || this.effectiveFit !== 'page' || this.zoom > 1;
   }
 
   /** Uppslag (två sidor bredvid varandra). spread: 'auto' (när fönstret är brett och sidan ryms),
    *  'one' (aldrig) eller 'two' (alltid, utom när man zoomar in). */
   get spreadMode() {
     if (this.count < 2 || this.spread === 'one') return false;
+    if (this.flow === 'scroll') return this.rowSize() === 2;
     if (this.spread === 'two') return this.zoom === 1;
     const { width, height } = this.stage.getBoundingClientRect();
     return !this.scrollMode && width > height * SPREAD_RATIO;
@@ -127,11 +137,22 @@ export class PdfReader {
     return [left, left + 1 < this.count ? left + 1 : null];
   }
 
-  async setView({ fit = this.fit, zoom = this.zoom, spread = this.spread }) {
+  async setView({ fit = this.fit, zoom = this.zoom, spread = this.spread, flow = this.flow }) {
+    const index = this.current[0] ?? 0;
+    const offset = this.rowElements ? this.rowOffset() : 0;
     this.fit = fit;
     this.spread = ['auto', 'one', 'two'].includes(spread) ? spread : 'auto';
     this.zoom = ZOOM_STEPS.includes(zoom) ? zoom : 1;
-    await this.show(this.current[0], { keepScroll: true });
+    this.flow = flow === 'scroll' ? 'scroll' : 'paged';
+    if (this.flow === 'scroll') {
+      await this.layoutScroll(index, { offset });
+      return;
+    }
+    if (this.rowElements) {
+      this.teardownScroll();
+      this.spreadElement.replaceChildren();
+    }
+    await this.show(index, { keepScroll: !offset });
   }
 
   zoomStep(direction) {
@@ -247,6 +268,7 @@ export class PdfReader {
       canvas.width = 0;
       canvas.height = 0;
     }
+    if (this.flow === 'scroll') entry.element.remove();
     this.cache.delete(index);
   }
 
@@ -254,6 +276,12 @@ export class PdfReader {
    *  rullar bakåt in på sidan). keepScroll: behåll var på sidan man är (när fönstret eller zoomen ändras). */
   async show(index, { atEnd = false, keepScroll = false } = {}, attempt = 0) {
     if (!this.pdf) return;
+    if (this.flow === 'scroll') {
+      index = Math.min(Math.max(0, index), this.count - 1);
+      // Ny storlek på fönstret (keepScroll) eller ingen remsa än: bygg remsan, annars rulla dit.
+      if (!this.rowElements || keepScroll) return this.layoutScroll(index, { offset: keepScroll ? this.rowOffset() : 0, atEnd });
+      return this.showScroll(index, { atEnd });
+    }
     const token = ++this.token;
     index = Math.min(Math.max(0, index), this.count - 1);
     this.target = index;
@@ -310,11 +338,233 @@ export class PdfReader {
       place: { pages: [...this.current] } };
   }
 
+  // Rulla (W10): alla sidor efter varandra i en lång remsa, en eller två sidor per rad (uppslaget som i Bläddra,
+  // omslaget ensamt till höger). Varje sida har en plats med sin storlek (uppskattad från första sidan tills
+  // sidan mätts), och bara sidorna som syns och några runt dem ritas (högst SCROLL_CACHED_PAGES). Övriga
+  // platser är tomma papper. Webbläsarens scroll anchoring håller kvar det man läser när en plats ändrar höjd.
+
+  /** Sidor per rad i Rulla. */
+  rowSize() {
+    if (this.count < 2 || this.spread === 'one' || this.zoom !== 1) return 1;
+    if (this.spread === 'two') return 2;
+    if (this.fit === 'width') return 1;
+    const { width, height } = this.stage.getBoundingClientRect();
+    const size = this.sizes.get(0) ?? { width: 595, height: 842 };
+    const half = (width - 2 * PADDING - SCROLLBAR) / 2;
+    return width > height * SPREAD_RATIO && half / size.width >= READABLE_SCALE ? 2 : 1;
+  }
+
+  /** Skalan för en sida i Rulla (samma räkning som scaleFor, men utan att vänta på sidan). */
+  scrollScale(size, perRow) {
+    const { width, height } = this.stage.getBoundingClientRect();
+    const availableWidth = Math.max(50, (width - 2 * PADDING - SCROLLBAR) / perRow);
+    const availableHeight = Math.max(50, height - 2 * PADDING);
+    let fitted;
+    if (this.fit === 'page') fitted = Math.min(availableWidth / size.width, availableHeight / size.height);
+    else if (this.fit === 'width') fitted = availableWidth / size.width;
+    else fitted = Math.min(availableWidth / size.width, AUTO_MAX_SCALE);
+    return fitted * this.zoom;
+  }
+
+  scrollLimit() {
+    return this.perRow === 2 ? SCROLL_CACHED_PAGES_TWO : SCROLL_CACHED_PAGES;
+  }
+
+  rowOf(page) {
+    return this.perRow === 2 ? (page === 0 ? 0 : Math.floor((page + 1) / 2)) : page;
+  }
+
+  /** Var i raden som syns man är (0 överst, 1 nederst), för att hamna rätt när remsan byggs om. */
+  rowOffset() {
+    const row = this.rowElements?.[this.rowOf(this.current[0] ?? 0)];
+    if (!row || !row.offsetHeight) return 0;
+    return Math.min(Math.max((this.spreadElement.scrollTop - row.offsetTop + PADDING) / row.offsetHeight, 0), 1);
+  }
+
+  sizeSlot(slot, page) {
+    const size = this.sizes.get(page) ?? this.sizes.get(0) ?? { width: 595, height: 842 };
+    const scale = this.scrollScale(size, this.perRow);
+    slot.style.width = `${Math.floor(size.width * scale)}px`;
+    slot.style.height = `${Math.floor(size.height * scale)}px`;
+  }
+
+  /** Bygger remsan och går till sidan `index` (offset: var i raden, se rowOffset). */
+  async layoutScroll(index, { offset = 0, atEnd = false } = {}) {
+    const token = ++this.token;
+    await this.size(0);
+    if (token !== this.token || !this.pdf) return;
+    this.effectiveFit = this.fit === 'auto' ? 'readable' : this.fit;
+    this.teardownScroll();
+    this.perRow = this.rowSize();
+    const view = this.spreadElement;
+    view.classList.remove('two');
+    view.classList.add('scroll', 'continuous');
+    this.slots = new Array(this.count).fill(null);
+    this.rowPages = [];
+    if (this.perRow === 2) {
+      this.rowPages.push([null, 0]);
+      for (let page = 1; page < this.count; page += 2) this.rowPages.push([page, page + 1 < this.count ? page + 1 : null]);
+    } else {
+      for (let page = 0; page < this.count; page++) this.rowPages.push([page]);
+    }
+    this.rowElements = this.rowPages.map((pages, row) => el('div', { class: `pdf-row${this.perRow === 2 ? ' two' : ''}`,
+      dataset: { row } }, pages.map((page, i) => {
+      if (page === null) {
+        const blank = el('div', { class: 'pdf-slot empty' });
+        this.sizeSlot(blank, pages[1 - i] ?? 0);
+        return blank;
+      }
+      const slot = el('div', { class: 'pdf-slot', dataset: { slot: page } });
+      this.sizeSlot(slot, page);
+      this.slots[page] = slot;
+      return slot;
+    })));
+    view.replaceChildren(...this.rowElements);
+    this.near = new Set();
+    this.observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const page = Number(entry.target.dataset.slot);
+        if (entry.isIntersecting) this.near.add(page);
+        else this.near.delete(page);
+      }
+      this.scheduleRender();
+    }, { root: view, rootMargin: '100% 0px' });
+    for (const slot of this.slots) if (slot) this.observer.observe(slot);
+    view.addEventListener('scroll', this.onScroll, { passive: true });
+    await this.showScroll(index, { offset, atEnd });
+  }
+
+  /** Tar bort remsan (när man går över till Bläddra eller bygger om den). */
+  teardownScroll() {
+    this.observer?.disconnect();
+    this.observer = null;
+    this.spreadElement.removeEventListener('scroll', this.onScroll);
+    this.inflight = new Map();
+    for (const index of [...this.cache.keys()]) this.forget(index);
+    this.rowElements = null;
+    this.slots = null;
+    this.near = new Set();
+    this.spreadElement.classList.remove('continuous');
+  }
+
+  /** Rullar till sidan i remsan och ritar den (och sidan bredvid) direkt. */
+  async showScroll(index, { offset = 0, atEnd = false } = {}) {
+    const view = this.spreadElement;
+    const row = this.rowElements[this.rowOf(index)];
+    if (atEnd) view.scrollTop = row.offsetTop + row.offsetHeight - view.clientHeight;
+    else view.scrollTop = row.offsetTop - PADDING + offset * row.offsetHeight;
+    this.updateCurrent(true);
+    const token = this.token;
+    for (const page of this.current) {
+      try {
+        await this.renderSlot(page, token);
+      } catch (error) {
+        if (!['RenderingCancelledException', 'AbortException'].includes(error?.name)) throw error;
+      }
+    }
+  }
+
+  /** Raden högst upp i fönstret (en fjärdedel ned) är sidan man läser. */
+  updateCurrent(force = false) {
+    const view = this.spreadElement;
+    const rows = this.rowElements;
+    if (!rows?.length) return;
+    const probe = view.scrollTop + Math.min(view.clientHeight * 0.25, 160);
+    let low = 0;
+    let high = rows.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (rows[middle].offsetTop <= probe) low = middle;
+      else high = middle - 1;
+    }
+    const pages = this.rowPages[low].filter((page) => page !== null);
+    const key = pages.join(',');
+    if (!force && key === this.currentKey) return;
+    this.currentKey = key;
+    this.current = pages;
+    this.target = undefined;
+    this.onRelocate?.(this.location());
+  }
+
+  onScroll() {
+    if (this.scrollFrame) return;
+    this.scrollFrame = requestAnimationFrame(() => {
+      this.scrollFrame = 0;
+      this.updateCurrent();
+    });
+  }
+
+  /** Ritar en sida i sin plats. Samma sida ritas aldrig två gånger samtidigt. */
+  renderSlot(page, token) {
+    const inflight = this.inflight;
+    if (inflight.has(page)) return inflight.get(page);
+    const job = (async () => {
+      const slot = this.slots?.[page];
+      if (!slot) return;
+      const size = await this.size(page);
+      if (token !== this.token || this.slots?.[page] !== slot) return;
+      const entry = await this.pageElement(page, this.scrollScale(size, this.perRow));
+      if (token !== this.token || this.slots?.[page] !== slot) return;
+      if (entry.element.parentElement !== slot) {
+        slot.style.width = entry.element.style.width;
+        slot.style.height = entry.element.style.height;
+        slot.replaceChildren(entry.element);
+      }
+      this.paintMarks(page);
+    })().finally(() => {
+      if (inflight.get(page) === job) inflight.delete(page);
+    });
+    inflight.set(page, job);
+    return job;
+  }
+
+  /** Ritar sidorna nära fönstret, närmast sidan man läser först, och släpper de andra. */
+  scheduleRender() {
+    if (this.rendering) {
+      this.renderAgain = true;
+      return;
+    }
+    this.rendering = true;
+    (async () => {
+      try {
+        do {
+          this.renderAgain = false;
+          const token = this.token;
+          const wanted = this.wantedPages();
+          for (const page of wanted) {
+            if (token !== this.token || this.renderAgain) break;
+            if (this.cache.get(page)?.element.parentElement === this.slots?.[page]) continue;
+            try {
+              await this.renderSlot(page, token);
+            } catch (error) {
+              if (!['RenderingCancelledException', 'AbortException'].includes(error?.name)) console.warn(error);
+            }
+          }
+          if (token === this.token) this.trimScroll();
+        } while (this.renderAgain);
+      } finally {
+        this.rendering = false;
+      }
+    })();
+  }
+
+  wantedPages() {
+    const center = this.current[0] ?? 0;
+    return [...this.near].sort((a, b) => Math.abs(a - center) - Math.abs(b - center)).slice(0, this.scrollLimit());
+  }
+
+  trimScroll() {
+    const keep = new Set([...this.wantedPages(), ...this.current]);
+    for (const page of [...this.cache.keys()]) {
+      if (!keep.has(page) && !this.inflight.has(page)) this.forget(page);
+    }
+  }
+
   // Markeringar och sökträffar
 
   /** Ritar om markeringarna och sökträffen på sidorna som syns. */
   refreshMarks() {
-    for (const page of this.current) this.paintMarks(page);
+    for (const page of this.flow === 'scroll' ? [...this.cache.keys()] : this.current) this.paintMarks(page);
   }
 
   /** Rutor för ett teckenintervall på en sida, i sidans koordinater. Sidan måste synas. */
@@ -351,7 +601,7 @@ export class PdfReader {
 
   /** Markeringen under en punkt i fönstret, eller null. */
   markAt(x, y) {
-    for (const page of this.current) {
+    for (const page of this.flow === 'scroll' ? [...this.cache.keys()] : this.current) {
       const entry = this.cache.get(page);
       if (!entry?.markRects) continue;
       const origin = entry.element.getBoundingClientRect();
@@ -472,7 +722,7 @@ export class PdfReader {
   /** Visar sidan med träffen och ringar in den. */
   async showHit(hit) {
     this.searchHit = hit;
-    if (!this.current.includes(hit.section)) await this.show(hit.section);
+    if (this.flow === 'scroll' || !this.current.includes(hit.section)) await this.show(hit.section);
     else this.refreshMarks();
     this.scrollToMark(hit.section, hit.start, hit.end);
   }
@@ -533,6 +783,10 @@ export class PdfReader {
   }
 
   next() {
+    if (this.flow === 'scroll') {
+      const row = this.rowPages?.[this.rowOf(this.current[this.current.length - 1] ?? 0) + 1];
+      return row ? this.show(row.find((page) => page !== null)) : null;
+    }
     const pages = this.targetPages();
     const last = pages[pages.length - 1];
     if (last + 1 < this.count) return this.show(last + 1);
@@ -541,6 +795,10 @@ export class PdfReader {
 
   /** atEnd: börja längst ned på sidan före (när man rullar uppåt förbi sidans topp). */
   prev({ atEnd = false } = {}) {
+    if (this.flow === 'scroll') {
+      const row = this.rowPages?.[this.rowOf(this.current[0] ?? 0) - 1];
+      return row ? this.show(row.find((page) => page !== null)) : null;
+    }
     const first = this.targetPages()[0];
     if (first > 0) return this.show(first - 1, { atEnd });
     return null;
@@ -660,6 +918,8 @@ export class PdfReader {
   destroy() {
     this.token += 1;
     this.resizeObserver.disconnect();
+    this.observer?.disconnect();
+    this.spreadElement.removeEventListener('scroll', this.onScroll);
     this.stage.removeEventListener('dblclick', this.onPointer);
     this.stage.removeEventListener('contextmenu', this.onPointer);
     this.stage.removeEventListener('mouseup', this.onMouseUp);

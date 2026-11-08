@@ -298,13 +298,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .pdf-page { position: relative; flex: 0 0 auto; box-shadow: var(--shadow); background: #ffffff; }
 .pdf-page.empty { box-shadow: none; background: transparent; height: 1px; }
 .pdf-spread.two .pdf-page:not(.empty):first-child { box-shadow: -4px 2px 18px rgb(0 0 0 / 0.14), inset -10px 0 18px -14px rgb(0 0 0 / 0.35); }
+/* Rulla (W10): alla sidor efter varandra. Varje sida har en plats (pdf-slot) som är ett tomt papper tills sidan ritats. */
+.pdf-spread.continuous { display: block; overflow: auto; overflow-anchor: auto; }
+.pdf-row { display: flex; justify-content: safe center; width: max-content; min-width: 100%; margin: 0 0 16px; }
+.pdf-slot { position: relative; flex: 0 0 auto; box-shadow: var(--shadow); background: #ffffff; }
+.pdf-slot > .pdf-page { box-shadow: none; }
+.pdf-slot.empty { box-shadow: none; background: transparent; visibility: hidden; }
+.pdf-row.two .pdf-slot:not(.empty):first-child { box-shadow: -4px 2px 18px rgb(0 0 0 / 0.14), inset -10px 0 18px -14px rgb(0 0 0 / 0.35); }
 .pdf-paper { position: absolute; inset: 0; background: #ffffff; }
 .pdf-canvas { display: block; }
 
-:root[data-theme="sepia"] .pdf-page, :root[data-theme="sepia"] .pdf-paper { background: #f4ecd8; }
+:root[data-theme="sepia"] .pdf-page, :root[data-theme="sepia"] .pdf-paper, :root[data-theme="sepia"] .pdf-slot:not(.empty) { background: #f4ecd8; }
 :root[data-theme="sepia"] .pdf-canvas { mix-blend-mode: multiply; }
 /* Mörkt: ljusheten vänds men färgtonen behålls, så att bilder inte blir negativ. Papperet blir 0,11. */
-:root[data-theme="dark"] .pdf-page, :root[data-theme="dark"] .pdf-paper { background: #1c1c1c; }
+:root[data-theme="dark"] .pdf-page, :root[data-theme="dark"] .pdf-paper, :root[data-theme="dark"] .pdf-slot:not(.empty) { background: #1c1c1c; }
 :root[data-theme="dark"] .pdf-canvas { filter: invert(0.89) hue-rotate(180deg); }
 
 /* Ordrutan */

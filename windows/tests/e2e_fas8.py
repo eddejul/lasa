@@ -352,6 +352,191 @@ def g3(browser, args):
         server.stop()
 
 
+# W10
+
+def word_box(page, word, page_index, occurrence=0):
+    """Vänsterkant, högerkant och mitt (i fönstret) för ett ord på en viss PDF-sida."""
+    return page.evaluate("""([word, index, occurrence]) => {
+      let seen = 0;
+      for (const span of document.querySelectorAll(`.pdf-page[data-page="${index}"] .textLayer span`)) {
+        const node = span.firstChild;
+        if (!node || node.nodeType !== 3) continue;
+        let at = node.data.indexOf(word);
+        while (at >= 0) {
+          if (seen++ === occurrence) {
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + word.length);
+            const r = range.getBoundingClientRect();
+            return { left: { x: r.left + 1, y: r.top + r.height / 2 }, right: { x: r.right - 1, y: r.top + r.height / 2 },
+              x: r.left + r.width / 2, y: r.top + r.height / 2, visible: r.top >= 0 && r.bottom <= innerHeight };
+          }
+          at = node.data.indexOf(word, at + 1);
+        }
+      }
+      return null;
+    }""", [word, page_index, occurrence])
+
+
+def drag(page, start, end):
+    page.mouse.move(start["x"], start["y"])
+    page.mouse.down()
+    page.mouse.move((start["x"] + end["x"]) / 2, (start["y"] + end["y"]) / 2, steps=4)
+    page.mouse.move(end["x"], end["y"], steps=4)
+    page.mouse.up()
+
+
+def label(page):
+    return page.locator('.page-label').inner_text()
+
+
+def rendered(page):
+    return page.evaluate("[...document.querySelectorAll('.pdf-slot .pdf-page')].map(e => Number(e.dataset.page))")
+
+
+def choose_view(page, testid):
+    if not page.locator('[data-testid="fit-auto"]').is_visible():
+        page.locator('[data-testid="zoom-button"]').click()
+    page.locator(f'[data-testid="{testid}"]').click()
+    page.wait_for_timeout(400)
+
+
+def w10(browser, args):
+    data = os.path.join(args.out, "data-w10")
+    shutil.rmtree(data, ignore_errors=True)
+    os.makedirs(data)
+    server = Server(args.dictionary, data, args.port, os.path.join(args.out, "server-w10.log"))
+    try:
+        page = new_page(browser)
+        page.goto(server.url)
+        page.wait_for_selector('[data-testid="tab-library"]')
+        add_file(page, os.path.join(args.books, "test.pdf"))
+        check(wait_for(lambda: book_count(page) == 1, 20), 'PDF:en lades till')
+        open_book(page, 'Testbok i PDF')
+        page.wait_for_selector('.pdf-spread .pdf-page canvas')
+
+        # Rulla med En sida
+        choose_view(page, 'flow-scroll')
+        choose_view(page, 'spread-one')
+        page.keyboard.press('Escape')
+        check(wait_for(lambda: page.locator('.pdf-spread.continuous').count() == 1), 'Rulla: remsan visas')
+        check(page.locator('.pdf-slot').count() == 9, f'en plats per sida: {page.locator(".pdf-slot").count()}')
+        check(wait_for(lambda: 0 < len(rendered(page)) <= 6), f'bara några sidor ritade: {rendered(page)}')
+        check(server.sql("SELECT value FROM settings WHERE key = 'pdfFlow'") == [['"scroll"']], 'valet Rulla sparas')
+        page.screenshot(path=os.path.join(args.out, "w10-01-rulla.png"))
+
+        # Rulla genom boken med hjulet: sidnumret följer med, och sidorna långt bak släpps
+        page.mouse.move(640, 400)
+        for _ in range(30):
+            page.mouse.wheel(0, 600)
+            page.wait_for_timeout(60)
+        check(wait_for(lambda: 'Sida 9' in label(page) or 'Sida 8' in label(page)), f'hjulet rullar till slutet: {label(page)}')
+        check(wait_for(lambda: 0 not in rendered(page) and len(rendered(page)) <= 6), f'sidorna i början är släppta: {rendered(page)}')
+        page.keyboard.press('Home')
+        check(wait_for(lambda: label(page).startswith('Sida 1')), f'Home går till början: {label(page)}')
+        page.keyboard.press('ArrowRight')
+        check(wait_for(lambda: label(page).startswith('Sida 2')), f'högerpil går till nästa sida: {label(page)}')
+        wait_for(lambda: page.evaluate("document.querySelectorAll('.pdf-page[data-page=\"1\"] .textLayer span').length") > 5)
+
+        # Ordfunktionen i Rulla
+        box = word_box(page, 'Gatorna', 1)
+        check(box is not None and box["visible"], f'ordet syns på sidan 2: {box}')
+        page.mouse.dblclick(box["x"], box["y"])
+        check(wait_for(lambda: page.locator('.popup [data-testid="header"]').count() == 1), 'Rulla: dubbelklick slår upp ordet')
+        page.keyboard.press('Escape')
+        page.wait_for_timeout(200)
+
+        # Markering i Rulla
+        a = word_box(page, 'Gatorna', 1)
+        b = word_box(page, 'smala', 1)
+        drag(page, a["left"], b["right"])
+        check(wait_for(lambda: page.locator('[data-testid="mark-menu"]').count() == 1), 'Rulla: färgvalet visas')
+        page.locator('[data-testid="mark-green"]').click()
+        check(wait_for(lambda: page.locator('.pdf-page[data-page="1"] .pdf-mark.color-green').count() >= 1), 'Rulla: markeringen syns')
+        rows = server.sql("SELECT section, text, color FROM highlights WHERE deleted = 0")
+        check(len(rows) == 1 and rows[0][0] == 1 and rows[0][1].startswith('Gatorna var smala'), f'Rulla: markeringen sparas: {rows}')
+        # Markeringen finns kvar när sidan släppts och ritats igen
+        page.keyboard.press('End')
+        check(wait_for(lambda: 1 not in rendered(page)), f'sidan 2 släpps längre fram: {rendered(page)}')
+        page.keyboard.press('Home')
+        page.keyboard.press('ArrowRight')
+        check(wait_for(lambda: page.locator('.pdf-page[data-page="1"] .pdf-mark.color-green').count() >= 1),
+              'markeringen ritas igen när sidan kommer tillbaka')
+        page.screenshot(path=os.path.join(args.out, "w10-02-markering.png"))
+
+        # Sök i Rulla
+        page.keyboard.press('Control+f')
+        page.fill('[data-testid="search-input"]', 'Chapter')
+        check(wait_for(lambda: page.locator('[data-testid="search-hit-row"]').count() >= 1, 15), 'Rulla: sökningen hittar Chapter')
+        page.locator('[data-testid="search-hit-row"]').first.click()
+        check(wait_for(lambda: label(page).startswith('Sida 5')), f'Rulla: träffen visas på sidan 5: {label(page)}')
+        hit = page.locator('.pdf-spread [data-testid="search-hit"]')
+        check(wait_for(lambda: hit.count() >= 1), 'Rulla: träffen ringas in')
+        if hit.count():
+            r = hit.first.bounding_box()
+            check(r and 0 <= r["y"] <= 720, f'träffen syns i fönstret: {r}')
+        page.screenshot(path=os.path.join(args.out, "w10-03-sok.png"))
+        page.keyboard.press('Escape')
+        page.wait_for_timeout(200)
+
+        # Läspositionen i Rulla
+        page.evaluate("document.querySelector('.reader-stage').focus()")
+        page.keyboard.press('Home')
+        for _ in range(5):
+            page.keyboard.press('ArrowRight')
+            page.wait_for_timeout(100)
+        check(wait_for(lambda: label(page).startswith('Sida 6')), f'sida 6: {label(page)}')
+        page.wait_for_timeout(900)
+        page.reload()
+        page.wait_for_selector('[data-testid="book"]')
+        open_book(page, 'Testbok i PDF')
+        check(wait_for(lambda: page.locator('.pdf-spread.continuous').count() == 1, 15), 'Rulla är kvar efter omladdning')
+        check(wait_for(lambda: label(page).startswith('Sida 6')), f'Rulla: läspositionen finns kvar: {label(page)}')
+
+        # Uppslag i Rulla: Två sidor
+        choose_view(page, 'spread-two')
+        page.keyboard.press('Escape')
+        check(wait_for(lambda: page.locator('.pdf-row.two').count() == 5), f'Två sidor: fem rader: {page.locator(".pdf-row.two").count()}')
+        check(page.locator('.pdf-row').first.locator('.pdf-slot.empty').count() == 1, 'omslaget ensamt till höger')
+        check(wait_for(lambda: label(page).startswith('Sidorna 6 och 7')), f'platsen behålls: {label(page)}')
+        page.keyboard.press('ArrowRight')
+        check(wait_for(lambda: label(page).startswith('Sidorna 8 och 9')), f'högerpil till nästa rad: {label(page)}')
+        check(wait_for(lambda: len(rendered(page)) <= 10), f'högst tio ritade sidor: {rendered(page)}')
+        page.screenshot(path=os.path.join(args.out, "w10-04-rulla-tva-sidor.png"))
+        choose_view(page, 'fit-page')
+        page.keyboard.press('Escape')
+        page.keyboard.press('End')
+        page.wait_for_timeout(600)
+        check(wait_for(lambda: len(rendered(page)) <= 10), f'Hela sidan i Rulla: högst tio ritade sidor: {rendered(page)}')
+        choose_view(page, 'fit-auto')
+        choose_view(page, 'spread-auto')
+        page.keyboard.press('Escape')
+        check(wait_for(lambda: page.locator('.pdf-spread.continuous .pdf-slot .pdf-page canvas').count() >= 1), 'Automatiskt i Rulla ritar sidor')
+
+        # Tillbaka till Bläddra: en sida eller ett uppslag i taget, ordfunktionen fungerar
+        choose_view(page, 'flow-paged')
+        choose_view(page, 'spread-one')
+        page.keyboard.press('Escape')
+        check(wait_for(lambda: page.locator('.pdf-spread.continuous').count() == 0 and page.locator('.pdf-slot').count() == 0),
+              'Bläddra: remsan är borta')
+        check(server.sql("SELECT value FROM settings WHERE key = 'pdfFlow'") == [['"paged"']], 'valet Bläddra sparas')
+        page.keyboard.press('Home')
+        page.keyboard.press('ArrowRight')
+        check(wait_for(lambda: label(page).startswith('Sida 2')), f'Bläddra: sida 2: {label(page)}')
+        check(wait_for(lambda: page.locator('.pdf-spread > .pdf-page').count() == 1), 'Bläddra: en sida åt gången')
+        wait_for(lambda: page.evaluate("document.querySelectorAll('.pdf-page[data-page=\"1\"] .textLayer span').length") > 5)
+        check(wait_for(lambda: page.locator('.pdf-page[data-page="1"] .pdf-mark.color-green').count() >= 1), 'Bläddra: markeringen syns')
+        box = word_box(page, 'Gatorna', 1)
+        if box:
+            page.mouse.dblclick(box["x"], box["y"])
+        check(wait_for(lambda: page.locator('.popup [data-testid="header"]').count() == 1), 'Bläddra: dubbelklick slår upp ordet')
+        page.keyboard.press('Escape')
+        page.screenshot(path=os.path.join(args.out, "w10-05-bladdra.png"))
+        page.context.close()
+    finally:
+        server.stop()
+
+
 def main():
     global PAGE
     parser = argparse.ArgumentParser()
@@ -367,8 +552,8 @@ def main():
         try:
             if args.only in ("", "g3"):
                 g3(browser, args)
-            if args.only in ("", "w10") and "w10" in globals():
-                globals()["w10"](browser, args)
+            if args.only in ("", "w10"):
+                w10(browser, args)
         finally:
             browser.close()
     problems = [line for line in CONSOLE if not any(known in line for known in KNOWN)]

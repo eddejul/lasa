@@ -43,6 +43,11 @@ Läsa behöver Microsoft Edge WebView2, som redan finns i Windows 11. Saknas den
 * **Uppslag:** Automatiskt (två sidor när fönstret är brett nog), En sida eller Två sidor, under Visning (PDF)
   och Aa (EPUB och text). I PDF ligger omslaget ensamt till höger och sedan sida 2 och 3, 4 och 5, som på
   iPaden.
+* **Bläddra eller rulla** (PDF, under Visning): Bläddra visar en sida eller ett uppslag i taget. Rulla visar
+  alla sidor efter varandra som en lång remsa (bra för artiklar), med en eller två sidor per rad efter valet
+  Uppslag. Bara sidorna som syns och några runt dem ritas, högst 6 (10 med två sidor per rad). Pilarna
+  höger och vänster går en rad, Home och End till början och slutet. Ordfunktionen, markeringar, sök och
+  läspositionen fungerar i båda lägena. Valet gäller alla böcker.
 * **PDF, Visning:** Automatiskt (standard) visar hela sidan, och uppslag, om texten blir läsbar. På en
   bärbar dator med 150 procents skalning blir en hel A4-sida för liten, och då visas en sida i läsbar
   storlek som du rullar i. Nedåtpil, mellanslag och mushjulet rullar först och bläddrar när sidan är slut.
@@ -149,7 +154,6 @@ Ordboken (`lasa-ordbok.sqlite`) ligger bland programfilerna och ändras aldrig.
 * En PDF över 16 MB läses i bitar (bara det pdf.js behöver), en mindre läses hel. Hur mycket som slipper
   läsas beror på PDF:en: om alla sidor delar en resurslista (som PDF:er från reportlab) läses ändå nästan
   allt. Minnet hålls nere med högst 4 ritade sidor (6 i uppslag) och högst 8 miljoner bildpunkter per sida.
-* PDF går inte att rulla som en lång remsa, bara bläddra (och rulla inom en sida som är större än fönstret).
 * Synken är provad mot en låtsas-Supabase, inte mot ett riktigt Supabase-projekt.
 * Skannade PDF:er utan textlager: sidorna visas, men ord går inte att slå upp. Appen säger till.
 * Språkgissningen och den engelska ordklassen är enklare än iPadens, som använder Apples språkverktyg.

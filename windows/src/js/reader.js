@@ -304,7 +304,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
 
   const reader = book.format === 'pdf'
     ? new PdfReader(stage, { onRelocate, onWord, onMessage: (message) => toast(message),
-      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, spread: settings.pdfSpread ?? 'auto', getMarks, onSelect, onMarkClick })
+      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, spread: settings.pdfSpread ?? 'auto', flow: settings.pdfFlow ?? 'paged',
+      getMarks, onSelect, onMarkClick })
     : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks, onSelect, onMarkClick });
 
   document.addEventListener('keydown', onKey);
@@ -410,6 +411,18 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
           togglePanel(null);
           togglePanel('zoom');
         } }, el('div', {}, fit.title), el('div', { class: 'choice-note' }, fit.note)))),
+      el('h3', { class: 'panel-subhead' }, 'Bläddra eller rulla'),
+      el('div', { class: 'font-list' }, [
+        { id: 'paged', title: 'Bläddra', note: 'En sida eller ett uppslag i taget.' },
+        { id: 'scroll', title: 'Rulla', note: 'Alla sidor efter varandra, som en lång remsa. Bra för artiklar.' },
+      ].map((flow) => el('button', {
+        class: `font-choice${reader.flow === flow.id ? ' selected' : ''}`, dataset: { testid: `flow-${flow.id}` },
+        onclick: async () => {
+          await reader.setView({ flow: flow.id });
+          await setSetting('pdfFlow', flow.id);
+          togglePanel(null);
+          togglePanel('zoom');
+        } }, el('div', {}, flow.title), el('div', { class: 'choice-note' }, flow.note)))),
       el('h3', { class: 'panel-subhead' }, 'Uppslag'),
       spreadChoices(reader.spread, async (spread) => {
         await reader.setView({ spread });
