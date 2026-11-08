@@ -517,5 +517,5 @@ fn main() {
             pending_read
         ])
         .run(tauri::generate_context!())
-        .expect("Läsa kunde inte starta");
+        .expect("Sensus kunde inte starta");
 }

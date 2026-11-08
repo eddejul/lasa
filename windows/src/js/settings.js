@@ -131,7 +131,7 @@ export async function renderSettings(container) {
     el('section', { class: 'list-section' },
       el('h3', {}, 'Status'),
       status,
-      el('p', { class: 'list-footer' }, 'Läsa synkar när appen startar, när du stänger en bok (högst en gång i minuten) och med Synka nu. '
+      el('p', { class: 'list-footer' }, 'Sensus synkar när appen startar, när du stänger en bok (högst en gång i minuten) och med Synka nu. '
         + 'En nyare position från iPaden gäller nästa gång boken öppnas, en öppen bok hoppar inte.'))));
 
   // Statusen följer synken medan vyn visas. En äldre lyssnare för samma ruta tas bort först.

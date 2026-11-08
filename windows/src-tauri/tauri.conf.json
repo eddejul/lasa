@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Läsa",
+        "title": "Sensus",
         "width": 1200,
         "height": 760,
         "minWidth": 640,
@@ -33,7 +33,7 @@
     "publisher": "Edvin",
     "category": "Education",
     "shortDescription": "Läsapp för PDF, EPUB och textfiler med ordfunktion",
-    "longDescription": "Läsa visar kurslitteratur i PDF, EPUB och text. Dubbelklicka på ett ord för synonymer, betydelse och svensk översättning, utan internet.",
+    "longDescription": "Sensus visar kurslitteratur i PDF, EPUB och text. Dubbelklicka på ett ord för synonymer, betydelse och svensk översättning, utan internet.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,4 +1,4 @@
-// Läsa för Windows: start, flikarna Bibliotek, Sparade ord och Om ordboken, och läsaren.
+// Sensus (tidigare Läsa) för Windows: start, flikarna Bibliotek, Sparade ord och Om ordboken, och läsaren.
 
 import { renderAbout } from './about.js';
 import { checkDictionary, dictionary } from './context.js';
@@ -38,10 +38,10 @@ function chooseFiles() {
 async function showTab(tab) {
   await closeReader();
   currentTab = tab;
-  document.title = 'Läsa';
+  document.title = 'Sensus';
   const content = el('main', { class: 'main-content', dataset: { view: tab } });
   const header = el('header', { class: 'toolbar main-toolbar' },
-    el('div', { class: 'app-name' }, 'Läsa'),
+    el('div', { class: 'app-name' }, 'Sensus'),
     el('nav', { class: 'tabs' }, TABS.map((item) => el('button', {
       class: `tab${item.id === tab ? ' selected' : ''}`, onclick: () => showTab(item.id), dataset: { testid: `tab-${item.id}` },
     }, item.title))),
@@ -90,7 +90,7 @@ async function openBook(id) {
     return;
   }
   currentTab = null;
-  document.title = `${book.title} · Läsa`;
+  document.title = `${book.title} · Sensus`;
   const container = el('div', { class: 'reader-container' });
   replace(app, container);
   await openReader(container, book, {
@@ -204,7 +204,7 @@ async function start() {
   try {
     await openStore();
   } catch (error) {
-    replace(app, el('div', { class: 'empty' }, el('p', {}, 'Läsa kunde inte öppna sina filer.'), el('p', { class: 'muted' }, String(error?.message ?? error))));
+    replace(app, el('div', { class: 'empty' }, el('p', {}, 'Sensus kunde inte öppna sina filer.'), el('p', { class: 'muted' }, String(error?.message ?? error))));
     return;
   }
   applyTheme(settings.theme);

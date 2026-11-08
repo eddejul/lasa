@@ -129,7 +129,7 @@ export async function importFiles(files, { ids = null } = {}) {
     status?.set(list.length > 1 ? `Lägger till ${index + 1} av ${list.length}: ${file.name}` : `Lägger till ${file.name} ...`);
     const ext = extensionOf(file.name);
     if (!ACCEPTED.includes(ext)) {
-      toast(`${file.name} kan inte läsas. Läsa tar PDF, EPUB och text (txt, md, rtf, html).`);
+      toast(`${file.name} kan inte läsas. Sensus tar PDF, EPUB och text (txt, md, rtf, html).`);
       continue;
     }
     let stored = null;
@@ -194,7 +194,7 @@ export async function renderLibrary(container, { onOpen }) {
         el('span', {}, progressText(book))),
       el('button', { class: 'link-button danger', onclick: async () => {
         const ok = await confirmDialog({ title: `Ta bort ${book.title}?`,
-          message: 'Boken och läspositionen tas bort ur Läsa. Originalfilen där du hämtade den finns kvar, och sparade ord ligger kvar.',
+          message: 'Boken och läspositionen tas bort ur Sensus. Originalfilen där du hämtade den finns kvar, och sparade ord ligger kvar.',
           confirm: 'Ta bort', danger: true });
         if (!ok) return;
         await deleteBookFile(book.id, book.ext);
