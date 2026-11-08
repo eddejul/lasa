@@ -110,6 +110,7 @@ Så blev den (7 november 2026, detaljer i `windows/README.md`):
 | Svenska böjningsformer | SALDO morfologi (Språkbanken) | öppen, kontrollera vid nedladdning |
 | Engelska synonymer och definitioner | Open English WordNet | CC BY 4.0 |
 | Engelska till svenska | Folkets lexikon (KTH) | CC BY-SA 2.5 |
+| Ursprung, uttal och fler översättningar (O10) | Wiktionary via kaikki.org, strömmas och filtreras i bygget | CC BY-SA 4.0 |
 | Svensk definition | svenska.se i webbvy | visas, lagras inte |
 
 Appen ska ha en sida "Om ordboken" som anger källorna och licenserna.
@@ -239,6 +240,13 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Första start (B5):** en ny installation utan böcker får en välkomstsida och en exempelbok som lär ut bläddring, ordet under fingret och markering, och kortet Gör mer med Sensus (Förklaring med AI). Ett tomt bibliotek har Välj filer, Öppna från Filer och Prova exempelboken.
 * **iPhone (U9) och rörelser (U10):** två kolumner och en flikrad längst ner på iPhone. Boken öppnas från omslaget och stängs in i det, omslaget trycks ner lite, och med Minska rörelse blir det toningar.
 * **Databasrättningar 2:** dagens säkerhetskopior gallras inte bort, synken står still efter en återställning tills den startas i Inställningar, en fil med samma namn som en borttagen bok ger frågan Ny version, och bokmärkesbandet tar bort med Ångra.
+
+### 6.11 Våg 5 (8 november 2026)
+
+* **Ordkortet (U4):** ordet en gång, stort, med ordklass och SV eller EN. Svaret direkt under, synonymerna som knappar som slår upp ordet i samma ruta, meningen ur boken med ordet understruket och boken och sidan under. Förklara i meningen svarar i samma kort. Längst ner SO och SAOL, Sparat, Fel synonym och betydelserna. Ark i halv höjd på iPhone. Ingen uppläsning.
+* **Välj betydelse (O7):** ett tryck på en betydelse sparar den med ordet. Kortet visar den överst och repetitionen bara den. AI-knappen kan föreslå en betydelse, men man väljer själv.
+* **Ursprung, uttal och fler översättningar (O10):** ur Wiktionary via kaikki.org (CC BY-SA 4.0). Svenska ord får uttal (IPA) bredvid ordklassen och en rad om ursprunget (första meningen, språknamnen på svenska). Engelska ord får fler svenska översättningar, och ord som saknas i Folkets lexikon får sin översättning därifrån. Bara ord som redan finns i ordboken tas med. Källan står under Om ordboken.
+* **Dina ord i texten (O4):** sparade ord får ett streck under sig i alla böjningsformer, helt för ord man övar och prickat för ord man kan (repetitionens intervall minst tre veckor, ingen egen statusvy). Ett tryck på strecket mitt på sidan visar ordkortet med meningen ordet sparades i. Av och på i Aa (Dina ord i texten), från början på.
 
 ## 7. Bygge och installation
 

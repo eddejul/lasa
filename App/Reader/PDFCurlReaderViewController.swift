@@ -93,6 +93,10 @@ final class PDFCurlReaderViewController: UIViewController {
     private var unplaceable = Set<String>()
     /// Hur lång tid det tog att förbereda markeringarna när en sida viktes fram, till självtestet (G6).
     private(set) var markSetupTimes: [Double] = []
+    /// O4: strecken under sparade ord per sida, räknade på renderingskön.
+    private var wordMarksCache: [Int: [PDFPageViewController.WordMark]] = [:]
+    private var wordMarksInFlight = Set<Int>()
+    private var wordMarksVersion = -1
     /// Punkten i sidans koordinater där ordet under fingret senast togs fram (G6).
     private var lastWordProbe: CGPoint?
     /// Hur många gånger ordet under fingret togs fram och hur många gånger det kunde hoppas över (G6).
@@ -152,6 +156,9 @@ final class PDFCurlReaderViewController: UIViewController {
         view.backgroundColor = theme.paperColor
         NotificationCenter.default.addObserver(self, selector: #selector(appThemeChanged), name: Theme.didChange,
                                                object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(savedWordMarksChanged),
+                                               name: SavedWordMarks.didChange, object: nil)
+        SavedWordMarks.shared.refresh()
         setUpNavigationBar()
         setUpBottomBar()
         setUpTaps()
@@ -923,7 +930,10 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
         if onRibbon, gestureRecognizer is UITapGestureRecognizer {
             return false
         }
-        let onMark = markHit(at: touch.location(in: view)) != nil
+        let onMark = markHit(at: touch.location(in: view)).map { hit in
+            // O4: ett sparat ord tar trycket bara mitt på sidan, så att kanterna alltid bläddrar.
+            !SavedWordMarks.isWordID(hit.id) || Self.isMiddle(touch.location(in: view).x, width: view.bounds.width)
+        } ?? false
         if gestureRecognizer === markTap {
             return !markMode && onMark
         }
@@ -1046,11 +1056,71 @@ extension PDFCurlReaderViewController {
         let started = CACurrentMediaTime()
         page.pdfPage = document.page(at: page.pageIndex)
         page.setMarks(marks(forPage: page.pageIndex), dark: theme.isDark)
+        applyWordMarks(to: page)
         page.isBookmarked = bookmarkedPages.contains(page.pageIndex)
         page.showsRibbonHint = !chromeHidden
         if marksCache[page.pageIndex]?.isEmpty == false {
             markSetupTimes = Array((markSetupTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(200))
         }
+    }
+
+    /// O4: strecken under sparade ord. Sidans text läses på renderingskön, aldrig under en vikning.
+    fileprivate func applyWordMarks(to page: PDFPageViewController) {
+        let marks = SavedWordMarks.shared
+        let forms = marks.forms
+        guard !forms.isEmpty else {
+            page.setWordMarks([])
+            return
+        }
+        if wordMarksVersion != marks.version {
+            wordMarksCache.removeAll()
+            wordMarksInFlight.removeAll()
+            wordMarksVersion = marks.version
+        }
+        let index = page.pageIndex
+        if let cached = wordMarksCache[index] {
+            page.setWordMarks(cached)
+            return
+        }
+        guard wordMarksInFlight.insert(index).inserted else { return }
+        let version = marks.version
+        renderer.wordRects(onPage: index, forms: forms) { [weak self] result in
+            guard let self = self, self.wordMarksVersion == version, self.wordMarksInFlight.remove(index) != nil else {
+                return
+            }
+            self.wordMarksCache[index] = result
+            for shown in self.visiblePages where shown.pageIndex == index {
+                shown.setWordMarks(SavedWordMarks.shared.isEnabled ? result : [])
+            }
+        }
+    }
+
+    @objc fileprivate func savedWordMarksChanged() {
+        for page in visiblePages where !page.isBlank {
+            applyWordMarks(to: page)
+        }
+    }
+
+    /// Mitten av sidan, där ett tryck inte bläddrar.
+    fileprivate static func isMiddle(_ x: CGFloat, width: CGFloat) -> Bool {
+        let position = x / max(width, 1)
+        return position > 0.3 && position < 0.7
+    }
+
+    /// O4: ett tryck på ett streck visar ordkortet för det sparade ordet, med meningen det sparades i.
+    fileprivate func presentSavedWord(id: String, page: PDFPageViewController, at point: CGPoint) {
+        guard presentedViewController == nil, let word = SavedWordMarks.word(fromID: id),
+              let saved = UserWords.shared.savedWords().first(where: { $0.lemma == word.lemma && $0.language == word.language })
+        else { return }
+        let lookup = WordDictionary.shared?.lookup(saved.word, sentence: saved.sentence, language: saved.language,
+                                                   hidden: UserWords.shared.hiddenPairs)
+        var context = WordPopupViewController.Context(sentence: saved.sentence, rangeInSentence: nil, book: saved.book,
+                                                      pageIndex: saved.pageIndex, triedWord: saved.word)
+        context.savesWord = false
+        let anchor = HighlightMenuViewController.anchor(for: page.markRects(id: id), in: view, from: page.view,
+                                                        fallback: point)
+        WordPopupViewController.present(lookup: lookup, context: context, from: self, sourceView: view,
+                                        sourceRect: anchor, onReady: {}, onDismiss: {})
     }
 
     /// Markeringarna på en sida har ändrats: läs om dem ur databasen.
@@ -1114,7 +1184,7 @@ extension PDFCurlReaderViewController {
                   let pdfPage = document.page(at: page.pageIndex),
                   let frame = page.imageFrame else { return }
             let local = page.view.convert(point, from: view)
-            let tapped = page.markID(at: local)
+            let tapped = page.markID(at: local).flatMap { SavedWordMarks.isWordID($0) ? nil : $0 }
             let word = PDFCurlReaderViewController.word(on: pdfPage, at: local, imageFrame: frame)
             if word == nil, tapped == nil, !PDFWordFinder.pageHasText(pdfPage) {
                 showToast("Sidan har ingen text att markera. Den är troligen skannad.")
@@ -1223,6 +1293,10 @@ extension PDFCurlReaderViewController {
     @objc fileprivate func handleMarkTap(_ tap: UITapGestureRecognizer) {
         let point = tap.location(in: view)
         guard let hit = markHit(at: point) else { return }
+        if SavedWordMarks.isWordID(hit.id) {
+            presentSavedWord(id: hit.id, page: hit.page, at: point)
+            return
+        }
         presentMarkMenu(id: hit.id, at: point)
     }
 
@@ -1634,6 +1708,19 @@ extension PDFCurlReaderViewController {
         } else {
             SelfTest.log("FEL: hittade inte ordet kunskap på sidan")
         }
+
+        // O4: ett sparat ord får ett streck under sig, och ett tryck på strecket hittar ordet.
+        UserWords.shared.save(word: "kunskap", lemma: "kunskap", language: .swedish,
+                              sentence: "Kunskap kommer sällan av sig själv.", book: book.title, pageIndex: page.pageIndex,
+                              bookID: book.id)
+        for _ in 0..<40 where page.markRects(id: SavedWordMarks.idPrefix + "sv|kunskap").isEmpty {
+            await pause(0.2)
+        }
+        let wordRect = page.markRects(id: SavedWordMarks.idPrefix + "sv|kunskap").first
+        let wordHit = wordRect.map { markHit(at: view.convert(CGPoint(x: $0.midX, y: $0.midY), from: page.view))?.id }
+        SelfTest.log("Dina ord i texten (O4): \(page.wordMarkCount) streck på sidan, former \(SavedWordMarks.shared.forms.count), "
+                     + "tryck på kunskap hittar \((wordHit ?? nil) ?? "INGET")")
+        SelfTest.saveScreen(view, name: "02c-ordstreck")
 
         // Markera en mening och ge den en anteckning.
         let sentenceEnd = text.range(of: ".", options: [], range: NSRange(location: 0, length: text.length))

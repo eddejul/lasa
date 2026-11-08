@@ -66,6 +66,10 @@
           [
             "review_introduced",
             "REAL"
+          ],
+          [
+            "sense_id",
+            "TEXT NOT NULL DEFAULT ''"
           ]
         ]
       }

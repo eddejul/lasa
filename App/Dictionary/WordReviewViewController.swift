@@ -119,6 +119,14 @@ final class WordReviewViewController: UIViewController {
         show()
     }
 
+    /// Självtestet: visar bara det här ordet, med svaret framme.
+    func showOnlyForTest(_ word: SavedWord) {
+        queue = [ReviewCard(word: word, interval: 0, ease: 2.5, reps: 0, lapses: 0, isNew: true)]
+        index = 0
+        show()
+        reveal()
+    }
+
     /// Används av självtestet.
     var currentWord: String? {
         index < queue.count ? queue[index].word.lemma : nil
@@ -187,20 +195,24 @@ final class WordReviewViewController: UIViewController {
     }
 
     /// Svaret ur ordboken: översättningen för engelska ord, betydelsen och synonymerna för svenska.
+    /// Har en betydelse valts när ordet sparades (O7) visas bara den, annars den första.
     static func answer(for word: SavedWord) -> String {
         guard let lookup = WordDictionary.shared?.lookup(word.lemma, sentence: word.sentence, language: word.language,
                                                          hidden: UserWords.shared.hiddenPairs),
-              let entry = lookup.entries.first else {
+              let first = lookup.entries.first else {
             return "Ordboken har inget svar för ordet."
         }
+        let chosen = WordText.sense(withID: word.senseID, in: lookup.entries)
+        let entry = chosen?.entry ?? first
+        let shown = chosen?.sense ?? entry.senses.first
         var lines: [String] = []
         if word.language == .english {
             let translation = WordText.translationLine(entry)
             lines.append(translation.isEmpty ? "Ingen svensk översättning i ordboken." : translation)
-            if let definition = entry.senses.first?.definition {
+            if let definition = shown?.definition {
                 lines.append(definition)
             }
-        } else if let sense = entry.senses.first {
+        } else if let sense = shown {
             if let definition = sense.definition {
                 lines.append(definition)
             }

@@ -35,6 +35,11 @@ final class AboutDictionaryViewController: UITableViewController {
                    + "oregelbundna engelska böjningar.",
                license: "CC BY-SA 2.5. Den bearbetade versionen i Sensus delas under samma licens.",
                url: "https://folkets-lexikon.csc.kth.se/folkets/"),
+        Source(name: "Wiktionary, via kaikki.org (Wiktextract, Tatu Ylonen)",
+               use: "Uttal och ursprung för svenska ord, och fler svenska översättningar av engelska ord. "
+                   + "Ursprunget är kortat till en mening, och språknamn och vanliga ord är översatta till svenska.",
+               license: "CC BY-SA 4.0. Den bearbetade versionen i Sensus delas under samma licens.",
+               url: "https://kaikki.org/dictionary/Swedish/"),
         Source(name: "wordfreq, Robyn Speer",
                use: "Hur vanliga orden är, så att vanliga synonymer visas först. Bygger bland annat på "
                    + "Wikipedia, OpenSubtitles 2018, Google Books Ngram Viewer, ParaCrawl och SUBTLEX "
@@ -62,6 +67,12 @@ final class AboutDictionaryViewController: UITableViewController {
         title = "Om ordboken"
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
         hidden = UserWords.shared.hiddenPairs.sorted { ($0.lemma, $0.synonym) < ($1.lemma, $1.synonym) }
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Ordkortet döljer menyraden. Den här sidan har den, med tillbakapil.
+        navigationController?.setNavigationBarHidden(false, animated: animated)
     }
 
     override func viewDidLayoutSubviews() {

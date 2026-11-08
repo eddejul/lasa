@@ -8,6 +8,8 @@ Källor (se SOURCES nedan och README.md):
   * SALDO och SALDO morfologi (Språkbanken), betydelser och böjningsformer, CC BY 4.0
   * Open English WordNet 2025, engelska synonymer och definitioner, CC BY 4.0
   * Folkets lexikon (KTH), engelska till svenska och svenska definitioner, CC BY-SA 2.5
+  * Wiktionary via kaikki.org (O10), ursprung, uttal och fler översättningar, CC BY-SA 4.0. Strömmas och
+    filtreras i bygget, se wiktionary.py. Rådata sparas aldrig.
 
 Användning:
   python tools/dictionary/build.py                 # laddar ner till sources/, bygger out/lasa-ordbok.sqlite
@@ -534,6 +536,14 @@ CREATE TABLE en_synset_members (synset_id TEXT NOT NULL, lemma TEXT NOT NULL, ra
 -- för omvända översättningar ur den svensk-engelska delen (används bara när ordet saknar egna).
 CREATE TABLE en_sv (en_lemma TEXT NOT NULL, rank INTEGER NOT NULL, sv TEXT NOT NULL, pos TEXT NOT NULL,
                     comment TEXT NOT NULL, PRIMARY KEY (en_lemma, rank)) WITHOUT ROWID;
+
+-- Ur Wiktionary via kaikki.org (O10, CC BY-SA 4.0). Uttal (IPA) och ursprung för svenska grundformer,
+-- ursprunget kortat till en mening och delvis översatt till svenska.
+CREATE TABLE sv_wiktionary (lemma TEXT PRIMARY KEY, ipa TEXT NOT NULL, etymology TEXT NOT NULL) WITHOUT ROWID;
+-- Fler svenska översättningar av engelska ord: svenska ord vars engelska förklaring är det engelska ordet.
+-- Bara par som Folkets lexikon inte redan har. en_lemma är normaliserad, pos som i en_senses.
+CREATE TABLE en_sv_wiktionary (en_lemma TEXT NOT NULL, pos TEXT NOT NULL, rank INTEGER NOT NULL, sv TEXT NOT NULL,
+                               PRIMARY KEY (en_lemma, pos, rank)) WITHOUT ROWID;
 """
 
 
@@ -599,6 +609,16 @@ def build(sources_dir, out_path, stats):
                 en_members.append((synset_id, lemma, rank))
     en_senses = list(en_senses.values())
 
+    log("Läser Wiktionary (kaikki.org)")
+    import wiktionary  # noqa: E402 (ligger bredvid)
+    kaikki = wiktionary.read_kaikki_sv(sources_dir, stats, USER_AGENT)
+    sv_lemmas = {lemma for _form, lemma, _pos in sv_forms}
+    en_lemmas = {(normalize(word), pos) for word, _synset, pos, _rank in en_senses}
+    en_sv_pairs = {(key, sv) for key, _rank, sv, _pos, _comment in en_sv}
+    sv_wiktionary, en_sv_wiktionary = wiktionary.build_tables(kaikki, sv_lemmas, en_lemmas, en_sv_pairs, stats)
+    del kaikki
+    log(f"  {len(sv_wiktionary)} svenska ord med uttal eller ursprung, {len(en_sv_wiktionary)} fler översättningar")
+
     log("Räknar ut hur vanliga synonymerna är (wordfreq)")
     sv_frequency = frequency_lookup("sv")
     en_frequency = frequency_lookup("en")
@@ -620,6 +640,8 @@ def build(sources_dir, out_path, stats):
     db.executemany("INSERT INTO en_synsets VALUES (?, ?)", sorted(en_synsets))
     db.executemany("INSERT INTO en_synset_members VALUES (?, ?, ?, ?)", sorted(en_members))
     db.executemany("INSERT INTO en_sv VALUES (?, ?, ?, ?, ?)", en_sv)
+    db.executemany("INSERT INTO sv_wiktionary VALUES (?, ?, ?)", sv_wiktionary)
+    db.executemany("INSERT INTO en_sv_wiktionary VALUES (?, ?, ?, ?)", en_sv_wiktionary)
 
     meta = {
         "schema_version": str(SCHEMA_VERSION),
@@ -630,6 +652,7 @@ def build(sources_dir, out_path, stats):
     for name, url in SOURCES.items():
         meta[f"source.{name}.url"] = url
         meta[f"source.{name}.sha256"] = checksums[name]
+    meta["source.wiktionary.url"] = wiktionary.KAIKKI_SV_URL
     db.executemany("INSERT INTO meta VALUES (?, ?)", sorted(meta.items()))
     db.commit()
     db.execute("ANALYZE")

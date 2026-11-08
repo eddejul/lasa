@@ -165,6 +165,9 @@ final class ReflowReaderViewController: UIViewController {
         view.backgroundColor = theme.paperColor
         NotificationCenter.default.addObserver(self, selector: #selector(appThemeChanged), name: Theme.didChange,
                                                object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(savedWordMarksChanged),
+                                               name: SavedWordMarks.didChange, object: nil)
+        SavedWordMarks.shared.refresh()
 
         // Webbvyerna ligger längst ner, under ett papper, så att de aldrig syns.
         webHost.isUserInteractionEnabled = false
@@ -1238,7 +1241,10 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
         if onRibbon, gestureRecognizer is UITapGestureRecognizer {
             return false
         }
-        let onMark = markHit(at: touch.location(in: view)) != nil
+        let onMark = markHit(at: touch.location(in: view)).map { hit in
+            // O4: ett sparat ord tar trycket bara mitt på sidan, så att kanterna alltid bläddrar.
+            !SavedWordMarks.isWordID(hit.id) || Self.isMiddle(touch.location(in: view).x, width: view.bounds.width)
+        } ?? false
         if gestureRecognizer === markTap {
             return !markMode && onMark
         }
@@ -1563,10 +1569,40 @@ extension ReflowReaderViewController {
                              + "\(UserWords.shared.savedWords().first?.word ?? "inget"). "
                              + (LookupStats.shared.summary ?? "Ingen tid för rutan."))
                 clearPressedWord()
+                await selfTestWordMarks(name: name)
                 return
             }
         }
         SelfTest.log("FEL: hittade inget ord på sidan")
+    }
+
+    /// O4: ordet som just slogs upp är sparat och ska ha fått ett streck på sidan, och ett tryck på strecket
+    /// ska hitta ordet.
+    fileprivate func selfTestWordMarks(name: String) async {
+        // Ordet som slogs upp kan vara ett småord, som inte får något streck. Två ord ur testböckerna sparas
+        // därför också, som om de slagits upp.
+        for word in ["kunskap", "vacker"] {
+            UserWords.shared.save(word: word, lemma: word, language: .swedish, sentence: word, book: book.title,
+                                  pageIndex: 0, bookID: book.id)
+        }
+        var shown: [ReflowMarkRect] = []
+        for _ in 0..<30 {
+            await pause(0.2)
+            shown = visiblePages.flatMap { $0.marks }.filter { SavedWordMarks.isWordID($0.id) }
+            if !shown.isEmpty {
+                break
+            }
+        }
+        var tapped = "INGET"
+        if let first = shown.first,
+           let page = visiblePages.first(where: { !$0.markRects(id: first.id).isEmpty }),
+           let rect = page.markRects(id: first.id).first {
+            let center = view.convert(CGPoint(x: rect.midX, y: rect.midY), from: page.view)
+            tapped = markHit(at: center)?.id ?? "INGET"
+        }
+        SelfTest.log("Dina ord i texten (O4): \(shown.count) streck på sidorna, former \(SavedWordMarks.shared.forms.count), "
+                     + "tryck på strecket hittar \(tapped)")
+        SelfTest.saveScreen(view, name: name + "-ordstreck")
     }
 }
 
@@ -1617,6 +1653,40 @@ extension ReflowReaderViewController {
         renderer.marksProvider = { chapter in
             ReflowMarks.arguments(for: AnnotationStore.shared.highlights(book: key, section: chapter))
         }
+        renderer.wordsProvider = {
+            SavedWordMarks.shared.forms
+        }
+    }
+
+    /// O4: de sparade orden har ändrats, eller strecken slogs av eller på: lägg in dem igen i kapitlen som syns.
+    @objc fileprivate func savedWordMarksChanged() {
+        // Även kapitel som är laddade men inte syns, så att nästa kapitel också har strecken.
+        let shown = Set(visiblePages.filter { !$0.isBlank }.map(\.chapter))
+        for chapter in shown.union(renderer?.loadedChapters ?? []) {
+            reloadMarks(inChapter: chapter)
+        }
+    }
+
+    /// Mitten av sidan, där ett tryck inte bläddrar.
+    fileprivate static func isMiddle(_ x: CGFloat, width: CGFloat) -> Bool {
+        let position = x / max(width, 1)
+        return position > 0.3 && position < 0.7
+    }
+
+    /// O4: ett tryck på ett streck visar ordkortet för det sparade ordet, med meningen det sparades i.
+    fileprivate func presentSavedWord(id: String, page: ReflowPageViewController, at point: CGPoint) {
+        guard presentedViewController == nil, let word = SavedWordMarks.word(fromID: id),
+              let saved = UserWords.shared.savedWords().first(where: { $0.lemma == word.lemma && $0.language == word.language })
+        else { return }
+        let lookup = WordDictionary.shared?.lookup(saved.word, sentence: saved.sentence, language: saved.language,
+                                                   hidden: UserWords.shared.hiddenPairs)
+        var context = WordPopupViewController.Context(sentence: saved.sentence, rangeInSentence: nil, book: saved.book,
+                                                      pageIndex: saved.pageIndex, triedWord: saved.word)
+        context.savesWord = false
+        let anchor = HighlightMenuViewController.anchor(for: page.markRects(id: id), in: view, from: page.view,
+                                                        fallback: point)
+        WordPopupViewController.present(lookup: lookup, context: context, from: self, sourceView: view,
+                                        sourceRect: anchor, onReady: {}, onDismiss: {})
     }
 
     /// Markeringarna i ett kapitel har ändrats: lägg in dem igen och rita om sidorna.
@@ -1676,7 +1746,7 @@ extension ReflowReaderViewController {
             }), let number = page.page else { return }
             let local = page.view.convert(point, from: view)
             let pagePoint = page.pagePoint(local)
-            let tapped = page.markID(at: local)
+            let tapped = page.markID(at: local).flatMap { SavedWordMarks.isWordID($0) ? nil : $0 }
             markSelection = ReflowMarkSelection(page: page,
                                                 address: ReflowPage(chapter: page.chapter, page: number),
                                                 start: pagePoint,
@@ -1789,6 +1859,10 @@ extension ReflowReaderViewController {
     @objc fileprivate func handleMarkTap(_ tap: UITapGestureRecognizer) {
         let point = tap.location(in: view)
         guard let hit = markHit(at: point) else { return }
+        if SavedWordMarks.isWordID(hit.id) {
+            presentSavedWord(id: hit.id, page: hit.page, at: point)
+            return
+        }
         presentMarkMenu(id: hit.id, at: point)
     }
 

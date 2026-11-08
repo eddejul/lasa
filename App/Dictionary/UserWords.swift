@@ -19,6 +19,8 @@ struct SavedWord {
     let pageIndex: Int
     let lookups: Int
     let date: Date
+    /// O7: betydelsen som valts när ordet sparades (id ur ordboken), tom om ingen valts.
+    var senseID = ""
 }
 
 /// Sparade ord och dolda synonympar, i en egen liten databas under Application Support.
@@ -27,6 +29,9 @@ struct SavedWord {
 final class UserWords {
 
     static let shared = UserWords()
+
+    /// Skickas när sparade ord eller deras repetition har ändrats (O4: strecken i texten ritas om).
+    static let didChange = Notification.Name("UserWordsDidChange")
 
     private let db: SQLiteDatabase?
     private(set) var hiddenPairs: Set<HiddenPair> = []
@@ -82,6 +87,11 @@ final class UserWords {
         """
             ALTER TABLE saved_words ADD COLUMN book_id TEXT NOT NULL DEFAULT '';
             """,
+        // Steg 3 (O7): betydelsen som valts för ordet (sense_id i ordboken), tom när ingen valts.
+        // Den följer inte med i synken ännu.
+        """
+            ALTER TABLE saved_words ADD COLUMN sense_id TEXT NOT NULL DEFAULT '';
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.
@@ -126,6 +136,14 @@ final class UserWords {
         try db.replaceContents(with: url)
         try db.migrate(Self.migrations)
         loadHiddenPairs()
+        changed()
+    }
+
+    /// Säger till att orden har ändrats, i nästa varv så att en skrivning hinner klart först.
+    fileprivate func changed() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: UserWords.didChange, object: nil)
+        }
     }
 
     /// Kör en skrivning i en transaktion: allt eller inget. Går det inte säger appen till.
@@ -171,6 +189,7 @@ final class UserWords {
                 """, [word, lemma, language.rawValue, sentence, book, pageIndex, now, now, bookID ?? ""])
             try db.execute("DELETE FROM deleted_words WHERE lemma = ? AND language = ?", [lemma, language.rawValue])
         }
+        changed()
     }
 
     /// De sparade orden, senast uppslaget först.
@@ -178,7 +197,7 @@ final class UserWords {
         var words: [SavedWord] = []
         read("orden") { db in
             try db.query("""
-                SELECT id, word, lemma, language, sentence, book, page, lookups, updated
+                SELECT id, word, lemma, language, sentence, book, page, lookups, updated, sense_id
                 FROM saved_words ORDER BY updated DESC
                 """) { row in
                 words.append(SavedWord(id: row.int(0),
@@ -189,7 +208,8 @@ final class UserWords {
                                        book: row.string(5),
                                        pageIndex: row.int(6),
                                        lookups: row.int(7),
-                                       date: Date(timeIntervalSince1970: row.double(8))))
+                                       date: Date(timeIntervalSince1970: row.double(8)),
+                                       senseID: row.string(9)))
             }
         }
         return words
@@ -206,6 +226,7 @@ final class UserWords {
                 try Self.rememberDeleted(db, lemma: found.0, language: found.1)
             }
         }
+        changed()
     }
 
     func delete(lemma: String, language: WordLanguage) {
@@ -213,6 +234,7 @@ final class UserWords {
             try db.execute("DELETE FROM saved_words WHERE lemma = ? AND language = ?", [lemma, language.rawValue])
             try Self.rememberDeleted(db, lemma: lemma, language: language.rawValue)
         }
+        changed()
     }
 
     /// Ett borttaget ord minns med tiden, så att synken (fas 6) kan ta bort det på andra enheter.
@@ -222,6 +244,26 @@ final class UserWords {
         try db.execute("INSERT OR REPLACE INTO deleted_words (lemma, language, deleted) VALUES (?, ?, ?)",
                        [lemma, language, now])
         try db.execute("DELETE FROM reviews WHERE lemma = ? AND language = ?", [lemma, language])
+    }
+
+    /// O7: sparar betydelsen som valts för ett sparat ord. Ett ord som inte är sparat ändras inte.
+    func setSense(lemma: String, language: WordLanguage, senseID: String) {
+        write("betydelsen") { db in
+            try db.execute("UPDATE saved_words SET sense_id = ? WHERE lemma = ? AND language = ?",
+                           [senseID, lemma, language.rawValue])
+        }
+    }
+
+    /// O7: betydelsen som valts för ordet, eller nil om ordet inte är sparat eller ingen valts.
+    func senseID(lemma: String, language: WordLanguage) -> String? {
+        var found: String?
+        read("betydelsen") { db in
+            try db.query("SELECT sense_id FROM saved_words WHERE lemma = ? AND language = ?",
+                         [lemma, language.rawValue]) { row in
+                found = row.string(0)
+            }
+        }
+        return found.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     func isSaved(lemma: String, language: WordLanguage) -> Bool {
@@ -370,6 +412,17 @@ extension UserWords {
         return Array(cards.prefix(limit))
     }
 
+    /// O4: repetitionens intervall i dagar per ord (nyckel språk|grundform).
+    func reviewIntervals() -> [String: Double] {
+        var result: [String: Double] = [:]
+        read("repetitionens intervall") { db in
+            try db.query("SELECT lemma, language, interval FROM reviews") { row in
+                result[row.string(1) + "|" + row.string(0)] = row.double(2)
+            }
+        }
+        return result
+    }
+
     /// Antalet ord på tur och nya ord som kan tas i dag, till knappen Repetera.
     func reviewCount(now: Date = Date()) -> Int {
         reviewQueue(now: now).count
@@ -390,6 +443,7 @@ extension UserWords {
                 """, [card.word.lemma, card.word.language.rawValue, current + next.interval * 86_400, next.interval,
                       next.ease, next.reps, card.lapses + (next.lapse ? 1 : 0), current, current])
         }
+        changed()
         return next.interval
     }
 }
@@ -510,5 +564,6 @@ extension UserWords {
                           word.lapses ?? 0, reviewUpdated, reviewUpdated])
             }
         }
+        changed()
     }
 }

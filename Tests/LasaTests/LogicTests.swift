@@ -209,3 +209,87 @@ final class AppExpiryTests: XCTestCase {
         XCTAssertNil(AppExpiry.parse(Data("ingen plist".utf8)))
     }
 }
+
+/// Ordkortet (U4) och den valda betydelsen (O7).
+final class WordCardTests: XCTestCase {
+
+    private func sense(_ id: String, _ definition: String?, _ synonyms: [String]) -> WordSense {
+        WordSense(id: id, definition: definition,
+                  synonyms: synonyms.map { Synonym(word: $0, score: 4, frequency: 4) })
+    }
+
+    private var entries: [WordEntry] {
+        [WordEntry(lemma: "lätt", pos: "av", posName: "adjektiv",
+                   senses: [sense("lätt..1", "som väger lite", ["lättviktig"]),
+                            sense("lätt..2", nil, ["enkel", "okomplicerad", "simpel", "busenkel", "elementär"])],
+                   translations: [], translationVia: nil),
+         WordEntry(lemma: "lätt", pos: "ab", posName: "adverb",
+                   senses: [sense("lätt..3", "utan svårighet", [])],
+                   translations: [], translationVia: nil)]
+    }
+
+    func testChosenSenseIsFoundInAnyEntry() {
+        XCTAssertEqual(WordText.sense(withID: "lätt..2", in: entries)?.sense.id, "lätt..2")
+        XCTAssertEqual(WordText.sense(withID: "lätt..3", in: entries)?.entry.pos, "ab")
+    }
+
+    func testNoChoiceGivesNil() {
+        XCTAssertNil(WordText.sense(withID: "", in: entries))
+        XCTAssertNil(WordText.sense(withID: "finns..9", in: entries))
+    }
+
+    func testGlossIsDefinitionOrFourSynonyms() {
+        XCTAssertEqual(WordText.gloss(entries[0].senses[0]), "som väger lite")
+        XCTAssertEqual(WordText.gloss(entries[0].senses[1]), "enkel, okomplicerad, simpel, busenkel")
+    }
+
+    func testSourceLine() {
+        XCTAssertEqual(WordText.source(book: "Retorikens grunder", pageIndex: 87), "Retorikens grunder, s. 88")
+        XCTAssertEqual(WordText.source(book: "Bok", pageIndex: nil), "Bok")
+        XCTAssertNil(WordText.source(book: nil, pageIndex: 3))
+        XCTAssertNil(WordText.source(book: "", pageIndex: 3))
+    }
+}
+
+/// Dina ord i texten (O4): matchningen av sparade ord i en text.
+final class SavedWordMatcherTests: XCTestCase {
+
+    func testFormsAreMatchedWithPositions() {
+        let forms = ["kunskap": "w:sv|kunskap", "kunskapen": "k:sv|kunskap"]
+        let found = SavedWordMatcher.matches(in: "Kunskap är makt. Kunskapen växer.", forms: forms)
+        XCTAssertEqual(found.map { $0.range }, [NSRange(location: 0, length: 7), NSRange(location: 17, length: 9)])
+        XCTAssertEqual(found.map { $0.value }, ["w:sv|kunskap", "k:sv|kunskap"])
+    }
+
+    func testPartOfLongerWordIsNotMatched() {
+        XCTAssertTrue(SavedWordMatcher.matches(in: "kunskapsteori", forms: ["kunskap": "w:sv|kunskap"]).isEmpty)
+        XCTAssertTrue(SavedWordMatcher.matches(in: "", forms: ["kunskap": "w:sv|kunskap"]).isEmpty)
+    }
+
+    func testCurlyApostropheMatchesStraight() {
+        let found = SavedWordMatcher.matches(in: "We don’t know.", forms: ["don't": "w:en|do"])
+        XCTAssertEqual(found.first?.range, NSRange(location: 3, length: 5))
+    }
+
+    func testEnglishRegularForms() {
+        XCTAssertTrue(SavedWordMatcher.englishForms(of: "stop").isSuperset(of: ["stops", "stopped", "stopping"]))
+        XCTAssertTrue(SavedWordMatcher.englishForms(of: "study").isSuperset(of: ["studies", "studied", "studying"]))
+        XCTAssertTrue(SavedWordMatcher.englishForms(of: "make").isSuperset(of: ["makes", "making"]))
+        XCTAssertTrue(SavedWordMatcher.englishForms(of: "box").contains("boxes"))
+    }
+
+    func testFunctionWordsGetNoMark() {
+        XCTAssertTrue(SavedWordMatcher.isFunctionWord("det"))
+        XCTAssertTrue(SavedWordMatcher.isFunctionWord("the"))
+        XCTAssertFalse(SavedWordMatcher.isFunctionWord("kunskap"))
+        XCTAssertFalse(SavedWordMatcher.isFunctionWord("eklatant"))
+    }
+
+    func testIDGivesLanguageAndLemma() {
+        XCTAssertEqual(SavedWordMarks.word(fromID: "ord:sv|lätt")?.lemma, "lätt")
+        XCTAssertEqual(SavedWordMarks.word(fromID: "ord:en|run up")?.language, .english)
+        XCTAssertNil(SavedWordMarks.word(fromID: "ord:xx|lätt"))
+        XCTAssertTrue(SavedWordMarks.isWordID("ord:sv|lätt"))
+        XCTAssertFalse(SavedWordMarks.isWordID("6f1c2d3e-0000"))
+    }
+}

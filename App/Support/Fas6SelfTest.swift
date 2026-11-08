@@ -87,6 +87,8 @@ enum Fas6SelfTest {
             SelfTest.log("FEL: vacker hittades inte i ordboken")
         }
 
+        await testWordCard(navigation: navigation)
+
         // Synken mot låtsasservern.
         await testSync(navigation: navigation)
 
@@ -109,6 +111,150 @@ enum Fas6SelfTest {
 
         testLog()
         SelfTest.finish()
+    }
+
+    /// U4 och O7: ordkortet, fotograferat i en ruta i kortets storlek på en tom sida (popovers kommer inte med i
+    /// appens egna bilder i iOS 26), betydelsen som väljs och repetitionen som sedan bara visar den.
+    private static func testWordCard(navigation: UINavigationController) async {
+        guard let dictionary = WordDictionary.shared else { return }
+        // En låtsasnyckel, så att AI-knappen syns. Den används inte.
+        Keychain.set("test", for: .geminiAPIKey)
+        defer { Keychain.set(nil, for: .geminiAPIKey) }
+        let host = UIViewController()
+        host.view.backgroundColor = Theme.current.canvas
+        // Liten menyrad, så att den inte går in över kortet i bilderna.
+        host.navigationItem.largeTitleDisplayMode = .never
+        navigation.pushViewController(host, animated: false)
+        await pause(0.3)
+
+        func card(_ word: String, _ sentence: String, book: String? = "Retorikens grunder") -> WordPopupViewController {
+            let found = (sentence as NSString).range(of: word, options: .caseInsensitive)
+            let range: NSRange? = found.location == NSNotFound ? nil : found
+            let lookup = dictionary.lookup(word, sentence: sentence, rangeInSentence: range,
+                                           hidden: UserWords.shared.hiddenPairs)
+            let context = WordPopupViewController.Context(sentence: sentence, rangeInSentence: range, book: book,
+                                                          pageIndex: 87, triedWord: word)
+            return WordPopupViewController(lookup: lookup, context: context)
+        }
+        func mount(_ card: WordPopupViewController, width: CGFloat = WordPopupViewController.cardWidth,
+                   height: CGFloat? = nil) async -> UINavigationController {
+            let wrapper = WordPopupNavigationController(rootViewController: card)
+            wrapper.setNavigationBarHidden(true, animated: false)
+            host.addChild(wrapper)
+            wrapper.view.frame = CGRect(x: 24, y: 140, width: width, height: height ?? 640)
+            wrapper.view.layer.cornerRadius = 20
+            wrapper.view.clipsToBounds = true
+            host.view.addSubview(wrapper.view)
+            wrapper.didMove(toParent: host)
+            await pause(0.6)
+            if height == nil {
+                wrapper.view.frame.size.height = card.contentHeight
+                await pause(0.3)
+            }
+            return wrapper
+        }
+        func unmount(_ wrapper: UINavigationController) {
+            wrapper.willMove(toParent: nil)
+            wrapper.view.removeFromSuperview()
+            wrapper.removeFromParent()
+        }
+
+        // Svenskt och engelskt ord.
+        let swedish = card("vacker", "Alla var överens om att den var vacker.")
+        var wrapper = await mount(swedish)
+        SelfTest.log("Ordkort (U4) vacker: höjd \(Int(swedish.contentHeight)), \(swedish.senseSummaryForTest)")
+        SelfTest.saveScreen(host.view, name: "07a-ordkort-svenskt")
+        unmount(wrapper)
+        let english = card("difficulties", "The difficulties they encountered were greater than anyone had expected.")
+        wrapper = await mount(english)
+        SelfTest.log("Ordkort (U4) difficulties: höjd \(Int(english.contentHeight)), \(english.senseSummaryForTest)")
+        SelfTest.saveScreen(host.view, name: "07b-ordkort-engelskt")
+        unmount(wrapper)
+
+        // O10: uttal, ursprung och fler översättningar ur Wiktionary.
+        var wiktionary: [String] = []
+        let samples: [(String, WordLanguage)] = [("vacker", .swedish), ("retorik", .swedish), ("eklatant", .swedish),
+                                                 ("difficulty", .english), ("striking", .english)]
+        for (word, language) in samples {
+            guard let entry = dictionary.lookup(word, language: language)?.entries.first else { continue }
+            let extras = dictionary.extras(for: entry, language: language)
+            wiktionary.append("\(word): uttal \(extras.ipa ?? "inget"), ursprung \(extras.etymology ?? "inget"), "
+                              + "fler översättningar \(extras.moreTranslations.joined(separator: ", "))")
+        }
+        SelfTest.log("Wiktionary (O10): " + wiktionary.joined(separator: " | "))
+
+        // iPhone: ark i halv höjd (iPhone 12 är 390 x 844 punkter) med stängknapp.
+        let phone = card("difficulties", "The difficulties they encountered were greater than anyone had expected.")
+        phone.showsCloseButton = true
+        wrapper = await mount(phone, width: 390, height: 422)
+        SelfTest.saveScreen(host.view, name: "07f-ordkort-iphone")
+        unmount(wrapper)
+
+        // O7: ett ord med flera betydelser. AI:n föreslår den andra, betydelserna fälls ut och den andra väljs.
+        let sentence = "Det var inte lätt att förstå vad talaren menade."
+        let candidates = ["lätt", "fast", "slå", "skarp", "bära"]
+        guard let word = candidates.first(where: { (dictionary.lookup($0)?.entries.first?.senses.count ?? 0) > 1 }),
+              let lookup = dictionary.lookup(word, sentence: sentence),
+              let entry = lookup.entries.first else {
+            SelfTest.log("FEL: inget testord med flera betydelser")
+            navigation.popToRootViewController(animated: false)
+            return
+        }
+        UserWords.shared.save(word: word, lemma: entry.lemma, language: lookup.language, sentence: sentence,
+                              book: "Retorikens grunder", pageIndex: 87)
+        let multi = card(word, sentence)
+        wrapper = await mount(multi)
+        multi.showAIAnswerForTest(WordExplanation(senseText: WordText.gloss(entry.senses[1]),
+                                                  bestWord: entry.senses[1].synonyms.first?.word,
+                                                  explanation: "Här betyder det att något inte var enkelt."))
+        await pause(0.4)
+        wrapper.view.frame.size.height = multi.contentHeight
+        await pause(0.3)
+        SelfTest.saveScreen(host.view, name: "07e-ordkort-ai")
+        multi.expandSensesForTest()
+        await pause(0.4)
+        wrapper.view.frame.size.height = multi.contentHeight
+        await pause(0.3)
+        SelfTest.log("Ordkort (O7) \(word): \(multi.senseSummaryForTest), höjd med betydelserna \(Int(multi.contentHeight))")
+        SelfTest.saveScreen(host.view, name: "07c-ordkort-betydelser")
+        if let id = multi.senseIDForTest(1) {
+            multi.choose(senseID: id)
+        }
+        await pause(0.5)
+        wrapper.view.frame.size.height = multi.contentHeight
+        await pause(0.3)
+        SelfTest.saveScreen(host.view, name: "07d-ordkort-vald-betydelse")
+        unmount(wrapper)
+        let stored = UserWords.shared.senseID(lemma: entry.lemma, language: lookup.language)
+        SelfTest.log("Vald betydelse sparad: \(stored ?? "INGEN") (ska vara \(entry.senses[1].id)), \(multi.senseSummaryForTest)")
+
+        // Ett nytt kort för samma ord visar den valda betydelsen överst.
+        let again = card(word, sentence)
+        wrapper = await mount(again)
+        SelfTest.log("Nytt kort för \(word): \(again.senseSummaryForTest)")
+        unmount(wrapper)
+
+        // Repetitionen visar bara den valda betydelsen.
+        if let saved = UserWords.shared.savedWords().first(where: { $0.lemma == entry.lemma && $0.language == lookup.language }) {
+            let answer = WordReviewViewController.answer(for: saved)
+            let chosen = entry.senses[1]
+            let expected = chosen.definition ?? WordText.synonymLine(chosen)
+            let other = entry.senses[0].definition ?? WordText.synonymLine(entry.senses[0])
+            let showsChosen = answer.contains(expected) ? "visar den" : "VISAR INTE DEN"
+            let showsOther = answer.contains(other) && other != expected ? "VISAS OCKSÅ" : "visas inte"
+            SelfTest.log("Repetitionen med vald betydelse (\(saved.senseID)): \(showsChosen), första betydelsen \(showsOther)")
+            let review = WordReviewViewController()
+            navigation.pushViewController(review, animated: false)
+            await pause(0.6)
+            review.showOnlyForTest(saved)
+            await pause(0.4)
+            SelfTest.saveScreen(navigation.view, name: "07g-repetition-vald-betydelse")
+        } else {
+            SelfTest.log("FEL: \(word) sparades inte")
+        }
+        UserWords.shared.delete(lemma: entry.lemma, language: lookup.language)
+        navigation.popToRootViewController(animated: false)
+        await pause(0.3)
     }
 
     /// G4: loggen i Filer har startraden och raderna som de andra självtesten gav upphov till.

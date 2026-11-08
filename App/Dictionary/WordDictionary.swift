@@ -86,6 +86,15 @@ struct WordLookup {
     }
 }
 
+/// O10: uttal, ursprung och fler översättningar ur Wiktionary (via kaikki.org). Hör inte till uppslaget
+/// (`lookup`), utan läses av ordkortet för det uppslagsord som visas. Tomt med en äldre ordboksfil.
+struct WordExtras {
+    var ipa: String?
+    var etymology: String?
+    /// Fler svenska översättningar av ett engelskt ord, utöver Folkets lexikon.
+    var moreTranslations: [String] = []
+}
+
 /// Ordboken: en SQLite-fil som byggs av tools/dictionary/build.py och ligger i appen.
 ///
 /// Logiken här ska vara densamma som i tools/dictionary/lookup.py, som testrapporten använder.
@@ -523,6 +532,62 @@ final class WordDictionary {
         }
         let classes: [NLTag: String] = [.noun: "n", .verb: "v", .adjective: "a", .adverb: "r"]
         return tag.flatMap { classes[$0] }
+    }
+
+    // MARK: Wiktionary (O10)
+
+    /// Uttal och ursprung för ett svenskt ord, fler översättningar för ett engelskt. Tabellerna saknas i
+    /// äldre ordboksfiler, då blir svaret tomt.
+    func extras(for entry: WordEntry, language: WordLanguage) -> WordExtras {
+        var extras = WordExtras()
+        switch language {
+        case .swedish:
+            try? db.query("SELECT ipa, etymology FROM sv_wiktionary WHERE lemma = ?", [entry.lemma]) { row in
+                let ipa = row.string(0)
+                let etymology = row.string(1)
+                extras.ipa = ipa.isEmpty ? nil : ipa
+                extras.etymology = etymology.isEmpty ? nil : etymology
+            }
+        case .english:
+            let known = Set(entry.translations.map { $0.text.lowercased() })
+            try? db.query("SELECT sv FROM en_sv_wiktionary WHERE en_lemma = ? AND pos = ? ORDER BY rank",
+                          [Self.normalize(entry.lemma), entry.pos]) { row in
+                let word = row.string(0)
+                if !known.contains(word.lowercased()) {
+                    extras.moreTranslations.append(word)
+                }
+            }
+        }
+        return extras
+    }
+
+    // MARK: Dina ord i texten (O4)
+
+    /// Böjningsformerna för en grundform ur formtabellen. Tabellens nyckel börjar med formen, så formerna
+    /// letas i intervallet av former med samma två första bokstäver, och med omljud (bok och böcker).
+    /// Används av `SavedWordMarks` i bakgrunden, med en egen instans av ordboken.
+    func forms(ofLemma lemma: String, language: WordLanguage) -> [String] {
+        let chars = Array(Self.normalize(lemma))
+        guard !chars.isEmpty else { return [] }
+        let table = language == .swedish ? "sv_forms" : "en_forms"
+        var prefixes: Set<String> = []
+        if chars.count == 1 {
+            prefixes.insert(String(chars[0]))
+        } else {
+            prefixes.insert(String(chars[0...1]))
+            let umlaut: [Character: Character] = ["a": "ä", "o": "ö", "u": "y", "å": "ä"]
+            if let variant = umlaut[chars[1]] {
+                prefixes.insert(String([chars[0], variant]))
+            }
+        }
+        var result: [String] = []
+        for prefix in prefixes {
+            try? db.query("SELECT form FROM \(table) WHERE form >= ? AND form < ? AND lemma = ?",
+                          [prefix, prefix + "\u{FFFF}", lemma]) { row in
+                result.append(row.string(0))
+            }
+        }
+        return result
     }
 
     // MARK: Om ordboken

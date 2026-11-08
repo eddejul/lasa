@@ -1,9 +1,10 @@
 """Testrapporten: appens svar för varje ord i testwords.txt, så att de kan jämföras med svenska.se."""
 
 import datetime
+import sqlite3
 import time
 
-from lookup import Dictionary, format_result
+from lookup import Dictionary, format_result, normalize
 
 
 def read_testwords(path):
@@ -21,8 +22,31 @@ def read_testwords(path):
     return words
 
 
+def wiktionary_lines(db, language, result):
+    """O10: uttal och ursprung (svenska) eller fler översättningar (engelska) för första uppslagsordet,
+    som ordkortet visar dem. Hör inte till uppslaget, så lookup.py och lookup.js är oförändrade."""
+    if not result or not result["entries"]:
+        return []
+    entry = result["entries"][0]
+    try:
+        if language == "sv":
+            row = db.execute("SELECT ipa, etymology FROM sv_wiktionary WHERE lemma = ?", (entry["lemma"],)).fetchone()
+            if row and (row[0] or row[1]):
+                return [f"      WIKTIONARY: {row[0] or '(inget uttal)'} | {row[1] or '(inget ursprung)'}"]
+        else:
+            words = [row[0] for row in db.execute(
+                "SELECT sv FROM en_sv_wiktionary WHERE en_lemma = ? AND pos = ? ORDER BY rank",
+                (normalize(entry["lemma"]), entry["pos"]))]
+            if words:
+                return ["      WIKTIONARY, FLER: " + ", ".join(words)]
+    except sqlite3.OperationalError:
+        return []
+    return []
+
+
 def write_report(db_path, testwords_path, report_path, stats, checksums):
     dictionary = Dictionary(db_path)
+    wiktionary = sqlite3.connect(db_path)
     words = read_testwords(testwords_path)
     lines = [
         "Läsa, testrapport för ordboken",
@@ -50,6 +74,7 @@ def write_report(db_path, testwords_path, report_path, stats, checksums):
         note = "  (finns också i den andra språkets tabell)" if other else ""
         body.append(f"[{language}] {word}{note}")
         body.append(format_result(result))
+        body.extend(wiktionary_lines(wiktionary, language, result))
         if result:
             counts = summary[language]
             counts[0] += 1
