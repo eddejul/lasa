@@ -1960,6 +1960,11 @@ extension ReflowReaderViewController {
             Haptics.shared.wordTapped()
         } else {
             existing.forEach { AnnotationStore.shared.delete($0) }
+            // Granskning 2, N7: ett tryck på bandet ska aldrig ta bort ett bokmärke utan väg tillbaka.
+            UndoBar.show(existing.count == 1 ? "Bokmärket borttaget" : "Bokmärkena borttagna", in: view) { [weak self] in
+                existing.forEach { AnnotationStore.shared.undelete($0) }
+                self?.bookmarksChanged()
+            }
         }
         bookmarksChanged()
     }
@@ -2149,6 +2154,18 @@ extension ReflowReaderViewController {
         await pause(0.3)
         SelfTest.log("Bokmärke: \(bookmarkItem?.accessibilityValue ?? "inget"), \(bookmarks.count) i boken")
         selfTestChromeLayout()
+        // Granskning 2, N7: bokmärket tas bort med raden Ångra, och Ångra tar tillbaka det.
+        let bookmarksBefore = bookmarks.count
+        toggleBookmark()
+        await pause(0.3)
+        let bookmarksRemoved = bookmarks.count
+        let undoShown = UndoBar.current != nil
+        UndoBar.current?.performUndo()
+        await pause(0.3)
+        SelfTest.log("Bokmärket bort med bandet (N7): \(bookmarksBefore) före, \(bookmarksRemoved) efter, raden Ångra "
+                     + "\(undoShown ? "visas" : "saknas"), \(bookmarks.count) efter Ångra. "
+                     + (bookmarksBefore > 0 && bookmarksRemoved == bookmarksBefore - 1 && undoShown
+                        && bookmarks.count == bookmarksBefore ? "Rätt" : "FEL"))
         setMarkMode(true)
         await pause(0.5)
         SelfTest.saveScreen(view, name: "03d-markeringslage")

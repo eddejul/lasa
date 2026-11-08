@@ -1305,6 +1305,21 @@ extension PDFCurlReaderViewController {
         }
     }
 
+    /// Självtestet (granskning 2, N7): bokmärket tas bort med raden Ångra, och Ångra tar tillbaka det.
+    fileprivate func selfTestUndoBookmark() async {
+        let before = bookmarks.count
+        toggleBookmark()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let removed = bookmarks.count
+        let shown = UndoBar.current != nil
+        SelfTest.saveScreen(view, name: "03e-bokmarke-angra")
+        UndoBar.current?.performUndo()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let ok = before > 0 && removed == before - 1 && shown && bookmarks.count == before
+        SelfTest.log("Bokmärket bort med bandet (N7): \(before) före, \(removed) efter, raden Ångra "
+                     + "\(shown ? "visas" : "saknas"), \(bookmarks.count) efter Ångra. \(ok ? "Rätt" : "FEL")")
+    }
+
     /// Självtestet (U3): menyradens zoner och bandets tryckyta i hörnet.
     fileprivate func selfTestChromeLayout() {
         let left = (navigationItem.leftBarButtonItems ?? []).compactMap(\.accessibilityLabel)
@@ -1329,6 +1344,11 @@ extension PDFCurlReaderViewController {
             Haptics.shared.wordTapped()
         } else {
             existing.forEach { AnnotationStore.shared.delete($0) }
+            // Granskning 2, N7: ett tryck på bandet ska aldrig ta bort ett bokmärke utan väg tillbaka.
+            UndoBar.show(existing.count == 1 ? "Bokmärket borttaget" : "Bokmärkena borttagna", in: view) { [weak self] in
+                existing.forEach { AnnotationStore.shared.undelete($0) }
+                self?.bookmarksChanged()
+            }
         }
         bookmarksChanged()
     }
@@ -1661,6 +1681,7 @@ extension PDFCurlReaderViewController {
         await pause(0.4)
         SelfTest.saveScreen(view, name: "03-bokmarke")
         selfTestChromeLayout()
+        await selfTestUndoBookmark()
 
         setMarkMode(true)
         await pause(0.6)

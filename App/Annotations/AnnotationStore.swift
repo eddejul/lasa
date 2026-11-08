@@ -459,6 +459,15 @@ final class AnnotationStore {
         notify(bookmark.book)
     }
 
+    /// Ångra en borttagning (granskning 2, N7): samma rad syns igen, med ny ändringstid för synken.
+    func undelete(_ bookmark: Bookmark) {
+        write("ångra borttagningen") { db in
+            try db.execute("UPDATE bookmarks SET deleted = 0, updated = ? WHERE id = ?",
+                           [Date().timeIntervalSince1970, bookmark.id])
+        }
+        notify(bookmark.book)
+    }
+
     // MARK: Gemensamt
 
     /// Antalet markeringar och bokmärken i alla böcker. Används av självtestet för att se att de överlever en omstart.
