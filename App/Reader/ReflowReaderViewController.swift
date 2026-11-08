@@ -1482,8 +1482,7 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
         if onLink {
             return false
         }
-        let position = point.x / max(view.bounds.width, 1)
-        let inMiddle = position > 0.3 && position < 0.7
+        let inMiddle = ReaderTapZones.isMiddle(point.x, width: view.bounds.width)
         if gestureRecognizer === chromeTap {
             return inMiddle
         }
@@ -1934,10 +1933,9 @@ extension ReflowReaderViewController {
         }
     }
 
-    /// Mitten av sidan, där ett tryck inte bläddrar.
+    /// Mitten av sidan, där ett tryck inte bläddrar (G12, `ReaderTapZones`).
     fileprivate static func isMiddle(_ x: CGFloat, width: CGFloat) -> Bool {
-        let position = x / max(width, 1)
-        return position > 0.3 && position < 0.7
+        ReaderTapZones.isMiddle(x, width: width)
     }
 
     /// O4: ett tryck på ett streck visar ordkortet för det sparade ordet, med meningen det sparades i.
@@ -2349,6 +2347,12 @@ extension ReflowReaderViewController {
                      + "\(right.joined(separator: ", ")), titel \(title ?? "ingen"), under titeln "
                      + "\(chrome.subtitle ?? "inget"). Bandet i hörnet tar trycket: \(hit ? "ja" : "FEL, nej"), "
                      + "mitten av sidan: \(middle ? "FEL, ja" : "nej")")
+        let edge = ReaderTapZones.edgeWidth(forWidth: view.bounds.width)
+        let middleShare = Int(((view.bounds.width - 2 * edge) / max(view.bounds.width, 1) * 100).rounded())
+        SelfTest.log("Tryckzoner (G12): bläddring \(Int(edge)) punkter från kanterna, menyn i mitten "
+                     + "\(middleShare) procent av bredden \(Int(view.bounds.width)). 15 procent in från vänster: "
+                     + "\(Self.isMiddle(view.bounds.width * 0.15, width: view.bounds.width) ? "menyn" : "bläddrar"), "
+                     + "8 procent: \(Self.isMiddle(view.bounds.width * 0.08, width: view.bounds.width) ? "menyn" : "bläddrar")")
         selfTestTimeline()
     }
 

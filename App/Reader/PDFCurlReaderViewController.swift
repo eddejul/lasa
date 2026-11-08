@@ -1150,9 +1150,7 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
             // Ett tryck på en markering öppnar markeringens ruta, inte menyn eller nästa sida.
             return false
         }
-        let width = max(view.bounds.width, 1)
-        let position = touch.location(in: view).x / width
-        let inMiddle = position > 0.3 && position < 0.7
+        let inMiddle = ReaderTapZones.isMiddle(touch.location(in: view).x, width: view.bounds.width)
 
         if gestureRecognizer === wordPress {
             return true
@@ -1311,10 +1309,9 @@ extension PDFCurlReaderViewController {
         }
     }
 
-    /// Mitten av sidan, där ett tryck inte bläddrar.
+    /// Mitten av sidan, där ett tryck inte bläddrar (G12, `ReaderTapZones`).
     fileprivate static func isMiddle(_ x: CGFloat, width: CGFloat) -> Bool {
-        let position = x / max(width, 1)
-        return position > 0.3 && position < 0.7
+        ReaderTapZones.isMiddle(x, width: width)
     }
 
     /// O4: ett tryck på ett streck visar ordkortet för det sparade ordet, med meningen det sparades i.
