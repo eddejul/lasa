@@ -19,6 +19,9 @@ final class CoverView: UIView {
     private let drawnRule = UIView()
     private let drawnFooter = UILabel()
     private let spine = UIView()
+    /// Typsnittens storlek just nu, så att de bara skapas när omslaget byter storlek.
+    private var titleFontSize: CGFloat = 0
+    private var footerFontSize: CGFloat = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -89,7 +92,8 @@ final class CoverView: UIView {
         let width = bounds.width
         let side = max(width * 0.1, 8)
         let titleSize = max(min(width * 0.12, 22), 12).rounded()
-        if drawnTitle.font.pointSize != titleSize {
+        if titleFontSize != titleSize {
+            titleFontSize = titleSize
             drawnTitle.font = Theme.serif(.title3, size: titleSize, weight: .regular)
         }
         let titleWidth = width - side * 2
@@ -100,7 +104,8 @@ final class CoverView: UIView {
         drawnRule.frame = CGRect(x: (width - width * 0.22) / 2, y: drawnTitle.frame.maxY + 12,
                                  width: width * 0.22, height: 1.5)
         let footerSize = max(min(width * 0.055, 11), 8).rounded()
-        if drawnFooter.font.pointSize != footerSize {
+        if footerFontSize != footerSize {
+            footerFontSize = footerSize
             drawnFooter.font = .systemFont(ofSize: footerSize, weight: .medium)
         }
         drawnFooter.frame = CGRect(x: side, y: bounds.height - side - 14, width: titleWidth, height: 14)
