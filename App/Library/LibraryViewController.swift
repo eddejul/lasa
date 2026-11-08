@@ -29,6 +29,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     private var searchText = ""
     private var reviewCount = 0
     private var savedCount = 0
+    /// B5: kortet Gör mer med Sensus (läses i `reload`, nyckelringen ska inte läsas vid varje utläggning).
+    private var showsMoreCard = false
     /// U9: på iPhone en flikrad längst ner i stället för sidopanelen.
     let phoneBar = UITabBar()
 
@@ -523,6 +525,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         }
         reviewCount = UserWords.shared.reviewCount()
         savedCount = UserWords.shared.savedWords().count
+        showsMoreCard = Onboarding.showsMoreCard
         rebuildItems()
         collectionView.reloadData()
         updateEmptyState()
@@ -900,7 +903,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         case .banner: return expiryText == nil ? 0 : 1
         case .activity: return activityLines.isEmpty ? 0 : 1
         case .continueReading: return continueItem == nil || scope != .all || !searchText.isEmpty ? 0 : 1
-        case .more: return Onboarding.showsMoreCard && scope == .all && searchText.isEmpty && !allItems.isEmpty ? 1 : 0
+        case .more: return showsMoreCard && scope == .all && searchText.isEmpty && !allItems.isEmpty ? 1 : 0
         case .books: return items.count
         case .none: return 0
         }
@@ -938,6 +941,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             }
             cell.onLater = { [weak self] in
                 Onboarding.dismissMoreCard()
+                self?.showsMoreCard = false
                 self?.collectionView.reloadData()
             }
             return cell
