@@ -307,6 +307,8 @@ final class AIKeyGuideViewController: UITableViewController, UITextFieldDelegate
             if saving, !rejected || failureOf(outcome) == .unknownModel(GeminiClient.model) {
                 // Fel modell säger inget om nyckeln: den sparas, och modellen rättas nedanför.
                 Keychain.set(key, for: .geminiAPIKey)
+                // En ny nyckel ärver inte den gamlas läge: utan svar från Google är den inte provad.
+                AIClient.resetKeyStatus()
                 stored = true
             }
             if stored {
