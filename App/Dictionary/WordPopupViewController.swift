@@ -244,6 +244,8 @@ final class WordPopupViewController: UIViewController {
         }
         let navigation = WordPopupNavigationController(rootViewController: popup)
         navigation.onDismiss = onDismiss
+        // Kortet har ingen menyrad. Den döljs redan här, så att kortet inte börjar en menyrad längre ner.
+        navigation.setNavigationBarHidden(true, animated: false)
 
         if presenter.traitCollection.userInterfaceIdiom == .pad {
             navigation.modalPresentationStyle = .popover
@@ -386,6 +388,11 @@ final class WordPopupViewController: UIViewController {
         let size = CGSize(width: Self.cardWidth, height: height)
         if preferredContentSize != size {
             preferredContentSize = size
+        }
+        // Menyraden döljs när kortet visas. Kortet ska då börja överst, inte där menyraden slutade.
+        let top = -scrollView.adjustedContentInset.top
+        if !scrollView.isTracking, !scrollView.isDecelerating, scrollView.contentOffset.y < top {
+            scrollView.contentOffset.y = top
         }
     }
 

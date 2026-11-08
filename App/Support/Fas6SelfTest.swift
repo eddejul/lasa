@@ -112,6 +112,9 @@ enum Fas6SelfTest {
     /// appens egna bilder i iOS 26), betydelsen som väljs och repetitionen som sedan bara visar den.
     private static func testWordCard(navigation: UINavigationController) async {
         guard let dictionary = WordDictionary.shared else { return }
+        // En låtsasnyckel, så att AI-knappen syns. Den används inte.
+        Keychain.set("test", for: .geminiAPIKey)
+        defer { Keychain.set(nil, for: .geminiAPIKey) }
         let host = UIViewController()
         host.view.backgroundColor = Theme.current.canvas
         navigation.pushViewController(host, animated: false)
@@ -129,6 +132,7 @@ enum Fas6SelfTest {
         func mount(_ card: WordPopupViewController, width: CGFloat = WordPopupViewController.cardWidth,
                    height: CGFloat? = nil) async -> UINavigationController {
             let wrapper = WordPopupNavigationController(rootViewController: card)
+            wrapper.setNavigationBarHidden(true, animated: false)
             host.addChild(wrapper)
             wrapper.view.frame = CGRect(x: 24, y: 100, width: width, height: height ?? 640)
             wrapper.view.layer.cornerRadius = 20
