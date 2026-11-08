@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Läsa är en läsapp för iPad och iPhone (Swift, UIKit) med pappersvikning som i Apple Books och en offline ordfunktion. Windows-versionen (fas 5, Tauri) ligger i `windows/`, se `windows/README.md`. Hela specen finns i `docs/SPEC.md`. Läs den innan du börjar på en ny fas.
+Sensus (tidigare Läsa, arbetsnamnet finns kvar i filnamn, mappar och nycklar) är en läsapp för iPad och iPhone (Swift, UIKit) med pappersvikning som i Apple Books och en offline ordfunktion. Windows-versionen (fas 5, Tauri) ligger i `windows/`, se `windows/README.md`. Hela specen finns i `docs/SPEC.md`. Läs den innan du börjar på en ny fas.
 
 ## Viktigast att veta
 
@@ -70,6 +70,10 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Sidans placering och renderingsstorlek får bara bero på vyns storlek och läsarens fasta marginaler, aldrig på om menyraden eller statusfältet syns. Använd inte vyns `safeAreaInsets` för sidan, de ändras med menyraden.
 * Haptik går genom `Haptics.shared`. iPad har ingen vibrationsmotor, där händer inget, och det är förväntat.
 * Det som är lika i PDF- och EPUB-läsaren ligger på ett ställe (G12): menyraden i `ReaderChrome`, hållgestens tider, avbrytandet av vikningen och bubblan i `WordPressGesture` och `WordBubble`, markeringslägets gester och rad i `MarkMode`. Ändra där, inte i läsarna.
+* Färgerna (U1) kommer ur `Theme` (`App/Support/Theme.swift`): en `Palette` med token (canvas, surface, page, ink, accent, ribbon med flera) per bakgrund i `ReaderTheme` (Papper är förvalt). Hårdkoda inga färger i nya vyer, läs `Theme.current`. `Theme.apply()` målar fönstret, systemets tabeller och menyrader och skickar `Theme.didChange`. Rubriker, boktitlar och citat i New York (`Theme.serif`).
+* Menyraden (U3): vänster Innehåll (bredvid tillbaka), mitten titel och kapitel, höger Sök, Markera, Aa och Mer. Aa är `AppearanceViewController` (U2) i båda läsarna. Bokmärket är bandet i sidans hörn: läsarnas `ribbonTap` går före kanttrycket, och sidorna har `ribbonZone` och `showsRibbonHint`.
+* Utseendet i EPUB och text (U2): marginal, radavstånd och justering ligger i `ReaderTypography` och ingår i `key` (nyckeln för sparade sidantal). Radlängden begränsas i CSS (`max(sidmarginal, (100vw minus 34 em) / 2)`), kolumn plus mellanrum är alltid 100vw.
+* Markeringsraden (U5, `HighlightMenuViewController`) pekar på markeringens hela ruta (`markRects(id:)` på sidorna) och läggs ovanför den, eller under när det inte finns plats.
 
 ## EPUB och textfiler (fas 3)
 
@@ -89,7 +93,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * PDF: markeringarna ritas som vyer ovanpå sidbilden i `PDFPageViewController` (ingen omritning av sidan). EPUB: `ReflowMarks.script` lägger span-element runt texten i den dolda webbvyn och sidan fotograferas om. `lasa.showPage` lämnar markeringarnas rutor, så att tryck på en markering hittas utan webbvyn.
 * Sökningen (`BookSearch`) går i bakgrunden: PDF med ett eget `PDFDocument`, EPUB i kapitelfilerna utan taggar. Sökträffen i EPUB letas upp i webbvyn med samma vikning (`FoldedText` i Swift, `fold` i skriptet), n:te träffen med texten runt som kontroll.
 * Sökregistret (G11, `SearchIndex`): bokens text per avsnitt i `sokregister.sqlite` (egen trappa, inte i säkerhetskopian), nyckel bokens id plus en version ur filen. FTS5 med trigram om SQLite har det, annars `instr`. Registret väljer bara avsnitten, träffarna räknas ur originaltexten med `BookSearch.find`, så platserna blir desamma. Saknas eller är det gammalt söks direkt i boken och det byggs om. Höj `SearchIndex.formatVersion` när texten tas fram på ett nytt sätt.
-* Bläddringsljudet räknas fram i appen (`PageTurnSound`), ingen ljudfil. Spelas när en vikning börjar.
+* Bläddringsljudet räknas fram i appen (`PageTurnSound`), ingen ljudfil. Spelas när en vikning börjar. Slås av och på i Inställningar (U2), inte i läsarens menyer.
 * Självtestet provar allt detta i alla testböcker, även en PDF (`test.pdf` från `make_books.py`).
 
 ## Fas 6: repetition, AI-knappen och synk
@@ -105,7 +109,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 ## Grunden (våg 1, 8 november 2026)
 
 * Loggen: `AppLog` skriver `Documents/Diagnostik/logg.txt`, som syns i Filer. Nya fel och tider loggas där, kort och utan text ur böckerna. Apples MetricKit-rapporter sparas i `Diagnostik/MetricKit` (`DiagnosticReports`). Inställningar har Dela loggen, och Simulatortest lägger loggen i artefakten (`Diagnostik/`).
-* Säkerhetskopian: `Backup` sparar en kopia per dag i `Documents/Säkerhetskopia/<datum tid>/` (båda databaserna med SQLite:s backup, läspositionerna ur UserDefaults som JSON) och behåller de sju senaste. Ny användardata (en ny databas, nya nycklar i UserDefaults) ska också in i `Backup`.
+* Säkerhetskopian: `Backup` sparar en kopia per dag i `Documents/Säkerhetskopia/<datum tid>/` (båda databaserna med SQLite:s backup, läspositionerna ur UserDefaults som JSON) och behåller den nyaste per dag för de sju senaste dagarna. Kopian före en flytt av data ligger i `Före uppdateringen <datum tid>/` och rensas aldrig, och rensningen rör aldrig kopian som just återställts. Efter en återställning är synken av till nästa start. Ny användardata (en ny databas, nya nycklar i UserDefaults) ska också in i `Backup`.
 * Utgångsvarningen: `AppExpiry` läser utgångsdatumet ur `embedded.mobileprovision` och visar en rad i biblioteket två dagar före. Simulatorn har ingen profil.
 * Bokregistret (G3, våg 2): tabellen `books` i `markeringar.sqlite` (`BookRegistry`) ger varje bok ett eget id med kontrollsumma (SHA-256, samma som synkens book_id), sökväg i Böcker och titel. Markeringar, bokmärken, läsposition (`bookPosition.<id>`, `bookLocation.<id>`, `bookPositionDate.<id>` i UserDefaults) och sparade ord (`book_id`) hänger på id:t. Matchningen är ren logik i `BookMatcher` (testad i XCTest). Gamla nycklar under filnamnet flyttas en gång av `LegacyBookMigration`, med en säkerhetskopia precis före. Böcker i undermappar syns.
 * Import (G10, `BookImporter`): i bakgrunden genom `NSFileCoordinator`, flytt när systemet redan gjort en kopia, kontrollsumman i samma läsning, förlopp under listan i biblioteket och frågan Ersätt eller Behåll båda vid upptaget namn.

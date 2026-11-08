@@ -1,6 +1,6 @@
-# Läsa: specifikation
+# Sensus: specifikation
 
-Arbetsnamn: **Läsa**. En läsapp för PDF, EPUB och textfiler som ersätter Apple Books, med en ordfunktion: tryck på ett ord och få synonymer (svenska) eller synonymer plus svensk översättning (engelska).
+Namn: **Sensus** (beslutat 8 november 2026, arbetsnamnet Läsa finns kvar i filnamn, bundle-id och mappar). En läsapp för PDF, EPUB och textfiler som ersätter Apple Books, med en ordfunktion: tryck på ett ord och få synonymer (svenska) eller synonymer plus svensk översättning (engelska).
 
 Senast uppdaterad: 7 november 2026.
 
@@ -221,6 +221,15 @@ Byggd 7 november 2026 på grenen `fas6`.
 
 * **Sökregister per bok (G11):** bokens text sparas en gång i bakgrunden när boken öppnats (PDF också när den lagts in), och sökningen letar där i stället för att läsa om hela boken. Träffarna och den orange ramen blir desamma som förut. Saknas registret söker appen direkt i boken som förut.
 * **Gemensam kod för läsarna (G12):** menyraden, bubblan och hållgesten och markeringsläget finns på ett ställe för både PDF och EPUB. Inget ändrat för den som läser.
+
+### 6.9 Våg 3 (8 november 2026)
+
+* **Sensus och ikonen (U8):** hemskärmen visar Sensus med S-ikonen. Bundle-id och mappar är oförändrade, så appen ersätter den gamla.
+* **Papper och bläck (U1):** bakgrunden Papper (varmvitt) är förvald och gäller hela appen: biblioteket, inställningarna, menyraderna och rutorna följer bakgrunden man väljer i läsaren. Vitt finns kvar. Inställningar har Följ systemet (mörkt när iPaden är i mörkt läge).
+* **Markeringsraden (U5):** ett tryck på en markering visar en smal rad ovanför markeringen (under om det inte finns plats): färgerna, Anteckning, Kopiera, Slå upp och Ta bort.
+* **Menyraden (U3):** Bibliotek och Innehåll till vänster, titeln och kapitlet i mitten, Sök, Markera, Aa och Mer till höger. Bokmärket är ett band i sidans övre hörn: tryck där. Det syns som kontur när menyn är framme och rött när sidan har ett bokmärke.
+* **Utseenderutan (U2):** Aa har bakgrunderna och, för EPUB och text, storlek, typsnitt, marginal, radavstånd, justering och Återställ. Raden hålls till ungefär 66 tecken, radavståndet är 1,5 och justerade stycken avstavas på bokens språk. PDF har bakgrunderna och Zooma sidan.
+* **Databasrättningar ur granskningen:** säkerhetskopiorna rensas per dag och aldrig kopian före uppdateringen eller den som återställts, synken väntar till nästa start efter en återställning, och böcker från före bokregistret känns igen på storlek och ändringstid.
 
 ## 7. Bygge och installation
 
