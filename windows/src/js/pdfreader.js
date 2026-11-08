@@ -13,7 +13,10 @@ import { isWordCharacter, wordInPageText } from './wordfind.js';
 
 const PADDING = 16;
 const SCROLLBAR = 18;
-const MAX_CACHED_PAGES = 6;
+// Ritade sidor som hålls i minnet: sidan (eller uppslaget) som syns och de närmaste före och efter.
+// En sida åt gången: högst 4. Uppslag: högst 6 (tre uppslag).
+const MAX_CACHED_PAGES = 4;
+const MAX_CACHED_PAGES_SPREAD = 6;
 // Uppslag när fönstrets yta är så här mycket bredare än hög.
 const SPREAD_RATIO = 1.15;
 // Under den här skalan (1 = PDF:ens egen storlek) blir en hel sida svår att läsa, och Automatiskt
@@ -23,8 +26,9 @@ const READABLE_SCALE = 0.8;
 // A4-sida inte blir dubbelt så stor som på papper i ett brett fönster.
 const AUTO_MAX_SCALE = 1.3;
 export const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2, 2.5];
-// Största canvas i bildpunkter. Större sidor ritas med lägre upplösning, så att minnet räcker.
-const MAX_CANVAS_PIXELS = 16e6;
+// Största canvas i bildpunkter (8 miljoner, cirka 32 MB). Större sidor, som vid hög zoom, ritas med
+// lägre upplösning, så att minnet räcker på en dator med 8 GB.
+const MAX_CANVAS_PIXELS = 8e6;
 
 export class PdfReader {
   constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, getMarks = null, onSelect = null, onMarkClick = null }) {
@@ -423,6 +427,9 @@ export class PdfReader {
     if (this.texts.has(index)) return this.texts.get(index);
     const page = await this.pdf.getPage(index + 1);
     const content = await page.getTextContent();
+    // Sidor som bara söks (inte visas) släpper sina resurser direkt, så att en sökning i en stor bok inte
+    // fyller minnet.
+    if (!this.cache.has(index)) page.cleanup();
     let text = '';
     for (const item of content.items) {
       if (item.str === undefined) continue;
@@ -498,11 +505,12 @@ export class PdfReader {
   }
 
   trimCache() {
-    if (this.cache.size <= MAX_CACHED_PAGES) return;
+    const limit = this.current.length > 1 ? MAX_CACHED_PAGES_SPREAD : MAX_CACHED_PAGES;
+    if (this.cache.size <= limit) return;
     const center = this.current[0];
     const far = [...this.cache.keys()].sort((a, b) => Math.abs(b - center) - Math.abs(a - center));
     for (const page of far) {
-      if (this.cache.size <= MAX_CACHED_PAGES) break;
+      if (this.cache.size <= limit) break;
       if (!this.current.includes(page)) this.forget(page);
     }
   }

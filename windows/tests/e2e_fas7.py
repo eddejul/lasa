@@ -477,7 +477,29 @@ def highlights_and_bookmarks(page, books, out):
     back_to_library(page)
 
 
-STEPS = [search_in_books, shortcuts, highlights_and_bookmarks]
+def memory(page, books, out):
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    page.keyboard.press('Home')
+    for _ in range(6):
+        page.keyboard.press('ArrowRight')
+        page.wait_for_timeout(250)
+    page.wait_for_timeout(600)
+    size = page.evaluate("lasaTest.reader.cache.size")
+    pages = page.evaluate("lasaTest.reader.current.length")
+    check(size <= (6 if pages > 1 else 4), f'högst 4 ritade sidor i minnet (6 i uppslag): {size}, {pages} sida(or) syns')
+    for _ in range(6):
+        page.keyboard.press('Control+Equal')
+        page.wait_for_timeout(200)
+    page.wait_for_timeout(800)
+    pixels = page.evaluate("Math.max(...[...document.querySelectorAll('.pdf-canvas')].map(c => c.width * c.height))")
+    check(pixels <= 8e6 + 1, f'en sida är högst 8 miljoner bildpunkter vid största zoom: {pixels}')
+    page.keyboard.press('Control+Digit0')
+    page.wait_for_timeout(400)
+    back_to_library(page)
+
+
+STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory]
 
 
 def main():
