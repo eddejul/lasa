@@ -460,7 +460,9 @@ enum Fas6SelfTest {
             SelfTest.log("FEL: återställningen från den äldsta kopian: \(error.localizedDescription)")
         }
 
-        // Två kopior till i dag: de ersätter varandra, och de sju dagarna räknas per dag.
+        // N1 (granskning 2): två egna kopior till i dag. Ingen av dagens tidigare kopior tas bort (förut
+        // ersatte de varandra), och de sju dagarna räknas per dag.
+        let earlierToday = Backup.dailyCopies().filter { $0.date >= Calendar.current.startOfDay(for: Date()) }.map(\.url)
         for _ in 0..<2 {
             let extra: Result<Backup.Copy, Error> = await withCheckedContinuation { continuation in
                 Backup.make { continuation.resume(returning: $0) }
@@ -474,13 +476,18 @@ enum Fas6SelfTest {
         let todayCount = daily.filter { $0.date >= today }.count
         let days = Set(daily.map { Calendar.current.startOfDay(for: $0.date) }).count
         let beforeStill = manager.fileExists(atPath: beforeUpdate.path)
-        SelfTest.log("Rensningen per dag (fynd 2): \(daily.count) dagliga kopior på \(days) dagar, \(todayCount) i dag, "
-                     + "Före uppdateringen \(beforeStill ? "kvar" : "borta"). "
-                     + "\(todayCount == 1 && days == 7 && daily.count == 7 && beforeStill ? "Rätt" : "FEL")")
+        let todaysKept = earlierToday.allSatisfy { manager.fileExists(atPath: $0.path) }
+        let kinds = daily.filter { $0.date >= today }.map { SettingsViewController.backupTitle($0) }
+        SelfTest.log("Rensningen per dag (fynd 2, N1): \(daily.count) dagliga kopior på \(days) dagar, \(todayCount) i dag "
+                     + "(\(kinds.joined(separator: "; "))), dagens \(earlierToday.count) tidigare kopior "
+                     + "\(todaysKept ? "kvar" : "FEL, borttagna"), Före uppdateringen \(beforeStill ? "kvar" : "borta"). "
+                     + "\(todaysKept && days == 7 && todayCount == earlierToday.count + 2 && beforeStill ? "Rätt" : "FEL")")
 
-        // Fynd 3: efter en återställning synkar appen inte förrän nästa start.
+        // Fynd 3 (granskning 2): efter en återställning står synken still tills den startas igen, också efter
+        // en omstart (pausen är sparad).
         let engine = SyncEngine.shared
-        engine.pauseUntilRestart()
+        engine.pauseAfterRestore()
+        let saved = UserDefaults.standard.bool(forKey: SyncEngine.pausedKey)
         var paused = false
         do {
             _ = try await engine.sync()
@@ -492,7 +499,9 @@ enum Fas6SelfTest {
         engine.resumeForSelfTest()
         // Återställningen av den påhittade kopian tog tillbaka provets läsposition, som tas bort igen.
         UserDefaults.standard.removeObject(forKey: "position.kopieprov.pdf")
-        SelfTest.log("Synken efter återställning (fynd 3): \(paused ? "avstängd till nästa start. Rätt" : "FEL, körde")")
+        SelfTest.log("Synken efter återställning (fynd 3): \(paused ? "pausad" : "FEL, körde"), pausen sparad "
+                     + "\(saved ? "(gäller efter omstart)" : "FEL, bara i minnet"), startad igen: "
+                     + "\(engine.isPaused ? "FEL" : "ja"). \(paused && saved && !engine.isPaused ? "Rätt" : "FEL")")
     }
 
     private static func testSync(navigation: UINavigationController) async {

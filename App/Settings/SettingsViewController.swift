@@ -16,6 +16,8 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         case syncPassword
         case syncSignIn
         case syncNow
+        case syncPaused
+        case syncResume
         case syncStatus
         case syncSignOut
         case backupStatus
@@ -70,8 +72,12 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     private func rebuild() {
         let client = SyncClient.shared
         var syncRows: [Row] = [.syncURL, .syncAnonKey, .syncEmail]
+        let paused = SyncEngine.shared.isPaused
+        if paused {
+            syncRows += [.syncPaused, .syncResume]
+        }
         if client.isSignedIn {
-            syncRows += [.syncNow, .syncStatus, .syncSignOut]
+            syncRows += (paused ? [] : [.syncNow]) + [.syncStatus, .syncSignOut]
         } else {
             syncRows += [.syncPassword, .syncSignIn]
         }
@@ -86,7 +92,9 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
                         + "förbättra sina tjänster. Utan nyckel syns ingen AI-knapp."),
             Section(title: "Säkerhetskopia", rows: [.backupStatus, .backupNow, .backupRestore],
                     footer: "En kopia sparas varje dag i Filer under \(Self.filesLocation), Säkerhetskopia, och de "
-                        + "sju senaste dagarna sparas. Kopian från före en uppdatering (Före uppdateringen) sparas alltid. Den har markeringar, anteckningar, sparade ord och läspositioner. "
+                        + "sju senaste dagarna sparas. Dagens kopior sparas alla, också de du gör själv. Kopian från "
+                        + "före en uppdatering (Före uppdateringen) sparas alltid. Den har markeringar, anteckningar, "
+                        + "sparade ord och läspositioner. "
                         + "Kopiorna försvinner om appen tas bort, så flytta gärna en till iCloud Drive."),
             Section(title: "Synk med Windows-appen", rows: syncRows,
                     footer: "Läsposition, markeringar, bokmärken och sparade ord synkas via ditt eget Supabase-projekt "
@@ -190,6 +198,17 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         case .syncNow:
             content.text = SyncEngine.shared.isRunning || syncBusy ? "Synkar …" : "Synka nu"
             content.textProperties.color = view.tintColor
+        case .syncPaused:
+            content = UIListContentConfiguration.subtitleCell()
+            content.text = "Synken är pausad"
+            content.textProperties.color = Theme.current.warning
+            content.secondaryText = "Den pausades när du återställde från en säkerhetskopia, så att servern inte tar "
+                + "tillbaka det du ångrade. Den startar inte av sig själv, inte heller när appen startas om."
+            content.secondaryTextProperties.numberOfLines = 0
+            cell.selectionStyle = .none
+        case .syncResume:
+            content.text = "Starta synken igen"
+            content.textProperties.color = view.tintColor
         case .syncStatus:
             content = UIListContentConfiguration.subtitleCell()
             content.text = "Inloggad som \(SyncClient.shared.email)"
@@ -276,6 +295,8 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
             signIn()
         case .syncNow:
             syncNow()
+        case .syncResume:
+            confirmResumeSync()
         case .syncSignOut:
             SyncClient.shared.signOut()
             syncMessage = nil
@@ -330,18 +351,43 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         present(sheet, animated: true)
     }
 
-    /// Kopians namn i listan. Kopian före flytten till bokens id heter Före uppdateringen.
+    /// Kopians namn i listan: Före uppdateringen (före flytten till bokens id), Din kopia (Spara en kopia nu)
+    /// och Före återställningen.
     static func backupTitle(_ copy: Backup.Copy) -> String {
-        copy.isBeforeUpdate ? "Före uppdateringen, \(backupDate(copy.date))" : backupDate(copy.date)
+        if copy.isBeforeUpdate {
+            return "Före uppdateringen, \(backupDate(copy.date))"
+        }
+        switch copy.kind {
+        case .automatic: return backupDate(copy.date)
+        case .manual: return "Din kopia, \(backupDate(copy.date))"
+        case .beforeRestore: return "Före återställningen, \(backupDate(copy.date))"
+        }
+    }
+
+    /// Starta synken igen efter pausen (granskning 2, fynd 3), med vad som då händer.
+    private func confirmResumeSync() {
+        let alert = UIAlertController(
+            title: "Starta synken igen?",
+            message: "Ändringar som är nyare än säkerhetskopian hämtas från servern, också markeringar som tagits bort "
+                + "på datorn. Det du har på iPaden nu skickas till servern.",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Starta synken", style: .default) { [weak self] _ in
+            SyncEngine.shared.resume()
+            self?.rebuild()
+            self?.syncNow()
+        })
+        present(alert, animated: true)
     }
 
     private func confirmRestore(_ copy: Backup.Copy) {
         var message = "Markeringar, anteckningar, sparade ord och läspositioner ersätts med kopians. Det du har nu "
             + "sparas först som en ny kopia, så att du kan gå tillbaka."
         if SyncClient.shared.isSignedIn {
-            // Granskningens fynd 3: synken skulle annars ta tillbaka nyare ändringar från servern.
-            message += " Synken är avstängd efter återställningen tills du startar om appen, så att den inte "
-                + "tar tillbaka nyare ändringar från servern."
+            // Granskning 2, fynd 3: synken skulle annars ta tillbaka nyare ändringar från servern.
+            message += " Synken pausas efter återställningen och startar inte av sig själv, inte heller när appen "
+                + "startas om. Du startar den igen under Synk med Windows-appen, och då hämtas ändringar som är "
+                + "nyare än kopian från servern."
         }
         let alert = UIAlertController(
             title: "Återställ från \(Self.backupTitle(copy))?",
@@ -357,7 +403,9 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     private func restore(_ copy: Backup.Copy) {
         do {
             try Backup.restore(copy)
-            SyncEngine.shared.pauseUntilRestart()
+            if SyncClient.shared.isSignedIn {
+                SyncEngine.shared.pauseAfterRestore()
+            }
             backupMessage = "Återställt från \(Self.backupTitle(copy))."
             rebuild()
         } catch {
