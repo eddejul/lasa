@@ -166,6 +166,8 @@ final class ReflowReaderViewController: UIViewController {
                                                object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(savedWordMarksChanged),
                                                name: SavedWordMarks.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateTimelineMarks),
+                                               name: AnnotationStore.didChange, object: nil)
         SavedWordMarks.shared.refresh()
 
         // Webbvyerna ligger längst ner, under ett papper, så att de aldrig syns.
@@ -278,6 +280,7 @@ final class ReflowReaderViewController: UIViewController {
                                        source: .chapters(content.chapters.map { $0.url }), delay: 4)
             pendingJump = PendingJump(chapter: location.chapter, progression: location.progression, fragment: nil)
             bottomBar.slider.isEnabled = true
+            updateTimelineMarks()
             updateLayoutIfNeeded(force: true)
         }
     }
@@ -721,6 +724,7 @@ final class ReflowReaderViewController: UIViewController {
         guard let content = content, let renderer = renderer, isShowingPages else { return }
         bottomBar.pageButton.setTitle(pageText(content: content, renderer: renderer), for: .normal)
         bottomBar.infoButton.setTitle(remainingText(renderer: renderer), for: .normal)
+        bottomBar.chapterLabel.text = chapterName(currentChapter)
         chrome.setSubtitle(chapterName(currentChapter))
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(content.fraction(at: currentLocation()))
@@ -771,12 +775,52 @@ final class ReflowReaderViewController: UIViewController {
         guard let content = content else { return }
         let target = content.location(atFraction: Double(bottomBar.slider.value))
         if bottomBar.slider.isTracking {
-            let percent = Int((Double(bottomBar.slider.value) * 100).rounded())
             let name = content.title(ofChapter: target.chapter) ?? "Avsnitt \(target.chapter + 1)"
-            bottomBar.pageButton.setTitle("\(name), \(percent) %", for: .normal)
+            let page = pageLabel(for: target, content: content)
+            bottomBar.pageButton.setTitle(page, for: .normal)
+            // V2: kapitlet och sidan i bubblan ovanför fingret.
+            bottomBar.slider.bubbleText = "\(name)\n\(page)"
         } else {
             // VoiceOver ändrar värdet utan att dra.
             jump(to: target)
+        }
+    }
+
+    /// Sidan vid en plats, för bubblan när man drar (V2): i boken när alla kapitel är mätta, annars i kapitlet,
+    /// och procent av boken om kapitlet inte är mätt än.
+    private func pageLabel(for target: ReflowLocation, content: ReflowableBook) -> String {
+        guard let renderer = renderer else { return "" }
+        if let all = renderer.allPageCounts(), target.chapter >= 0, target.chapter < all.count {
+            let count = all[target.chapter]
+            let page = min(Int(target.progression * Double(count)), max(count - 1, 0))
+            return "s. \(all.prefix(target.chapter).reduce(0, +) + page + 1) av \(all.reduce(0, +))"
+        }
+        if let count = renderer.pageCount(of: target.chapter), count > 0 {
+            let page = min(Int(target.progression * Double(count)), count - 1)
+            return "s. \(page + 1) av \(count) i kapitlet"
+        }
+        return "\(Int((content.fraction(at: target) * 100).rounded())) % av boken"
+    }
+
+    /// V2: kapitlen (innehållets översta nivå), markeringarna och bokmärkena på tidslinjen, som andelar av
+    /// boken. En markerings plats i kapitlet uppskattas från kapitlets storlek. Ritas om bara när de ändras.
+    @objc private func updateTimelineMarks() {
+        guard let content = content else { return }
+        let timeline = bottomBar.slider
+        let top = content.toc.map(\.level).min()
+        let starts = top.map { level in content.toc.filter { $0.level == level }.map(\.chapter) }
+            ?? Array(content.chapters.indices)
+        timeline.chapters = Array(Set(starts)).sorted().map {
+            content.fraction(at: ReflowLocation(chapter: $0, progression: 0))
+        }
+        timeline.dots = AnnotationStore.shared.highlights(book: bookKey).compactMap { highlight in
+            guard highlight.section >= 0, highlight.section < content.chapters.count else { return nil }
+            let weight = Double(max(content.chapters[highlight.section].weight, 1))
+            let location = ReflowLocation(chapter: highlight.section, progression: min(Double(highlight.start) / weight, 1))
+            return ReaderTimeline.Dot(position: content.fraction(at: location), color: highlight.color.solid)
+        }
+        timeline.bookmarks = AnnotationStore.shared.bookmarks(book: bookKey).map {
+            content.fraction(at: ReflowLocation(chapter: $0.section, progression: $0.progression))
         }
     }
 
@@ -1721,6 +1765,7 @@ extension ReflowReaderViewController {
 
     /// Markeringarna i ett kapitel har ändrats: lägg in dem igen och rita om sidorna.
     fileprivate func reloadMarks(inChapter chapter: Int) {
+        updateTimelineMarks()
         renderer?.reloadMarks(in: chapter) { [weak self] in
             guard let self = self else { return }
             for page in self.visiblePages where page.chapter == chapter {
@@ -1940,6 +1985,7 @@ extension ReflowReaderViewController {
     // MARK: Bokmärken
 
     fileprivate func bookmarksChanged() {
+        updateTimelineMarks()
         bookmarks = AnnotationStore.shared.bookmarks(book: bookKey)
         for page in visiblePages {
             page.isBookmarked = !bookmarksOnPage(page).isEmpty
@@ -2055,6 +2101,24 @@ extension ReflowReaderViewController {
                      + "\(right.joined(separator: ", ")), titel \(title ?? "ingen"), under titeln "
                      + "\(chrome.subtitle ?? "inget"). Bandet i hörnet tar trycket: \(hit ? "ja" : "FEL, nej"), "
                      + "mitten av sidan: \(middle ? "FEL, ja" : "nej")")
+        selfTestTimeline()
+    }
+
+    /// V2: tidslinjens streck och prickar, bubblan ovanför fingret och hur lång tid linjen tar att rita.
+    fileprivate func selfTestTimeline() {
+        let timeline = bottomBar.slider
+        let drawMs = timeline.redrawTrackNow()
+        SelfTest.log("Tidslinjen (V2): \(timeline.chapters.count) kapitelstreck, \(timeline.dots.count) markeringar, "
+                     + "\(timeline.bookmarks.count) bokmärken, under linjen \(bottomBar.pageButton.title(for: .normal) ?? ""), "
+                     + "\(bottomBar.chapterLabel.text ?? "inget kapitel"), \(bottomBar.infoButton.title(for: .normal) ?? ""). "
+                     + "Linjen ritad på \(String(format: "%.2f", drawMs)) ms")
+        if let content = content {
+            let target = content.location(atFraction: 0.6)
+            let name = content.title(ofChapter: target.chapter) ?? "Avsnitt \(target.chapter + 1)"
+            timeline.previewBubble("\(name)\n\(pageLabel(for: target, content: content))")
+            SelfTest.saveScreen(view, name: "03i-tidslinje")
+            timeline.previewBubble(nil)
+        }
     }
 
     fileprivate func toggleBookmarks(onPages shown: [ReflowPageViewController]) {

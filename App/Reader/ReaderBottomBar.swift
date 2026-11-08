@@ -1,11 +1,12 @@
 import UIKit
 
-/// Menyns nederkant i läsaren: ett reglage för att hoppa i boken och under det en rad med sidan till vänster,
+/// Menyns nederkant i läsaren: tidslinjen (V2) för att hoppa i boken och under det en rad med sidan till vänster,
 /// kapitlets namn i mitten (V2) och sidor kvar till höger (V1). Sidan är en knapp som öppnar Gå till sida
 /// (PDF) eller Innehåll (EPUB), och sidor kvar växlar mellan kapitlet och boken när man trycker.
 final class ReaderBottomBar: UIView {
 
-    let slider = UISlider()
+    /// V2: tidslinjen (heter slider sedan reglagets tid, läsarna använder den som ett reglage).
+    let slider = ReaderTimeline()
     let pageButton = UIButton(type: .system)
     /// V2: kapitlets namn under linjen.
     let chapterLabel = UILabel()
@@ -22,14 +23,15 @@ final class ReaderBottomBar: UIView {
 
         slider.translatesAutoresizingMaskIntoConstraints = false
         slider.accessibilityLabel = "Plats i boken"
-        background.contentView.addSubview(slider)
+        // Ovanpå bakgrunden, inte i den, så att bubblan över fingret kan sticka upp över sidan.
+        addSubview(slider)
 
         pageButton.translatesAutoresizingMaskIntoConstraints = false
         pageButton.titleLabel?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         pageButton.titleLabel?.lineBreakMode = .byTruncatingTail
         pageButton.accessibilityHint = "Öppnar Gå till sida"
         pageButton.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        background.contentView.addSubview(pageButton)
+        addSubview(pageButton)
 
         chapterLabel.translatesAutoresizingMaskIntoConstraints = false
         chapterLabel.font = .systemFont(ofSize: 13, weight: .medium)
@@ -37,14 +39,14 @@ final class ReaderBottomBar: UIView {
         chapterLabel.lineBreakMode = .byTruncatingTail
         chapterLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         chapterLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        background.contentView.addSubview(chapterLabel)
+        addSubview(chapterLabel)
 
         infoButton.translatesAutoresizingMaskIntoConstraints = false
         infoButton.titleLabel?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         infoButton.titleLabel?.lineBreakMode = .byTruncatingTail
         infoButton.accessibilityHint = "Växlar mellan sidor kvar i kapitlet och i boken"
         infoButton.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        background.contentView.addSubview(infoButton)
+        addSubview(infoButton)
 
         let centered = chapterLabel.centerXAnchor.constraint(equalTo: centerXAnchor)
         centered.priority = .defaultHigh
@@ -81,8 +83,7 @@ final class ReaderBottomBar: UIView {
     func apply(_ palette: Palette) {
         background.effect = nil
         background.backgroundColor = palette.page.withAlphaComponent(0.97)
-        slider.minimumTrackTintColor = palette.accent
-        slider.maximumTrackTintColor = palette.rule
+        slider.apply(palette)
         pageButton.tintColor = palette.inkSoft
         chapterLabel.textColor = palette.ink
         infoButton.tintColor = palette.accent

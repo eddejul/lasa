@@ -160,6 +160,8 @@ final class PDFCurlReaderViewController: UIViewController {
                                                object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(savedWordMarksChanged),
                                                name: SavedWordMarks.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateTimelineMarks),
+                                               name: AnnotationStore.didChange, object: nil)
         SavedWordMarks.shared.refresh()
         setUpNavigationBar()
         setUpBottomBar()
@@ -463,6 +465,7 @@ final class PDFCurlReaderViewController: UIViewController {
         slider.value = Float(currentIndex)
         slider.addTarget(self, action: #selector(sliderMoved), for: .valueChanged)
         slider.addTarget(self, action: #selector(sliderReleased), for: [.touchUpInside, .touchUpOutside])
+        slider.accessibilityStep = 1
 
         bottomBar.pageButton.addTarget(self, action: #selector(showGoToPage), for: .touchUpInside)
         bottomBar.infoButton.addTarget(self, action: #selector(toggleRemaining), for: .touchUpInside)
@@ -471,6 +474,19 @@ final class PDFCurlReaderViewController: UIViewController {
             bottomBar.infoButton.accessibilityHint = nil
         }
         updatePageLabel()
+        updateTimelineMarks()
+    }
+
+    /// V2: kapitelgränserna ur PDF:ens innehåll, markeringarna och bokmärkena på tidslinjen. Ritas om bara när
+    /// de ändras, inte när sidan vänds.
+    @objc private func updateTimelineMarks() {
+        let last = Double(max(renderer.pageCount - 1, 1))
+        let timeline = bottomBar.slider
+        timeline.chapters = chapterStarts.map { Double($0.index) / last }
+        timeline.dots = AnnotationStore.shared.highlights(book: bookKey).map {
+            ReaderTimeline.Dot(position: Double($0.section) / last, color: $0.color.solid)
+        }
+        timeline.bookmarks = AnnotationStore.shared.bookmarks(book: bookKey).map { Double($0.section) / last }
     }
 
     /// V1: ett tryck på sidor kvar växlar mellan kapitlet och boken.
@@ -531,6 +547,7 @@ final class PDFCurlReaderViewController: UIViewController {
         let indices = visibleIndices.isEmpty ? [currentIndex] : visibleIndices
         bottomBar.pageButton.setTitle(pageText(for: indices), for: .normal)
         bottomBar.infoButton.setTitle(remainingText(lastShown: indices.max() ?? currentIndex), for: .normal)
+        bottomBar.chapterLabel.text = chapterTitle(for: indices.first ?? currentIndex)
         chrome.setSubtitle(chapterTitle(for: indices.first ?? currentIndex))
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(currentIndex)
@@ -596,6 +613,9 @@ final class PDFCurlReaderViewController: UIViewController {
         let index = Int(bottomBar.slider.value.rounded())
         if bottomBar.slider.isTracking {
             bottomBar.pageButton.setTitle(pageText(for: [index]), for: .normal)
+            // V2: kapitlet och sidan i bubblan ovanför fingret.
+            let page = pageText(for: [index])
+            bottomBar.slider.bubbleText = chapterTitle(for: index).map { "\($0)\n\(page)" } ?? page
         } else {
             // VoiceOver ändrar värdet utan att dra.
             jump(to: index)
@@ -1173,6 +1193,7 @@ extension PDFCurlReaderViewController {
 
     /// Markeringarna på en sida har ändrats: läs om dem ur databasen.
     fileprivate func refreshMarks(onPage index: Int) {
+        updateTimelineMarks()
         marksCache[index] = nil
         highlightsByPage?[index] = AnnotationStore.shared.highlights(book: bookKey, section: index)
         for page in visiblePages where page.pageIndex == index {
@@ -1398,6 +1419,7 @@ extension PDFCurlReaderViewController {
             page.isBookmarked = bookmarkedPages.contains(page.pageIndex)
         }
         updateBookmarkState()
+        updateTimelineMarks()
     }
 
     fileprivate func updateBookmarkState() {
@@ -1439,6 +1461,21 @@ extension PDFCurlReaderViewController {
                      + "\(right.joined(separator: ", ")), titel \(title ?? "ingen"), under titeln "
                      + "\(chrome.subtitle ?? "inget"). Bandet i hörnet tar trycket: \(hit ? "ja" : "FEL, nej"), "
                      + "mitten av sidan: \(middle ? "FEL, ja" : "nej")")
+        selfTestTimeline()
+    }
+
+    /// V2: tidslinjens streck och prickar, bubblan ovanför fingret och hur lång tid linjen tar att rita.
+    fileprivate func selfTestTimeline() {
+        let timeline = bottomBar.slider
+        let drawMs = timeline.redrawTrackNow()
+        SelfTest.log("Tidslinjen (V2): \(timeline.chapters.count) kapitelstreck, \(timeline.dots.count) markeringar, "
+                     + "\(timeline.bookmarks.count) bokmärken, under linjen \(bottomBar.pageButton.title(for: .normal) ?? ""), "
+                     + "\(bottomBar.chapterLabel.text ?? "inget kapitel"), \(bottomBar.infoButton.title(for: .normal) ?? ""). "
+                     + "Linjen ritad på \(String(format: "%.2f", drawMs)) ms")
+        let index = min(renderer.pageCount - 1, 5)
+        timeline.previewBubble(chapterTitle(for: index).map { "\($0)\n\(pageText(for: [index]))" } ?? pageText(for: [index]))
+        SelfTest.saveScreen(view, name: "03b-tidslinje")
+        timeline.previewBubble(nil)
     }
 
     fileprivate func toggleBookmarks(onIndices shown: [Int]) {
@@ -1709,10 +1746,13 @@ extension PDFCurlReaderViewController {
         SelfTest.log("Första sidan: \(shown ? "ok" : "FEL, sidbilden kom inte")")
         SelfTest.saveScreen(view, name: "01-start")
 
+        let drawsBefore = ReaderTimeline.trackDraws
         turnPage(forward: true)
         await pause(1.5)
         _ = await waitForImages()
         SelfTest.log("Efter en sida: \(bottomBar.pageButton.title(for: .normal) ?? "")")
+        SelfTest.log("Tidslinjen (V2) när sidan vändes: \(ReaderTimeline.trackDraws == drawsBefore ? "bara markören flyttad" : "FEL, linjen ritades om"), "
+                     + "linjen ritad \(ReaderTimeline.trackDraws) gånger hittills")
         // V1: sidor kvar, ett tryck växlar mellan kapitlet och boken (PDF:en har innehåll i testet).
         let remaining = bottomBar.infoButton.title(for: .normal) ?? "inget"
         toggleRemaining()
