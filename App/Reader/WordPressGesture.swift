@@ -31,6 +31,26 @@ enum WordPressGesture {
     }
 }
 
+/// Var ett tryck på sidan hamnar, samma i båda läsarna (G12): bläddring i ett smalt band längs vänster och
+/// höger kant, resten av sidan visar och döljer menyn, ungefär som i Apple Books. Gäller hela läsarens bredd,
+/// också uppslag. Edvin 8 nov: förut var kanterna 30 procent var, och på iPaden fick man trycka långt in mot
+/// mitten för att få fram menyn.
+enum ReaderTapZones {
+
+    /// Kantbandets bredd: 18 procent av bredden, minst 56 och högst 110 punkter (ungefär en tumme in från
+    /// kanten). iPad stående 768 punkter ger 110 och en mitt på 71 procent, liggande 1024 ger en mitt på
+    /// 79 procent, iPhone 390 ger 70 och en mitt på 64 procent.
+    static func edgeWidth(forWidth width: CGFloat) -> CGFloat {
+        min(max(width * 0.18, 56), 110)
+    }
+
+    /// Sant mitt på sidan (menyn), falskt i kantbanden (bläddring).
+    static func isMiddle(_ x: CGFloat, width: CGFloat) -> Bool {
+        let edge = edgeWidth(forWidth: width)
+        return x > edge && x < width - edge
+    }
+}
+
 /// Fingret skymmer ordet, så ordet visas också i en bubbla ovanför fingret medan man håller.
 @MainActor
 final class WordBubble {

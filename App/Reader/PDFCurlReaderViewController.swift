@@ -1364,9 +1364,7 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
             // Ett tryck på en markering öppnar markeringens ruta, inte menyn eller nästa sida.
             return false
         }
-        let width = max(view.bounds.width, 1)
-        let position = touch.location(in: view).x / width
-        let inMiddle = position > 0.3 && position < 0.7
+        let inMiddle = ReaderTapZones.isMiddle(touch.location(in: view).x, width: view.bounds.width)
 
         if gestureRecognizer === wordPress {
             return true
@@ -1525,10 +1523,9 @@ extension PDFCurlReaderViewController {
         }
     }
 
-    /// Mitten av sidan, där ett tryck inte bläddrar.
+    /// Mitten av sidan, där ett tryck inte bläddrar (G12, `ReaderTapZones`).
     fileprivate static func isMiddle(_ x: CGFloat, width: CGFloat) -> Bool {
-        let position = x / max(width, 1)
-        return position > 0.3 && position < 0.7
+        ReaderTapZones.isMiddle(x, width: width)
     }
 
     /// O4: ett tryck på ett streck visar ordkortet för det sparade ordet, med meningen det sparades i.
@@ -2009,6 +2006,33 @@ extension PDFCurlReaderViewController {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
+    /// Edvin 8 nov: menyn täckte text. I PDF mäts hur mycket av sidbilden som menyraden och nederkanten täcker
+    /// med menyn framme (sidans egen marginal är oftast vit, så siffran är ett tak för täckt text).
+    fileprivate func selfTestChromeCoverage() {
+        let wasHidden = chromeHidden
+        setChromeHidden(false, animated: false)
+        navigationController?.view.layoutIfNeeded()
+        view.layoutIfNeeded()
+        guard let bar = navigationController?.navigationBar,
+              let page = visiblePages.first(where: { !$0.isBlank && $0.imageFrame != nil }),
+              let local = page.imageFrame else {
+            SelfTest.log("FEL: ingen menyrad eller sidbild för mätningen (U3)")
+            return
+        }
+        let frame = page.view.convert(local, to: view)
+        let barBottom = bar.convert(bar.bounds, to: view).maxY
+        let bottomTop = bottomBar.convert(bottomBar.bounds, to: view).minY
+        let top = max(barBottom - frame.minY, 0)
+        let bottom = max(frame.maxY - bottomTop, 0)
+        let share = { (value: CGFloat) in Int((value / max(frame.height, 1) * 100).rounded()) }
+        SelfTest.log("Menyn över PDF-sidan (U3): sidbilden \(Int(frame.minY)) till \(Int(frame.maxY)), menyraden täcker "
+                     + "\(Int(top)) punkter (\(share(top)) procent av sidhöjden), nederkanten \(Int(bottom)) punkter "
+                     + "(\(share(bottom)) procent)")
+        if wasHidden {
+            setChromeHidden(true, animated: false)
+        }
+    }
+
     fileprivate func waitForImages() async -> Bool {
         for _ in 0..<150 {
             if !visiblePages.isEmpty, visiblePages.allSatisfy({ $0.isBlank || $0.imageFrame != nil }) {
@@ -2156,6 +2180,7 @@ extension PDFCurlReaderViewController {
         let shown = await waitForImages()
         SelfTest.log("Första sidan: \(shown ? "ok" : "FEL, sidbilden kom inte")")
         SelfTest.saveScreen(view, name: "01-start")
+        selfTestChromeCoverage()
 
         let drawsBefore = ReaderTimeline.trackDraws
         turnPage(forward: true)
@@ -2337,11 +2362,30 @@ extension PDFCurlReaderViewController {
         await pause(0.9)
         if let navigation = presentedViewController as? UINavigationController {
             SelfTest.saveScreen(navigation.view, name: "11-utseende")
+            // Edvin 8 nov: sidan blev blank efter Aa. Bakgrunderna byts med rutan öppen, en i taget och
+            // tätt efter varandra, och bläcket på sidan räknas efter varje byte.
+            if let panel = navigation.viewControllers.first as? AppearanceViewController {
+                let steps: [(String, [ReaderTheme])] = [("Mörkt", [.dark]), ("Vitt", [.white]), ("Sepia", [.sepia]),
+                                                        ("Tätt efter varandra", [.dark, .paper, .white, .dark, .paper])]
+                for (name, themes) in steps {
+                    for option in themes {
+                        panel.perform(.theme(option))
+                        await pause(0.12)
+                    }
+                    await pause(0.6)
+                    let shown = await waitForImages()
+                    let ink = SelfTest.inkPercent(in: view, paper: theme.paperColor)
+                    SelfTest.log("Aa med rutan öppen, \(name): \(shown ? "sidan klar" : "FEL, sidan kom inte"), "
+                                 + "bläck \(String(format: "%.1f", ink)) %\(ink < 0.5 ? " FEL, BLANK" : "")")
+                }
+            }
         } else {
             SelfTest.log("FEL: utseenderutan öppnades inte")
         }
         dismiss(animated: false)
         await pause(0.3)
+        setTheme(savedTheme)
+        await pause(0.4)
 
         await selfTestStudy()
         await selfTestFoldWork()

@@ -161,11 +161,20 @@ final class ReflowPageViewController: UIViewController {
 
     // MARK: Bilden
 
+    /// Sant från ett byte av tema tills den nya bilden är klar (den gamla visas under tiden).
+    private(set) var isStale = false
+
+    /// Bilden som visas, till självtestet.
+    var currentImage: UIImage? {
+        imageView.image
+    }
+
     /// Nytt tema. Den gamla bilden visas tills den nya är klar.
     func apply(paperColor: UIColor) {
         self.paperColor = paperColor
         guard isViewLoaded else { return }
         view.backgroundColor = paperColor
+        isStale = hasImage
         loadImage()
     }
 
@@ -193,6 +202,7 @@ final class ReflowPageViewController: UIViewController {
         links = snapshot.links
         marks = snapshot.marks
         hasImage = true
+        isStale = false
         setFailureShown(false)
         // En ny bild har markeringen inritad, så förhandsvisningen behövs inte längre.
         clearPreview()

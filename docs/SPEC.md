@@ -257,7 +257,14 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Fotnoter i en ruta (V5):** ett tryck på en fotnotssiffra eller hänvisning visar noten i en ruta vid siffran, med Gå till noten. EPUB: epub:type noteref, role doc-noteref eller en länk till ett ankare vars text är en siffra eller ett tecken. PDF: bara interna länkar med kort text. Hittas noten inte hoppar boken som förut. Trycket går före ordstrecken och bläddringen.
 * **Här var du (V6):** öppnas en bok efter mer än ett dygn ligger ett kort över sidan med kapitlets rubrik och de tre senaste markeringarna. Ett tryck stänger det. Ingen fråga (Edvins beslut).
 
-### 6.13 Våg 7, plugget (8 november 2026)
+### 6.13 Morgonrättningar (8 november 2026, Edvins test på iPaden)
+
+* **Aa:** efter varje ändring i utseenderutan kontrolleras att sidan får sin nya bild. Saknas den efter några sekunder begärs den igen och läget skrivs i loggen (Diagnostik).
+* **Tryckzoner:** bläddring i ett smalt band längs vänster och höger kant (18 procent av bredden, 56 till 110 punkter), resten av sidan visar och döljer menyn, ungefär som i Apple Books. Gäller båda läsarna och uppslag.
+* **Marginaler (EPUB och text):** menyraden och nederkanten ligger bara över marginalen, aldrig över text. PDF:ens placering är oförändrad, där ligger menyn oftast över sidans egen vita marginal.
+* **Färger:** knappar, sidor kvar och tidslinjen är neutralt grå i stället för blå, som i Apple Books. Vitt ger nästan svart text i EPUB och text, länkar och strecken under dina ord är diskret gråbruna. Sepia är oförändrad.
+
+### 6.14 Våg 7, plugget (8 november 2026)
 
 * **Bokens egna sidnummer (K2, PDF):** `BookPageNumbering` ger bokens sidnummer för en sida i filen, och sidraden, Gå till sida, tidslinjen, bokmärken, citat, anteckningsboken och Anki-exporten använder det. Automatiskt ur filnamnet (`(s63-80)`, uppslag när intervallet är ungefär dubbelt så långt som sidantalet), annars PDF:ens sidetiketter. Mer, Bokens sidnummer: filens första sida som bokens sida N, en eller två boksidor per sida i filen, eller filens egna nummer. Uppslag gäller hela boken, med jämn sida till vänster. Efter granskning 4: filnamnets intervall används av sig självt bara när sidantalet stämmer, valet sparas första gången boken öppnas, och utan inställt sidnummer får citatet ingen sida (rutan säger det och föreslår ett nummer ur sidornas tryckta sidnummer att bekräfta).
 * **Kopiera som citat (K3):** knappen Citat i markeringsraden. Harvard, APA 7 och Oxford (fotnot) på svenska (s., u.å., m.fl.), med bokens sidnummer, och referensen. Bokinfo per bok (författare, år, titel, förlag, ort) i Mer, Bokinfo för citat. EPUB fyller i år och förlag ur OPF-filen. EPUB och text får ingen sida.

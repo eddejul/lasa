@@ -70,15 +70,17 @@ enum ReflowStyle {
 
         """
 
+        // Edvin 8 nov: neutrala färger som i Apple Books. Vitt sätter nu också texten (nästan svart), så att
+        // bokens egen CSS inte ger blå eller grå brödtext, och länkarna är diskret gråbruna i stället för blå.
         switch theme {
         case .white:
-            css += "html { background-color: #ffffff !important; }\n"
+            css += colorOverrides(paper: "#ffffff", text: "#141414", link: "#5f5950", extra: "")
         case .paper:
-            css += colorOverrides(paper: "#fbf8f2", text: "#1e1c19", link: "#2d5b84", extra: "")
+            css += colorOverrides(paper: "#fbf8f2", text: "#1e1c19", link: "#5f5950", extra: "")
         case .sepia:
             css += colorOverrides(paper: "#f4ecd8", text: "#3b2f23", link: "#8a4b1f", extra: "")
         case .dark:
-            css += colorOverrides(paper: "#1c1c1c", text: "#d2d2d2", link: "#8ab4f8",
+            css += colorOverrides(paper: "#1c1c1c", text: "#d2d2d2", link: "#aba497",
                                   extra: "img, svg, video { opacity: 0.88; }\n")
         }
 

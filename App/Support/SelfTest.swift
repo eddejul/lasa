@@ -56,6 +56,86 @@ enum SelfTest {
         log("Bild sparad: \(name)")
     }
 
+    /// Andelen punkter (0 till 100) i vyns mittband, utan menyraden och nederkanten, som skiljer sig tydligt
+    /// från papperets färg. Under cirka 0,5 är sidan blank. Edvin 8 nov: sidan blev blank efter Aa.
+    @MainActor
+    static func inkPercent(in view: UIView, paper: UIColor) -> Double {
+        let bounds = view.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return -1 }
+        let width = 96
+        let height = max(Int((Double(width) * Double(bounds.height / bounds.width)).rounded()), 1)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let small = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { _ in
+            _ = view.drawHierarchy(in: CGRect(x: 0, y: 0, width: width, height: height), afterScreenUpdates: true)
+        }
+        guard let cg = small.cgImage else { return -1 }
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        paper.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        let paperRGB = [Int(red * 255), Int(green * 255), Int(blue * 255)]
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let counted: Int = pixels.withUnsafeMutableBytes { buffer -> Int in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return -1 }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            var ink = 0
+            // Mittbandet: 15 till 85 procent av höjden, där menyraden och nederkanten inte ligger.
+            for row in Int(Double(height) * 0.15)..<Int(Double(height) * 0.85) {
+                for column in 0..<width {
+                    let index = (row * width + column) * 4
+                    let difference = abs(Int(bytes[index]) - paperRGB[0]) + abs(Int(bytes[index + 1]) - paperRGB[1])
+                        + abs(Int(bytes[index + 2]) - paperRGB[2])
+                    if difference > 40 {
+                        ink += 1
+                    }
+                }
+            }
+            return ink
+        }
+        guard counted >= 0 else { return -1 }
+        let band = max(Int(Double(height) * 0.85) - Int(Double(height) * 0.15), 1) * width
+        return Double(counted) * 100 / Double(band)
+    }
+
+    /// Första och sista raden med text i en sidbild, som andel (0 till 1) av bildens höjd. Nil om bilden är tom.
+    /// Till kontrollen att menyraden och nederkanten bara ligger över marginalen (Edvin 8 nov).
+    static func inkRows(in image: UIImage, paper: UIColor) -> (top: Double, bottom: Double)? {
+        guard let cg = image.cgImage, image.size.width > 0, image.size.height > 0 else { return nil }
+        let width = 200
+        let height = max(Int((Double(width) * Double(image.size.height / image.size.width)).rounded()), 1)
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        paper.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        let paperRGB = [Int(red * 255), Int(green * 255), Int(blue * 255)]
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let rows: [Int] = pixels.withUnsafeMutableBytes { buffer -> [Int] in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return [] }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            var found: [Int] = []
+            for row in 0..<height {
+                var ink = 0
+                for column in 0..<width {
+                    let index = (row * width + column) * 4
+                    let difference = abs(Int(bytes[index]) - paperRGB[0]) + abs(Int(bytes[index + 1]) - paperRGB[1])
+                        + abs(Int(bytes[index + 2]) - paperRGB[2])
+                    if difference > 60 {
+                        ink += 1
+                    }
+                }
+                if ink >= 2 {
+                    found.append(row)
+                }
+            }
+            return found
+        }
+        guard let first = rows.first, let last = rows.last else { return nil }
+        return (Double(first) / Double(height), Double(last + 1) / Double(height))
+    }
+
     static func finish() {
         log("KLART")
         try? Data().write(to: directory.appendingPathComponent(stem + ".klar"))

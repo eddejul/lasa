@@ -320,4 +320,42 @@ final class AppearanceViewController: UIViewController {
     private func resetTapped() {
         change { $0 = ReaderTypography.standard }
     }
+
+    // MARK: Självtestet
+
+    /// Ett tryck i rutan, som självtestet gör medan rutan är öppen (samma väg som fingret).
+    enum TestAction {
+        case theme(ReaderTheme)
+        case larger
+        case smaller
+        case font(ReaderTypography.Font)
+        case margin(Int)
+        case spacing(Int)
+        case justify(Bool)
+        case reset
+    }
+
+    func perform(_ action: TestAction) {
+        switch action {
+        case .theme(let option):
+            chooseTheme(option)
+        case .larger:
+            changeSize(by: 1)
+        case .smaller:
+            changeSize(by: -1)
+        case .font(let font):
+            chooseFont(font)
+        case .margin(let index):
+            marginControl.selectedSegmentIndex = index
+            marginChanged()
+        case .spacing(let index):
+            spacingControl.selectedSegmentIndex = index
+            spacingChanged()
+        case .justify(let on):
+            justifySwitch.isOn = on
+            justifyChanged()
+        case .reset:
+            resetTapped()
+        }
+    }
 }

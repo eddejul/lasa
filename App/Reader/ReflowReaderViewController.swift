@@ -107,6 +107,8 @@ final class ReflowReaderViewController: UIViewController {
     /// V4: platserna man hoppat ifrån och Tillbaka i hörnet (G12, samma som i PDF-läsaren).
     private let backStack = ReaderBackStack<ReflowLocation>()
     private var typographyTask: Task<Void, Never>?
+    /// Kontrollen efter en ändring i Aa (se `watchVisiblePages`).
+    private var appearanceWatch: Task<Void, Never>?
     /// V5: hur lång tid det tog att hitta senaste fotnoten, till självtestet.
     private var lastNoteMilliseconds: Int?
     private var selfTestStarted = false
@@ -349,10 +351,25 @@ final class ReflowReaderViewController: UIViewController {
         let pageWidth = mode == .spread ? (size.width / 2).rounded(.down) : size.width
         let factor = typography.margin.factor
         let side = min(max((pageWidth * 0.075 * factor).rounded(), 16), 90) + max(insets.left, insets.right)
-        let padding = UIEdgeInsets(top: insets.top + 30, left: side, bottom: insets.bottom + 36, right: side)
+        // Menyraden och nederkanten ska bara ligga över marginalen, som i Apple Books (Edvin 8 nov: de täckte
+        // första och sista raden). Måtten är fasta (menyradens höjd för enheten och nederkantens höjd), inte
+        // menyns läge, så att sidan står still när menyn visas och döljs.
+        let padding = UIEdgeInsets(top: insets.top + max(30, Self.navigationBarHeight(for: traitCollection) + 10),
+                                   left: side,
+                                   bottom: insets.bottom + max(36, ReaderBottomBar.height + 8),
+                                   right: side)
         return ReflowLayout(pageSize: CGSize(width: pageWidth, height: size.height),
                             padding: padding,
                             typography: typography)
+    }
+
+    /// Menyradens höjd under statusfältet: 50 punkter på iPad, 44 på iPhone och 32 på iPhone liggande.
+    /// Ett fast mått, så att sidan inte beror på om menyn syns.
+    static func navigationBarHeight(for traits: UITraitCollection) -> CGFloat {
+        if traits.userInterfaceIdiom == .pad {
+            return 50
+        }
+        return traits.verticalSizeClass == .compact ? 32 : 44
     }
 
     private func installPageController(with pages: [UIViewController]) {
@@ -521,6 +538,12 @@ final class ReflowReaderViewController: UIViewController {
             let count = renderer.pageCount(of: position.chapter)
             if count.map({ position.slot < $0 }) ?? (position.slot == 0) {
                 pages.append(ReflowPage(chapter: position.chapter, page: position.slot))
+            }
+        }
+        // Bladen som faktiskt syns först, så att deras bilder aldrig släpps ur kön (Edvin 8 nov, blank sida).
+        for page in visiblePages {
+            if let number = page.page {
+                pages.append(ReflowPage(chapter: page.chapter, page: number))
             }
         }
         let here = (chapter: currentChapter, slot: currentSlot)
@@ -978,6 +1001,49 @@ final class ReflowReaderViewController: UIViewController {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
             self?.updateLayoutIfNeeded(force: true)
+            self?.watchVisiblePages(after: "text \(value.key)")
+        }
+    }
+
+    /// Edvin 8 nov: sidan kunde bli blank efter en ändring i Aa. Efter varje ändring kontrolleras att bladen
+    /// som syns får sina nya bilder. Saknas en bild efter några sekunder begärs den igen, och läget skrivs i
+    /// loggen (Diagnostik), så att ett nytt fel på iPaden syns där.
+    private func watchVisiblePages(after change: String) {
+        appearanceWatch?.cancel()
+        let started = CACurrentMediaTime()
+        appearanceWatch = Task { @MainActor [weak self] in
+            for attempt in 1...4 {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled, let self = self else { return }
+                let waiting = self.visiblePages.filter { page in
+                    !page.isBlank && (!page.hasImage || page.isStale) && !page.showsFailure
+                }
+                let seconds = Int((CACurrentMediaTime() - started).rounded())
+                if waiting.isEmpty, self.pendingJump == nil {
+                    if attempt > 1 {
+                        AppLog.shared.write("Aa (\(change)): sidan syntes efter cirka \(seconds) s")
+                    }
+                    return
+                }
+                let state = self.visiblePages.map { page in
+                    "kap \(page.chapter + 1) blad \(page.slot + 1)\(page.hasImage ? "" : " utan bild")"
+                        + "\(page.isStale ? " gammal" : "")"
+                }.joined(separator: ", ")
+                AppLog.shared.write("Aa (\(change)): efter \(seconds) s väntar \(waiting.count) blad (\(state)), "
+                                    + "hopp \(self.pendingJump.map { "till kap \($0.chapter + 1)" } ?? "inget"), "
+                                    + "vikning \(self.renderer?.isTurning == true ? "pågår" : "nej"), "
+                                    + "\(self.renderer?.loadedViewCount ?? 0) webbvyer, försök \(attempt)")
+                if self.renderer?.isTurning == true, self.pageController?.viewControllers?.isEmpty == false {
+                    // En vikning som aldrig rapporterade att den var klar håller annars kvar sidan.
+                    self.renderer?.isTurning = false
+                }
+                if let deferred = self.deferredShow, self.renderer?.isTurning != true {
+                    self.deferredShow = nil
+                    self.show(chapter: deferred.chapter, page: deferred.page)
+                }
+                self.keepNeighbours()
+                waiting.forEach { $0.reloadImage() }
+            }
         }
     }
 
@@ -1014,6 +1080,7 @@ final class ReflowReaderViewController: UIViewController {
             page.apply(paperColor: newTheme.paperColor)
         }
         keepNeighbours()
+        watchVisiblePages(after: "bakgrund \(newTheme.rawValue)")
     }
 
     /// Menyraden och reglaget följer bakgrunden: mörka på mörkt papper, ljusa annars.
@@ -1487,8 +1554,7 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
         if onLink {
             return false
         }
-        let position = point.x / max(view.bounds.width, 1)
-        let inMiddle = position > 0.3 && position < 0.7
+        let inMiddle = ReaderTapZones.isMiddle(point.x, width: view.bounds.width)
         if gestureRecognizer === chromeTap {
             return inMiddle
         }
@@ -1523,7 +1589,7 @@ extension ReflowReaderViewController {
     private func waitUntilShown() async -> Bool {
         for _ in 0..<150 {
             if pendingJump == nil, isShowingPages, !visiblePages.isEmpty,
-               visiblePages.allSatisfy({ $0.isBlank || $0.hasImage }) {
+               visiblePages.allSatisfy({ $0.isBlank || ($0.hasImage && !$0.isStale) }) {
                 return true
             }
             await pause(0.1)
@@ -1559,6 +1625,7 @@ extension ReflowReaderViewController {
                      + "Boken uppackad och läst efter \(since(loadedAt)) ms, första kapitlet mätt efter \(since(firstMeasuredAt)) ms.")
         logState("Start")
         SelfTest.saveScreen(view, name: "01-start")
+        selfTestChromeCoverage("stående")
 
         for _ in 0..<4 {
             turn(forward: true)
@@ -1638,6 +1705,7 @@ extension ReflowReaderViewController {
         SelfTest.saveScreen(view, name: "10c-papper")
 
         await selfTestAppearance()
+        await selfTestAppearancePanel()
 
         setTheme(savedTheme)
         setTypography(savedTypography)
@@ -1776,6 +1844,7 @@ extension ReflowReaderViewController {
         _ = await waitUntilShown()
         logState("Liggande")
         SelfTest.saveScreen(view, name: "11-liggande")
+        selfTestChromeCoverage("liggande")
         turn(forward: true)
         await pause(1.5)
         _ = await waitUntilShown()
@@ -1938,10 +2007,9 @@ extension ReflowReaderViewController {
         }
     }
 
-    /// Mitten av sidan, där ett tryck inte bläddrar.
+    /// Mitten av sidan, där ett tryck inte bläddrar (G12, `ReaderTapZones`).
     fileprivate static func isMiddle(_ x: CGFloat, width: CGFloat) -> Bool {
-        let position = x / max(width, 1)
-        return position > 0.3 && position < 0.7
+        ReaderTapZones.isMiddle(x, width: width)
     }
 
     /// O4: ett tryck på ett streck visar ordkortet för det sparade ordet, med meningen det sparades i.
@@ -2308,6 +2376,96 @@ extension ReflowReaderViewController {
         }
     }
 
+    /// Edvin 8 nov: menyraden och nederkanten täckte första och sista raden. Med menyn framme mäts var texten
+    /// börjar och slutar på bladen som syns, mot menyradens underkant och nederkantens överkant.
+    fileprivate func selfTestChromeCoverage(_ label: String) {
+        let wasHidden = chromeHidden
+        setChromeHidden(false, animated: false)
+        navigationController?.view.layoutIfNeeded()
+        view.layoutIfNeeded()
+        guard let bar = navigationController?.navigationBar else {
+            SelfTest.log("FEL: ingen menyrad (U3, \(label))")
+            return
+        }
+        let barFrame = bar.convert(bar.bounds, to: view)
+        let bottomTop = bottomBar.convert(bottomBar.bounds, to: view).minY
+        var parts: [String] = []
+        var covered = false
+        for page in visiblePages where !page.isBlank {
+            guard let image = page.currentImage,
+                  let rows = SelfTest.inkRows(in: image, paper: theme.paperColor) else { continue }
+            let frame = page.view.convert(page.view.bounds, to: view)
+            let top = frame.minY + CGFloat(rows.top) * frame.height
+            let bottom = frame.minY + CGFloat(rows.bottom) * frame.height
+            if top < barFrame.maxY || bottom > bottomTop {
+                covered = true
+            }
+            parts.append("text \(Int(top)) till \(Int(bottom))")
+        }
+        let verdict = parts.isEmpty ? "FEL, ingen sidbild" : (covered ? "FEL, menyn täcker text" : "ingen rad täcks")
+        SelfTest.log("Menyn över texten (U3, \(label)): menyraden \(Int(barFrame.minY)) till \(Int(barFrame.maxY)) "
+                     + "(höjd \(Int(barFrame.height)), fast mått \(Int(Self.navigationBarHeight(for: traitCollection)))), "
+                     + "nederkanten från \(Int(bottomTop)) (höjd \(Int(bottomBar.bounds.height))), "
+                     + "\(parts.joined(separator: "; ")): \(verdict). Layout \(lastLayout?.key ?? "ingen")")
+        if wasHidden {
+            setChromeHidden(true, animated: false)
+        }
+    }
+
+    /// Edvin 8 nov: när man ändrade i Aa blev sidan blank. Här görs ändringarna med rutan öppen, via rutans
+    /// egna knappar, en i taget och några tätt efter varandra, och efter varje ändring räknas bläcket på sidan.
+    fileprivate func selfTestAppearancePanel() async {
+        showTypography()
+        await pause(0.9)
+        guard let navigation = presentedViewController as? UINavigationController,
+              let panel = navigation.viewControllers.first as? AppearanceViewController else {
+            SelfTest.log("FEL: utseenderutan öppnades inte (Aa med rutan öppen)")
+            return
+        }
+        let steps: [(String, [AppearanceViewController.TestAction])] = [
+            ("Papper", [.theme(.paper)]),
+            ("Större", [.larger]),
+            ("Mörkt", [.theme(.dark)]),
+            ("New York", [.font(.newYork)]),
+            ("Vitt", [.theme(.white)]),
+            ("Smal marginal", [.margin(0)]),
+            ("Luftigt", [.spacing(2)]),
+            ("Ojusterat", [.justify(false)]),
+            ("Sepia", [.theme(.sepia)]),
+            ("Tätt efter varandra", [.larger, .theme(.dark), .font(.charter), .margin(2), .theme(.paper), .smaller]),
+            ("Återställ", [.reset]),
+        ]
+        var blank = 0
+        for (name, actions) in steps {
+            let started = CACurrentMediaTime()
+            for action in actions {
+                panel.perform(action)
+                await pause(0.12)
+            }
+            await pause(0.5)
+            let shown = await waitUntilShown()
+            let milliseconds = Int(((CACurrentMediaTime() - started) * 1000).rounded())
+            let ink = SelfTest.inkPercent(in: view, paper: theme.paperColor)
+            if ink < 0.5 {
+                blank += 1
+            }
+            SelfTest.log("Aa med rutan öppen, \(name): \(shown ? "sidan klar" : "FEL, sidan kom inte") efter "
+                         + "\(milliseconds) ms, bläck \(String(format: "%.1f", ink)) %"
+                         + "\(ink < 0.5 ? " FEL, BLANK" : ""). Nyckel \(typography.key), bakgrund \(theme.rawValue)")
+        }
+        logState("Aa med rutan öppen, sist")
+        SelfTest.saveScreen(view, name: "16-aa-oppen")
+        if let window = view.window {
+            SelfTest.saveScreen(window, name: "16b-aa-oppen-fonster")
+        }
+        dismiss(animated: false)
+        await pause(0.5)
+        _ = await waitUntilShown()
+        let ink = SelfTest.inkPercent(in: view, paper: theme.paperColor)
+        SelfTest.log("Aa stängd: bläck \(String(format: "%.1f", ink)) %. Blanka steg med rutan öppen: \(blank)"
+                     + (blank > 0 ? " FEL" : ""))
+    }
+
     /// Mäter raden i kapitlet: sidmarginal, textbredd, ungefär antal tecken per rad (medelbredden för tecknen
     /// i ett långt stycke), radavstånd, justering, avstavning och språk.
     private static let lineMeasureScript = #"""
@@ -2344,6 +2502,12 @@ extension ReflowReaderViewController {
                      + "\(right.joined(separator: ", ")), titel \(title ?? "ingen"), under titeln "
                      + "\(chrome.subtitle ?? "inget"). Bandet i hörnet tar trycket: \(hit ? "ja" : "FEL, nej"), "
                      + "mitten av sidan: \(middle ? "FEL, ja" : "nej")")
+        let edge = ReaderTapZones.edgeWidth(forWidth: view.bounds.width)
+        let middleShare = Int(((view.bounds.width - 2 * edge) / max(view.bounds.width, 1) * 100).rounded())
+        SelfTest.log("Tryckzoner (G12): bläddring \(Int(edge)) punkter från kanterna, menyn i mitten "
+                     + "\(middleShare) procent av bredden \(Int(view.bounds.width)). 15 procent in från vänster: "
+                     + "\(Self.isMiddle(view.bounds.width * 0.15, width: view.bounds.width) ? "menyn" : "bläddrar"), "
+                     + "8 procent: \(Self.isMiddle(view.bounds.width * 0.08, width: view.bounds.width) ? "menyn" : "bläddrar")")
         selfTestTimeline()
     }
 

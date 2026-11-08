@@ -107,9 +107,18 @@ jobs:
           xcodebuild -version
 
       - name: Installera XcodeGen (låst version)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" \
-            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          # Direkt från releasesidan. Svarar den inte (github.com gav 504 den 8 november) hämtas samma fil via API:t.
+          if ! curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"; then
+            ASSET=$(curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/yonaskolb/XcodeGen/releases/tags/${XCODEGEN_VERSION}" \
+              | python3 -c "import json,sys; print([a['id'] for a in json.load(sys.stdin)['assets'] if a['name'] == 'xcodegen.zip'][0])")
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+              -o "$RUNNER_TEMP/xcodegen.zip" "https://api.github.com/repos/yonaskolb/XcodeGen/releases/assets/$ASSET"
+          fi
           rm -rf "$RUNNER_TEMP/xcodegen"
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/xcodegen"
           XCODEGEN=$(find "$RUNNER_TEMP/xcodegen" -type f -path '*/bin/xcodegen' | head -n 1)
@@ -209,9 +218,18 @@ jobs:
           xcodebuild -version
 
       - name: Installera XcodeGen (låst version)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" \
-            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          # Direkt från releasesidan. Svarar den inte (github.com gav 504 den 8 november) hämtas samma fil via API:t.
+          if ! curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"; then
+            ASSET=$(curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/yonaskolb/XcodeGen/releases/tags/${XCODEGEN_VERSION}" \
+              | python3 -c "import json,sys; print([a['id'] for a in json.load(sys.stdin)['assets'] if a['name'] == 'xcodegen.zip'][0])")
+            curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+              -o "$RUNNER_TEMP/xcodegen.zip" "https://api.github.com/repos/yonaskolb/XcodeGen/releases/assets/$ASSET"
+          fi
           rm -rf "$RUNNER_TEMP/xcodegen"
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/xcodegen"
           XCODEGEN=$(find "$RUNNER_TEMP/xcodegen" -type f -path '*/bin/xcodegen' | head -n 1)
