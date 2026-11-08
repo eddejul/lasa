@@ -116,6 +116,20 @@ enum NotebookLogic {
         let entries: [NotebookEntry]
     }
 
+    /// Raden under filtren: "3 markeringar och 1 anteckning", med filter "2 av 4: 2 markeringar".
+    static func countText(shown: [NotebookEntry], all: [NotebookEntry]) -> String {
+        func describe(_ list: [NotebookEntry]) -> String {
+            let notes = list.filter(\.isPageNote).count
+            let marks = list.count - notes
+            var text = marks == 1 ? "1 markering" : "\(marks) markeringar"
+            if notes > 0 {
+                text += notes == 1 ? " och 1 anteckning" : " och \(notes) anteckningar"
+            }
+            return text
+        }
+        return shown.count == all.count ? describe(all) : "\(shown.count) av \(all.count): " + describe(shown)
+    }
+
     static func filter(_ entries: [NotebookEntry], _ filter: Filter) -> [NotebookEntry] {
         let query = FoldedText(filter.query.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).text as String
         return entries.filter { entry in
@@ -318,9 +332,7 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
         } else {
             groups = NotebookLogic.groups(shown, allBooks: false)
         }
-        countLabel.text = shown.count == entries.count
-            ? "\(entries.count) markeringar"
-            : "\(shown.count) av \(entries.count) markeringar"
+        countLabel.text = NotebookLogic.countText(shown: shown, all: entries)
         updateChips()
         navigationItem.rightBarButtonItem?.menu = makeMenu()
         tableView.reloadData()
