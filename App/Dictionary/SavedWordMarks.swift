@@ -73,7 +73,7 @@ final class SavedWordMarks {
         let intervals = UserWords.shared.reviewIntervals()
         var wanted: [(key: String, language: WordLanguage, lemma: String, word: String)] = []
         var status: [String: String] = [:]
-        for word in words {
+        for word in words where !SavedWordMatcher.isFunctionWord(WordDictionary.normalize(word.lemma)) {
             let key = word.language.rawValue + "|" + word.lemma
             status[key] = (intervals[key] ?? 0) >= Self.knownInterval ? "k" : "w"
             wanted.append((key, word.language, word.lemma, word.word))
@@ -93,7 +93,7 @@ final class SavedWordMarks {
                 if item.language == .english {
                     forms.formUnion(SavedWordMatcher.englishForms(of: WordDictionary.normalize(item.lemma)))
                 }
-                found[item.key] = forms.filter { $0.count >= 3 }.sorted()
+                found[item.key] = forms.filter { $0.count >= 3 && !SavedWordMatcher.isFunctionWord($0) }.sorted()
             }
             DispatchQueue.main.async {
                 self.dictionary = reader
@@ -125,6 +125,32 @@ final class SavedWordMarks {
 /// Matchningen av sparade ord i en text (ren logik, testad i XCTest). Används av PDF-läsaren på
 /// renderingskön och har samma ordmönster som `applyWords` i webbvyns skript.
 enum SavedWordMatcher {
+
+    /// Småord som får ett streck på nästan varje rad om de har slagits upp (det, den, var, the, with).
+    /// De sparas som förut, men får inget streck.
+    static let functionWords: Set<String> = [
+        "och", "att", "det", "som", "en", "på", "är", "av", "för", "med", "till", "den", "har", "de", "inte",
+        "om", "ett", "han", "men", "var", "jag", "sig", "från", "vi", "så", "kan", "man", "när", "år", "hon",
+        "under", "också", "efter", "eller", "nu", "sin", "där", "vid", "mot", "ska", "skulle", "kommer", "ut",
+        "får", "finns", "vara", "hade", "alla", "andra", "mycket", "än", "här", "då", "sedan", "över", "bara",
+        "in", "blir", "upp", "även", "vad", "få", "två", "vill", "ha", "många", "hur", "mer", "går", "detta",
+        "skall", "hans", "utan", "sina", "något", "allt", "fick", "måste", "mellan", "blev", "bli", "någon",
+        "några", "sitt", "varit", "dem", "bland", "ta", "genom", "hela", "annat", "fram", "gör", "ingen",
+        "dessa", "varje", "hennes", "deras", "vilket", "vilka", "vilken", "denna", "mig", "dig", "oss", "er",
+        "honom", "henne", "dess", "vår", "våra", "mitt", "min", "mina", "din", "dina", "era", "kunna", "göra",
+        "gjorde", "samma", "själv", "ju", "väl", "nog", "redan", "dock", "eftersom", "medan", "innan", "både",
+        "the", "of", "and", "to", "is", "it", "you", "that", "he", "was", "for", "on", "are", "with",
+        "as", "his", "they", "be", "at", "one", "have", "this", "from", "or", "had", "by", "not", "but",
+        "what", "some", "we", "can", "out", "other", "were", "all", "there", "when", "up", "your", "how",
+        "an", "each", "she", "which", "do", "their", "if", "will", "about", "many", "then", "them", "would",
+        "so", "these", "her", "him", "has", "more", "could", "did", "no", "most", "my", "over", "than", "who",
+        "may", "been", "now", "any", "its", "also", "into", "only", "our", "very", "just", "should", "those",
+        "such", "where", "why", "while", "both", "being", "does", "here",
+    ]
+
+    static func isFunctionWord(_ word: String) -> Bool {
+        functionWords.contains(word)
+    }
 
     /// Ett ord: bokstäver, med apostrof eller bindestreck inne i ordet.
     private static let pattern = try? NSRegularExpression(pattern: "[\\p{L}\\p{M}]+(?:['’\\-‐‑][\\p{L}\\p{M}]+)*")

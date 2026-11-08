@@ -278,6 +278,13 @@ final class SavedWordMatcherTests: XCTestCase {
         XCTAssertTrue(SavedWordMatcher.englishForms(of: "box").contains("boxes"))
     }
 
+    func testFunctionWordsGetNoMark() {
+        XCTAssertTrue(SavedWordMatcher.isFunctionWord("det"))
+        XCTAssertTrue(SavedWordMatcher.isFunctionWord("the"))
+        XCTAssertFalse(SavedWordMatcher.isFunctionWord("kunskap"))
+        XCTAssertFalse(SavedWordMatcher.isFunctionWord("eklatant"))
+    }
+
     func testIDGivesLanguageAndLemma() {
         XCTAssertEqual(SavedWordMarks.word(fromID: "ord:sv|lätt")?.lemma, "lätt")
         XCTAssertEqual(SavedWordMarks.word(fromID: "ord:en|run up")?.language, .english)

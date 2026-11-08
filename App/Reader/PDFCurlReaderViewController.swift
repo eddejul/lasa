@@ -1682,7 +1682,7 @@ extension PDFCurlReaderViewController {
         UserWords.shared.save(word: "kunskap", lemma: "kunskap", language: .swedish,
                               sentence: "Kunskap kommer sällan av sig själv.", book: book.title, pageIndex: page.pageIndex,
                               bookID: book.id)
-        for _ in 0..<30 where page.wordMarkCount == 0 {
+        for _ in 0..<40 where page.markRects(id: SavedWordMarks.idPrefix + "sv|kunskap").isEmpty {
             await pause(0.2)
         }
         let wordRect = page.markRects(id: SavedWordMarks.idPrefix + "sv|kunskap").first
