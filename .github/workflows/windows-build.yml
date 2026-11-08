@@ -9,6 +9,7 @@ on:
     paths:
       - "windows/**"
       - "tools/dictionary/**"
+      - "tools/ocr/**"
       - ".github/workflows/windows-build.yml"
   workflow_dispatch:
 
@@ -101,6 +102,11 @@ jobs:
         run: |
           node --no-warnings windows/tests/parity.mjs build/ordbok/lasa-ordbok.sqlite tools/dictionary/testwords.txt python3
           node --test windows/tests/*.test.mjs
+
+      # Gör sökbar (P1): skriptet följer med appen som resurs. Här bara att det går att läsa in (ingen Tesseract
+      # på byggservern). Hela provet med riktig Tesseract: python tools/ocr/test_sokbar.py.
+      - name: OCR-skriptet går att läsa in
+        run: python3 -m py_compile tools/ocr/sokbar_pdf.py tools/ocr/testsidor.py tools/ocr/test_sokbar.py
 
   build:
     name: Appen för Windows
