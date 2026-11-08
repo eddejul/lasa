@@ -97,6 +97,29 @@ enum LibrarySelfTest {
                          + (finished.contains("test.epub") ? "Rätt" : "FEL"))
         }
 
+        // B3: kurser. Mappen Kurs blir en kurs av sig själv, en egen kurs får test.pdf och en färg.
+        if let folderCourse = CourseStore.shared.courses().first(where: { $0.folder == "Kurs" }) {
+            let members = library.allItems.filter { $0.courses.contains(folderCourse.id) }.map(\.book.path)
+            SelfTest.log("Kurs ur mappen Kurs (B3): \(folderCourse.name) med \(members.joined(separator: ", ")). "
+                         + (members == ["Kurs/Anteckningar.md"] ? "Rätt" : "FEL"))
+        } else {
+            SelfTest.log("Kurs ur mappen Kurs (B3): FEL, saknas")
+        }
+        var ownCourse: Course?
+        if let pdf = pdf, let course = CourseStore.shared.create(name: "Provkurs", color: HighlightColor.green.rawValue) {
+            ownCourse = course
+            CourseStore.shared.add(book: pdf.book.id, to: course.id)
+            library.reload()
+            library.setScope(.course(course.id))
+            let shown = library.items.map(\.book.path)
+            let menuTitles = (library.menu(for: library.allItems.first { $0.book.id == pdf.book.id } ?? pdf).children
+                .compactMap { $0 as? UIMenu }.first?.children.map(\.title)) ?? []
+            SelfTest.log("Egen kurs (B3): Provkurs visar \(shown.joined(separator: ", ")), Lägg i kurs: "
+                         + "\(menuTitles.joined(separator: ", ")). \(shown == ["test.pdf"] ? "Rätt" : "FEL")")
+            library.setScope(.all)
+        }
+        SelfTest.log("Sidopanelen (B3): \(library.sidebar.rowsForSelfTest.joined(separator: " | "))")
+
         // Bilder: stående, liggande, iPhone-storlek och tomt bibliotek.
         let container = navigation.view!
         let original = container.frame
@@ -112,7 +135,14 @@ enum LibrarySelfTest {
         container.layoutIfNeeded()
         library.reload()
         await pause(1.0)
+        SelfTest.log("Liggande: sidopanelen \(library.showsSidebar ? "syns" : "FEL, syns inte")")
         SelfTest.saveScreen(container, name: "20b-bibliotek-liggande")
+        if let course = ownCourse {
+            library.setScope(.course(course.id))
+            await pause(0.6)
+            SelfTest.saveScreen(container, name: "20e-bibliotek-kurs")
+            library.setScope(.all)
+        }
 
         container.frame = CGRect(x: 0, y: 0, width: 390, height: min(844, original.height))
         container.layoutIfNeeded()
@@ -127,6 +157,9 @@ enum LibrarySelfTest {
         await pause(0.8)
         SelfTest.saveScreen(container, name: "20d-bibliotek-tomt")
         library.showsEmptyForSelfTest = false
+        if let course = ownCourse {
+            CourseStore.shared.delete(course.id)
+        }
         library.reload()
         await pause(0.4)
     }

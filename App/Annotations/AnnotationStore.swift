@@ -181,6 +181,24 @@ final class AnnotationStore {
             ALTER TABLE books ADD COLUMN pages INTEGER NOT NULL DEFAULT 0;
             ALTER TABLE books ADD COLUMN chapter_left INTEGER NOT NULL DEFAULT -1;
             """,
+        // Steg 5 (B3): kurserna och vilka böcker man lagt i dem. En undermapp i Böcker blir en kurs (`folder`).
+        // Ingen synk än, synken byggs om till iCloud Drive (F1).
+        """
+            CREATE TABLE IF NOT EXISTS courses (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                color TEXT NOT NULL DEFAULT '',
+                folder TEXT NOT NULL DEFAULT '',
+                added REAL NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS course_books (
+                course TEXT NOT NULL,
+                book TEXT NOT NULL,
+                added REAL NOT NULL,
+                PRIMARY KEY (course, book)
+            );
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.
@@ -224,6 +242,7 @@ final class AnnotationStore {
         try db.migrate(Self.migrations)
         // Kopian har sitt eget bokregister (eller inget, om den är från före G3). Böckerna läses in på nytt.
         BookRegistry.shared.reset()
+        CourseStore.shared.reset()
         NotificationCenter.default.post(name: Self.didChange, object: nil)
     }
 

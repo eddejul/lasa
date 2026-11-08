@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 @testable import Lasa
 
@@ -97,6 +98,44 @@ final class LibraryLogicTests: XCTestCase {
         XCTAssertEqual(BookFileReader.resolve("bilder/omslag.jpg", base: "OEBPS"), "OEBPS/bilder/omslag.jpg")
         XCTAssertEqual(BookFileReader.resolve("../Images/cover%20big.jpg", base: "OEBPS/Text"), "OEBPS/Images/cover big.jpg")
         XCTAssertEqual(BookFileReader.resolve("cover.png", base: ""), "cover.png")
+    }
+
+    // MARK: Kurser (B3)
+
+    func testFolderCourses() {
+        XCTAssertEqual(CourseLogic.topFolder(of: "RETA30/Kap 1/Bok.pdf"), "RETA30")
+        XCTAssertNil(CourseLogic.topFolder(of: "Bok.pdf"))
+        let deleted = Course(id: "d", name: "Gammal", color: "", folder: "Gammal", added: 0, deleted: true)
+        let existing = Course(id: "r", name: "Retorik", color: "", folder: "RETA30", added: 0)
+        let names = CourseLogic.newFolderCourses(paths: ["RETA30/a.pdf", "HP/b.pdf", "HP/c.pdf", "Gammal/x.pdf", "d.pdf"],
+                                                 existing: [deleted, existing])
+        // RETA30 har en kurs, Gammal togs bort och skapas inte igen.
+        XCTAssertEqual(names, ["HP"])
+    }
+
+    func testCourseMembership() {
+        let folder = Course(id: "f", name: "RETA30", color: "", folder: "RETA30", added: 0)
+        let own = Course(id: "o", name: "Tenta", color: "green", folder: "", added: 0)
+        let gone = Course(id: "g", name: "Borta", color: "", folder: "", added: 0, deleted: true)
+        let courses = [folder, own, gone]
+        let explicit: [String: Set<String>] = ["b1": ["o", "g"], "b2": ["o"]]
+        XCTAssertEqual(CourseLogic.courses(forPath: "RETA30/Bok.pdf", bookID: "b1", courses: courses, explicit: explicit),
+                       ["f", "o"])
+        XCTAssertEqual(CourseLogic.courses(forPath: "Annan.pdf", bookID: "b2", courses: courses, explicit: explicit), ["o"])
+        XCTAssertEqual(CourseLogic.courses(forPath: "Annan.pdf", bookID: "b3", courses: courses, explicit: explicit), [])
+        XCTAssertEqual(own.tint, HighlightColor.green.solid)
+    }
+
+    func testCourseTablesInTheStair() throws {
+        let db = try SQLiteDatabase(path: ":memory:", readOnly: false)
+        try db.migrate(Array(AnnotationStore.migrations.prefix(4)))
+        try db.migrate(AnnotationStore.migrations)
+        try db.execute("INSERT INTO courses (id, name, color, folder, added, deleted) VALUES ('c', 'RETA30', '', '', 1, 0)")
+        try db.execute("INSERT OR IGNORE INTO course_books (course, book, added) VALUES ('c', 'b', 1)")
+        try db.execute("INSERT OR IGNORE INTO course_books (course, book, added) VALUES ('c', 'b', 2)")
+        var count = 0
+        try db.query("SELECT COUNT(*) FROM course_books") { count = $0.int(0) }
+        XCTAssertEqual(count, 1)
     }
 
     /// Edvins data: en databas i den form våg 3 lämnade går genom trappan utan att något försvinner, och en rad

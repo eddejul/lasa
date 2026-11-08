@@ -30,8 +30,9 @@ struct ShelfItem: Equatable {
     let page: Int
     let pages: Int
     let chapterLeft: Int
-    /// Kurserna boken ligger i (B3), som kursernas id.
+    /// Kurserna boken ligger i (B3), som kursernas id, och deras namn (till sökningen).
     var courses: Set<String> = []
+    var courseNames: [String] = []
 
     init(book: Book, record: BookRecord?, lastRead: Double, courses: Set<String> = []) {
         self.book = book
@@ -122,7 +123,7 @@ enum LibraryLogic {
         let words = text.lowercased().split(separator: " ").map(String.init).filter { !$0.isEmpty }
         guard !words.isEmpty else { return items }
         return items.filter { item in
-            let haystack = [item.title, item.author, item.book.folder ?? "", item.book.title]
+            let haystack = ([item.title, item.author, item.book.folder ?? "", item.book.title] + item.courseNames)
                 .joined(separator: " ")
                 .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "sv_SE"))
             return words.allSatisfy { word in

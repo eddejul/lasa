@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 /// Startskärmen (B1, B2): Fortsätt läsa överst och böckerna som ett rutnät med omslag, titel, författare och
 /// hur långt man läst. Håll fingret på ett omslag för Byt namn, Välj omslag, Markera som läst och Ta bort.
 final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, UICollectionViewDataSource,
-    UICollectionViewDelegate {
+    UICollectionViewDelegate, UISearchResultsUpdating {
 
     private enum Section: Int, CaseIterable {
         case banner, activity, continueReading, books
@@ -19,6 +19,16 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     private(set) var continueItem: ShelfItem?
     private var records: [String: BookRecord] = [:]
     private var didStartSelfTest = false
+
+    // B3: sidopanelen, kurserna och sökningen.
+    let sidebar = LibrarySidebarViewController()
+    private var sidebarButton: UIBarButtonItem!
+    private let searchController = UISearchController(searchResultsController: nil)
+    private(set) var scope: LibraryScope = .all
+    private(set) var courses: [Course] = []
+    private var searchText = ""
+    private var reviewCount = 0
+    private var savedCount = 0
 
     private static let filterKey = "library.filter"
     private static let sortKey = "library.sort"
@@ -46,25 +56,15 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         let add = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addTapped))
         add.accessibilityLabel = "Lägg till böcker"
         navigationItem.rightBarButtonItems = [add, settings]
-        let words = UIBarButtonItem(title: nil,
-                                    image: UIImage(systemName: "character.book.closed"),
-                                    primaryAction: nil,
-                                    menu: UIMenu(children: [
-                                        UIAction(title: "Sparade ord", image: UIImage(systemName: "bookmark")) { [weak self] _ in
-                                            self?.navigationController?.pushViewController(SavedWordsViewController(),
-                                                                                           animated: true)
-                                        },
-                                        UIAction(title: "Repetera ord", image: UIImage(systemName: "rectangle.stack")) { [weak self] _ in
-                                            self?.navigationController?.pushViewController(WordReviewViewController(),
-                                                                                           animated: true)
-                                        },
-                                        UIAction(title: "Om ordboken", image: UIImage(systemName: "info.circle")) { [weak self] _ in
-                                            self?.navigationController?.pushViewController(AboutDictionaryViewController(),
-                                                                                           animated: true)
-                                        },
-                                    ]))
-        words.accessibilityLabel = "Ordboken"
-        navigationItem.leftBarButtonItem = words
+        // B3: kurserna och orden ligger i sidopanelen. I stående nås den med knappen uppe till vänster.
+        sidebarButton = UIBarButtonItem(image: UIImage(systemName: "sidebar.left"), style: .plain,
+                                        target: self, action: #selector(showSidebar))
+        sidebarButton.accessibilityLabel = "Kurser och ord"
+        searchController.searchResultsUpdater = self
+        searchController.obscuresBackgroundDuringPresentation = false
+        searchController.searchBar.placeholder = "Sök titel, författare, kurs"
+        navigationItem.searchController = searchController
+        navigationItem.hidesSearchBarWhenScrolling = false
 
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: makeLayout())
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -77,6 +77,10 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         collectionView.register(BooksHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
                                 withReuseIdentifier: BooksHeaderView.id)
         view.addSubview(collectionView)
+        configureSidebar(sidebar)
+        addChild(sidebar)
+        view.addSubview(sidebar.view)
+        sidebar.didMove(toParent: self)
 
         BookImporter.shared.onChange = { [weak self] in
             self?.updateActivity()
@@ -86,8 +90,236 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
                                                object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(memoryWarning),
                                                name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(coursesChanged), name: CourseStore.didChange,
+                                               object: nil)
         applyTheme()
         reload()
+    }
+
+    // MARK: Sidopanelen (B3)
+
+    /// Sidopanelen ligger fast till vänster i liggande på iPad.
+    var showsSidebar: Bool {
+        view.bounds.width > view.bounds.height && view.bounds.width >= 700
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutPanels()
+    }
+
+    private func layoutPanels() {
+        let bounds = view.bounds
+        if showsSidebar {
+            let width = min(280, max(240, (bounds.width * 0.24).rounded()))
+            sidebar.view.isHidden = false
+            sidebar.view.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
+            collectionView.frame = CGRect(x: width, y: 0, width: bounds.width - width, height: bounds.height)
+            if navigationItem.leftBarButtonItem != nil {
+                navigationItem.leftBarButtonItem = nil
+            }
+        } else {
+            sidebar.view.isHidden = true
+            collectionView.frame = bounds
+            if navigationItem.leftBarButtonItem !== sidebarButton {
+                navigationItem.leftBarButtonItem = sidebarButton
+            }
+        }
+    }
+
+    private func configureSidebar(_ panel: LibrarySidebarViewController) {
+        panel.onSelectScope = { [weak self, weak panel] scope in
+            guard let self = self else { return }
+            self.setScope(scope)
+            if let panel = panel, panel !== self.sidebar {
+                panel.dismiss(animated: true)
+            }
+        }
+        panel.onReview = { [weak self] in
+            self?.afterDismissingPanel { self?.navigationController?.pushViewController(WordReviewViewController(),
+                                                                                         animated: true) }
+        }
+        panel.onSavedWords = { [weak self] in
+            self?.afterDismissingPanel { self?.navigationController?.pushViewController(SavedWordsViewController(),
+                                                                                         animated: true) }
+        }
+        panel.onAboutDictionary = { [weak self] in
+            self?.afterDismissingPanel { self?.navigationController?.pushViewController(AboutDictionaryViewController(),
+                                                                                         animated: true) }
+        }
+        panel.onNewCourse = { [weak self] in
+            self?.afterDismissingPanel { self?.newCourse(adding: nil) }
+        }
+        panel.courseMenu = { [weak self] course in
+            self?.menu(for: course)
+        }
+    }
+
+    /// Stänger sidopanelen om den visas som ruta, och gör sedan `action`.
+    private func afterDismissingPanel(_ action: @escaping () -> Void) {
+        if presentedViewController is LibrarySidebarViewController {
+            dismiss(animated: true, completion: action)
+        } else {
+            action()
+        }
+    }
+
+    @objc private func showSidebar() {
+        let panel = LibrarySidebarViewController()
+        configureSidebar(panel)
+        panel.update(courses: courses, counts: sidebarCounts, selected: scope)
+        panel.preferredContentSize = CGSize(width: 320, height: 600)
+        panel.modalPresentationStyle = .popover
+        panel.popoverPresentationController?.barButtonItem = sidebarButton
+        panel.popoverPresentationController?.backgroundColor = Theme.current.surfaceSunk
+        present(panel, animated: true)
+    }
+
+    private var sidebarCounts: LibrarySidebarViewController.Counts {
+        var counts = LibrarySidebarViewController.Counts()
+        counts.all = allItems.count
+        counts.reading = allItems.filter(\.isReading).count
+        for course in courses {
+            counts.courses[course.id] = allItems.filter { $0.courses.contains(course.id) }.count
+        }
+        counts.review = reviewCount
+        counts.saved = savedCount
+        return counts
+    }
+
+    func setScope(_ scope: LibraryScope) {
+        self.scope = scope
+        rebuildItems()
+        collectionView.reloadData()
+        updateEmptyState()
+        collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.adjustedContentInset.top), animated: false)
+    }
+
+    @objc private func coursesChanged() {
+        rebuildItems()
+        collectionView.reloadData()
+        updateEmptyState()
+    }
+
+    /// Rubriken över rutnätet: Alla böcker, Läser nu eller kursens namn.
+    private var scopeTitle: String {
+        switch scope {
+        case .all: return "Alla böcker"
+        case .reading: return "Läser nu"
+        case .course(let id): return courses.first { $0.id == id }?.name ?? "Kurs"
+        }
+    }
+
+    // MARK: Sökningen (B3)
+
+    func updateSearchResults(for searchController: UISearchController) {
+        let text = searchController.searchBar.text ?? ""
+        guard text != searchText else { return }
+        searchText = text
+        rebuildItems()
+        collectionView.reloadData()
+        updateEmptyState()
+    }
+
+    // MARK: Kurserna (B3)
+
+    /// Ny kurs med ett namn. `book`: boken läggs i kursen direkt.
+    func newCourse(adding book: Book?) {
+        let alert = UIAlertController(title: "Ny kurs", message: book == nil ? nil : "Boken läggs i kursen.",
+                                      preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "Till exempel RETA30"
+            field.autocapitalizationType = .sentences
+        }
+        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Skapa", style: .default) { [weak alert] _ in
+            let name = BookFileReader.clean(alert?.textFields?.first?.text ?? "")
+            guard !name.isEmpty, let course = CourseStore.shared.create(name: name) else { return }
+            if let book = book {
+                CourseStore.shared.add(book: book.id, to: course.id)
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    /// Hållmenyn på en kurs i sidopanelen: Byt namn, Färg och Ta bort kurs.
+    func menu(for course: Course) -> UIMenu {
+        let colors = HighlightColor.allCases.map { color in
+            UIAction(title: color.title, image: UIImage(systemName: "circle.fill")?
+                        .withTintColor(color.solid, renderingMode: .alwaysOriginal),
+                     state: course.color == color.rawValue ? .on : .off) { _ in
+                CourseStore.shared.setColor(course.id, color: course.color == color.rawValue ? "" : color.rawValue)
+            }
+        }
+        return UIMenu(title: course.name, children: [
+            UIAction(title: "Byt namn", image: UIImage(systemName: "pencil")) { [weak self] _ in
+                self?.afterDismissingPanel { self?.renameCourse(course) }
+            },
+            UIMenu(title: "Färg", image: UIImage(systemName: "paintpalette"), children: colors),
+            UIAction(title: "Ta bort kurs", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                self?.afterDismissingPanel { self?.confirmDeleteCourse(course) }
+            },
+        ])
+    }
+
+    private func renameCourse(_ course: Course) {
+        let alert = UIAlertController(title: "Byt namn på kursen", message: nil, preferredStyle: .alert)
+        alert.addTextField { field in
+            field.text = course.name
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Spara", style: .default) { [weak alert] _ in
+            let name = BookFileReader.clean(alert?.textFields?.first?.text ?? "")
+            guard !name.isEmpty else { return }
+            CourseStore.shared.rename(course.id, to: name)
+        })
+        present(alert, animated: true)
+    }
+
+    private func confirmDeleteCourse(_ course: Course) {
+        let message = course.folder.isEmpty
+            ? "Böckerna ligger kvar i biblioteket."
+            : "Böckerna och mappen \(course.folder) i Böcker ligger kvar. Kursen skapas inte igen av mappen."
+        let alert = UIAlertController(title: "Ta bort kursen \(course.name)?", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Ta bort", style: .destructive) { [weak self] _ in
+            CourseStore.shared.delete(course.id)
+            if self?.scope == .course(course.id) {
+                self?.setScope(.all)
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    /// Lägg i kurs i hållmenyn: kurserna med bock, och Ny kurs.
+    private func courseMenu(for item: ShelfItem) -> UIMenu {
+        var children: [UIMenuElement] = courses.map { course -> UIMenuElement in
+            let member = item.courses.contains(course.id)
+            let byFolder = !course.folder.isEmpty
+                && CourseLogic.topFolder(of: item.book.path)?.lowercased() == course.folder.lowercased()
+            let action = UIAction(title: course.name, state: member ? .on : .off) { _ in
+                if member {
+                    CourseStore.shared.remove(book: item.book.id, from: course.id)
+                } else {
+                    CourseStore.shared.add(book: item.book.id, to: course.id)
+                }
+            }
+            if byFolder {
+                action.subtitle = "Ligger i mappen \(course.folder)"
+                action.attributes = .disabled
+            }
+            return action
+        }
+        children.append(UIAction(title: "Ny kurs", image: UIImage(systemName: "plus")) { [weak self] _ in
+            self?.newCourse(adding: item.book)
+        })
+        return UIMenu(title: "Lägg i kurs", image: UIImage(systemName: "graduationcap"), children: children)
+    }
+
+    /// Randen på omslaget: den första kursens färg.
+    private func stripe(for item: ShelfItem) -> UIColor? {
+        courses.first { item.courses.contains($0.id) && $0.tint != nil }?.tint
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -137,6 +369,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         view.backgroundColor = palette.canvas
         collectionView.backgroundColor = palette.canvas
         Theme.style(navigationController?.navigationBar)
+        sidebar.applyTheme()
     }
 
     @objc private func memoryWarning() {
@@ -149,6 +382,11 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         let scanned = LibraryStore.shared.scan()
         books = scanned.books
         guard isViewLoaded else { return }
+        if !showsEmptyForSelfTest {
+            CourseStore.shared.addFolderCourses(for: books)
+        }
+        reviewCount = UserWords.shared.reviewCount()
+        savedCount = UserWords.shared.savedWords().count
         rebuildItems()
         collectionView.reloadData()
         updateEmptyState()
@@ -161,12 +399,27 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     private func rebuildItems() {
         records = Dictionary(BookRegistry.shared.records().map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let books = showsEmptyForSelfTest ? [] : self.books
+        courses = CourseStore.shared.courses()
+        let explicit = CourseStore.shared.membership()
         allItems = books.map { book in
-            ShelfItem(book: book, record: records[book.id],
-                        lastRead: LibraryStore.shared.positionDate(for: book)?.timeIntervalSince1970 ?? 0)
+            var item = ShelfItem(book: book, record: records[book.id],
+                                 lastRead: LibraryStore.shared.positionDate(for: book)?.timeIntervalSince1970 ?? 0)
+            item.courses = CourseLogic.courses(forPath: book.path, bookID: book.id, courses: courses, explicit: explicit)
+            item.courseNames = courses.filter { item.courses.contains($0.id) }.map(\.name)
+            return item
         }
         continueItem = LibraryLogic.continueReading(allItems)
-        items = LibraryLogic.sort(LibraryLogic.filter(allItems, filter), by: sort)
+        if case .course(let id) = scope, !courses.contains(where: { $0.id == id }) {
+            scope = .all
+        }
+        var scoped = allItems
+        switch scope {
+        case .all: break
+        case .reading: scoped = scoped.filter(\.isReading)
+        case .course(let id): scoped = scoped.filter { $0.courses.contains(id) }
+        }
+        items = LibraryLogic.sort(LibraryLogic.search(LibraryLogic.filter(scoped, filter), searchText), by: sort)
+        sidebar.update(courses: courses, counts: sidebarCounts, selected: scope)
     }
 
     /// Titel, författare och omslag läses i bakgrunden, en bok i taget, i den ordning de syns.
@@ -408,8 +661,11 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         let label = UILabel()
         if allItems.isEmpty {
             label.text = "Inga böcker än.\nTryck på + eller välj Öppna i Sensus från Filer."
+        } else if !searchText.isEmpty {
+            label.text = "Inga böcker hittades för \(searchText)."
         } else {
-            label.text = "Inga böcker under \(filter.title)."
+            label.text = filter == .all ? "Inga böcker i \(scopeTitle) än.\nHåll fingret på en bok och välj Lägg i kurs."
+                : "Inga böcker under \(filter.title) i \(scopeTitle)."
         }
         label.numberOfLines = 0
         label.textAlignment = .center
@@ -488,7 +744,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         switch Section(rawValue: section) {
         case .banner: return expiryText == nil ? 0 : 1
         case .activity: return activityLines.isEmpty ? 0 : 1
-        case .continueReading: return continueItem == nil ? 0 : 1
+        case .continueReading: return continueItem == nil || scope != .all || !searchText.isEmpty ? 0 : 1
         case .books: return items.count
         case .none: return 0
         }
@@ -512,7 +768,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ContinueCell.id,
                                                           for: indexPath) as! ContinueCell
             if let item = continueItem {
-                cell.configure(item, cover: coverContent(for: item), stripe: nil, palette: palette)
+                cell.configure(item, cover: coverContent(for: item), stripe: stripe(for: item), palette: palette)
                 cell.onContinue = { [weak self] in
                     self?.open(item.book)
                 }
@@ -522,7 +778,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: BookCell.id, for: indexPath) as! BookCell
             if indexPath.item < items.count {
                 let item = items[indexPath.item]
-                cell.configure(item, cover: coverContent(for: item), stripe: nil, palette: palette)
+                cell.configure(item, cover: coverContent(for: item), stripe: stripe(for: item), palette: palette)
             }
             return cell
         }
@@ -532,7 +788,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
                         at indexPath: IndexPath) -> UICollectionReusableView {
         let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: BooksHeaderView.id,
                                                                      for: indexPath) as! BooksHeaderView
-        header.configure(title: "Alla böcker", filter: filter, sort: sort, palette: Theme.current)
+        header.configure(title: scopeTitle, filter: filter, sort: sort, palette: Theme.current)
         header.onFilter = { [weak self] filter in
             self?.setFilter(filter)
         }
@@ -616,6 +872,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
                 self?.chooseCover(item)
             })
         }
+        actions.append(courseMenu(for: item))
         let finished = records[book.id]?.finished ?? false
         actions.append(UIAction(title: finished ? "Markera som oläst" : "Markera som läst",
                                 image: UIImage(systemName: finished ? "circle" : "checkmark.circle")) { [weak self] _ in
