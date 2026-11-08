@@ -215,6 +215,9 @@ final class StudyTests: XCTestCase {
         filter.notesOnly = false
         filter.colors = [.yellow]
         XCTAssertEqual(NotebookLogic.filter([note], filter).count, 0)
+        let marks = [entry("1", color: .yellow, chapter: "Kap 1"), entry("2", color: .blue, chapter: "Kap 1")]
+        XCTAssertEqual(NotebookLogic.countText(shown: marks + [note], all: marks + [note]), "2 markeringar och 1 anteckning")
+        XCTAssertEqual(NotebookLogic.countText(shown: [marks[0]], all: marks), "1 av 2: 1 markering")
         // Anteckningarna bredvid texten blir inga Anki-kort.
         XCTAssertFalse(AnkiFormat.highlightsFile([], colorNames: [:]).contains("sidanteckning"))
     }
