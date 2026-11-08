@@ -46,6 +46,8 @@ final class PDFCurlReaderViewController: UIViewController {
     }
 
     private let bottomBar = ReaderBottomBar()
+    /// V4: sidorna man hoppat ifrån och Tillbaka i hörnet (G12, samma som i EPUB-läsaren).
+    private let backStack = ReaderBackStack<Int>()
     private var chromeTap: UITapGestureRecognizer?
     private var zoomTap: UITapGestureRecognizer?
     /// Trycket på bokmärkesbandet i sidans hörn (U3).
@@ -161,6 +163,7 @@ final class PDFCurlReaderViewController: UIViewController {
         SavedWordMarks.shared.refresh()
         setUpNavigationBar()
         setUpBottomBar()
+        setUpBackStack()
         setUpTaps()
     }
 
@@ -406,6 +409,38 @@ final class PDFCurlReaderViewController: UIViewController {
         keepNeighbours()
     }
 
+    // MARK: Tillbaka och historik (V4)
+
+    private func setUpBackStack() {
+        backStack.install(in: view, above: bottomBar)
+        chrome.backControl = backStack.control
+        backStack.apply(Theme.palette(for: theme))
+        backStack.onGo = { [weak self] index in
+            self?.jump(to: index)
+        }
+        backStack.onChange = { [weak self] in
+            guard let self = self else { return }
+            self.chrome.setHistory(self.backStack.recentLabels) { [weak self] offset in
+                self?.backStack.goBack(offset)
+            }
+        }
+    }
+
+    /// Ett hopp som användaren gör (innehåll, sök, markering, bokmärke, gå till sida, reglaget, länk, miniatyr):
+    /// sidan man lämnar sparas, så att Tillbaka hittar dit. `sticky` (V3): Tillbaka ligger kvar när man bläddrar.
+    private func hop(to index: Int, sticky: Bool = false) {
+        let target = min(max(index, 0), renderer.pageCount - 1)
+        if !visibleIndices.contains(target) {
+            backStack.record(currentIndex, label: placeLabel(currentIndex), sticky: sticky)
+        }
+        jump(to: target)
+    }
+
+    /// Sidan som den står i Tillbaka: bokens eget sidnummer om det finns.
+    private func placeLabel(_ index: Int) -> String {
+        "s. \(printedLabel(for: index) ?? String(index + 1))"
+    }
+
     // MARK: Menyn
 
     private func setUpNavigationBar() {
@@ -545,7 +580,7 @@ final class PDFCurlReaderViewController: UIViewController {
     }
 
     @objc private func sliderReleased() {
-        jump(to: Int(bottomBar.slider.value.rounded()))
+        hop(to: Int(bottomBar.slider.value.rounded()))
     }
 
     // MARK: Innehåll och Gå till sida
@@ -554,7 +589,7 @@ final class PDFCurlReaderViewController: UIViewController {
         let outline = OutlineViewController(document: document, currentIndex: currentIndex)
         outline.onSelectPage = { [weak self] index in
             self?.dismiss(animated: true)
-            self?.jump(to: index)
+            self?.hop(to: index)
         }
         outline.onGoToPage = { [weak self] in
             self?.dismiss(animated: true) {
@@ -585,7 +620,7 @@ final class PDFCurlReaderViewController: UIViewController {
         alert.addAction(UIAlertAction(title: "Gå", style: .default) { [weak self, weak alert] _ in
             guard let self = self, let text = alert?.textFields?.first?.text else { return }
             if let index = self.pageIndex(forTyped: text) {
-                self.jump(to: index)
+                self.hop(to: index)
             } else {
                 self.showMessage(title: "Sidan finns inte",
                                  message: "Hittade ingen sida \(text) i boken.")
@@ -893,6 +928,7 @@ extension PDFCurlReaderViewController: UIPageViewControllerDataSource, UIPageVie
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
         keepNeighbours()
+        backStack.pageTurned()
     }
 }
 
@@ -902,7 +938,7 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         // Reglaget och sidnumret har egna tryck, liksom raden som visas medan man markerar.
-        if let touched = touch.view, touched.isDescendant(of: bottomBar) {
+        if let touched = touch.view, touched.isDescendant(of: bottomBar) || touched.isDescendant(of: backStack.control) {
             return false
         }
         if let bar = markBar, let touched = touch.view, touched.isDescendant(of: bar) {
@@ -1434,10 +1470,10 @@ extension PDFCurlReaderViewController {
         switch kind {
         case .bookmarks:
             guard let bookmark = AnnotationStore.shared.bookmarks(book: bookKey).first(where: { $0.id == id }) else { return }
-            jump(to: bookmark.section)
+            hop(to: bookmark.section)
         case .highlights:
             guard let highlight = AnnotationStore.shared.highlight(id: id) else { return }
-            jump(to: highlight.section)
+            hop(to: highlight.section)
             flash(NSRange(location: highlight.start, length: highlight.length), onPage: highlight.section)
         }
     }
@@ -1476,7 +1512,7 @@ extension PDFCurlReaderViewController {
         controller.onSelect = { [weak self] hit, query in
             self?.lastQuery = query
             self?.dismiss(animated: true)
-            self?.jump(to: hit.section)
+            self?.hop(to: hit.section)
             self?.flash(NSRange(location: hit.start, length: hit.length), onPage: hit.section)
         }
         let navigation = UINavigationController(rootViewController: controller)
@@ -1759,6 +1795,7 @@ extension PDFCurlReaderViewController {
                 _ = await waitForImages()
                 SelfTest.log("Första träffen på \(pageName(hit.section)), läsaren visar \(bottomBar.pageButton.title(for: .normal) ?? "")")
                 SelfTest.saveScreen(view, name: "06-traff")
+                await selfTestHistory()
             }
         } else {
             SelfTest.log("FEL: sökrutan öppnades inte")
@@ -1830,6 +1867,29 @@ extension PDFCurlReaderViewController {
         let after = AnnotationStore.shared.totalCounts()
         SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
         SelfTest.finish()
+    }
+
+    /// V4: hoppen sparar platsen man lämnade, Tillbaka tar dig dit och ett långt tryck visar de senaste.
+    fileprivate func selfTestHistory() async {
+        dismiss(animated: false)
+        await pause(0.3)
+        let before = currentIndex
+        hop(to: renderer.pageCount - 1)
+        _ = await waitForImages()
+        hop(to: 3)
+        _ = await waitForImages()
+        SelfTest.log("Tillbaka (V4): \(backStack.isShowing ? "syns" : "FEL, syns inte"), knappen visar "
+                     + "\(backStack.control.title ?? "inget"), senaste platser \(backStack.recentLabels.joined(separator: ", ")), "
+                     + "listan i knappen har \(backStack.control.backButton.menu?.children.count ?? 0) rader")
+        SelfTest.saveScreen(view, name: "06b-tillbaka")
+        backStack.goBack()
+        _ = await waitForImages()
+        let expected = renderer.pageCount - 1
+        SelfTest.log("Efter Tillbaka: sidan \(currentIndex + 1) (ska vara \(expected + 1)), "
+                     + "Tillbaka \(backStack.isShowing ? "FEL, syns" : "dold"), kvar i historiken \(backStack.recentLabels.count)")
+        backStack.goBack()
+        _ = await waitForImages()
+        SelfTest.log("Två steg tillbaka: sidan \(currentIndex + 1) (ska vara \(before + 1))")
     }
 
     /// G6: markeringarnas rutor är sparade, saknade rutor räknas på renderingskön, sidor med markeringar

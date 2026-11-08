@@ -100,9 +100,8 @@ final class ReflowReaderViewController: UIViewController {
     private var lastLayout: ReflowLayout?
     private var lastSize: CGSize = .zero
     private var seenTopInset: CGFloat = 0
-    private var backLocation: ReflowLocation?
-    private var backButton: UIButton?
-    private var turnsSinceLink = 0
+    /// V4: platserna man hoppat ifrån och Tillbaka i hörnet (G12, samma som i PDF-läsaren).
+    private let backStack = ReaderBackStack<ReflowLocation>()
     private var typographyTask: Task<Void, Never>?
     private var selfTestStarted = false
 
@@ -180,6 +179,7 @@ final class ReflowReaderViewController: UIViewController {
 
         setUpNavigationBar()
         setUpBottomBar()
+        setUpBackStack()
         setUpTaps()
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -533,10 +533,7 @@ final class ReflowReaderViewController: UIViewController {
         updatePageLabel()
         updateBookmarkState()
         keepNeighbours()
-        turnsSinceLink += 1
-        if turnsSinceLink >= 3 {
-            hideBackButton()
-        }
+        backStack.pageTurned()
     }
 
     // MARK: Läsposition
@@ -742,8 +739,7 @@ final class ReflowReaderViewController: UIViewController {
 
     @objc private func sliderReleased() {
         guard let content = content else { return }
-        hideBackButton()
-        jump(to: content.location(atFraction: Double(bottomBar.slider.value)))
+        hop(to: content.location(atFraction: Double(bottomBar.slider.value)))
     }
 
     // MARK: Innehåll
@@ -772,9 +768,8 @@ final class ReflowReaderViewController: UIViewController {
         contents.onSelect = { [weak self] row in
             guard row < targets.count else { return }
             self?.dismiss(animated: true)
-            self?.hideBackButton()
-            self?.jump(to: ReflowLocation(chapter: targets[row].chapter, progression: 0),
-                       fragment: targets[row].fragment)
+            self?.hop(to: ReflowLocation(chapter: targets[row].chapter, progression: 0),
+                      fragment: targets[row].fragment)
         }
         let container = ReaderContentsContainerViewController(contents: contents,
                                                              annotations: makeAnnotationsList(),
@@ -1062,10 +1057,7 @@ final class ReflowReaderViewController: UIViewController {
         if url.isFileURL {
             guard let chapter = content.chapterIndex(for: url) else { return }
             let fragment = url.fragment.map { $0.removingPercentEncoding ?? $0 }
-            backLocation = currentLocation()
-            jump(to: ReflowLocation(chapter: chapter, progression: 0), fragment: fragment)
-            showBackButton()
-            turnsSinceLink = 0
+            hop(to: ReflowLocation(chapter: chapter, progression: 0), fragment: fragment)
         } else if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
             let safari = SFSafariViewController(url: url)
             safari.dismissButtonStyle = .close
@@ -1073,35 +1065,47 @@ final class ReflowReaderViewController: UIViewController {
         }
     }
 
-    private func showBackButton() {
-        hideBackButton()
-        var configuration = UIButton.Configuration.filled()
-        configuration.title = "Tillbaka"
-        configuration.image = UIImage(systemName: "arrow.uturn.backward")
-        configuration.imagePadding = 6
-        configuration.cornerStyle = .capsule
-        let button = UIButton(configuration: configuration)
-        button.accessibilityHint = "Går tillbaka till sidan där länken stod"
-        button.addTarget(self, action: #selector(goBack), for: .touchUpInside)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(button)
-        NSLayoutConstraint.activate([
-            button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -76),
-        ])
-        backButton = button
+    // MARK: Tillbaka och historik (V4)
+
+    private func setUpBackStack() {
+        backStack.install(in: view, above: bottomBar)
+        chrome.backControl = backStack.control
+        backStack.apply(Theme.palette(for: theme))
+        backStack.onGo = { [weak self] location in
+            self?.jump(to: location)
+        }
+        backStack.onChange = { [weak self] in
+            guard let self = self else { return }
+            self.chrome.setHistory(self.backStack.recentLabels) { [weak self] offset in
+                self?.backStack.goBack(offset)
+            }
+        }
     }
 
-    private func hideBackButton() {
-        backButton?.removeFromSuperview()
-        backButton = nil
+    /// Ett hopp som användaren gör (innehåll, sök, länk, markering, bokmärke, reglaget): platsen man lämnar
+    /// sparas, så att Tillbaka hittar dit. Samma mekanism som Tillbaka efter länkar hade förut (SPEC 6.3).
+    private func hop(to target: ReflowLocation, fragment: String? = nil, sticky: Bool = false) {
+        recordPlace(sticky: sticky)
+        jump(to: target, fragment: fragment)
     }
 
-    @objc private func goBack() {
-        guard let target = backLocation else { return }
-        backLocation = nil
-        hideBackButton()
-        jump(to: target)
+    /// Sparar platsen man är på i historiken, före ett hopp.
+    private func recordPlace(sticky: Bool = false) {
+        guard isShowingPages else { return }
+        backStack.record(currentLocation(), label: placeLabel(), sticky: sticky)
+    }
+
+    /// Platsen som den står i Tillbaka: sidan i boken när alla kapitel är mätta, annars kapitlet och sidan i det.
+    private func placeLabel() -> String {
+        if renderer?.allPageCounts() != nil {
+            return "s. \(bookPageIndex(chapter: currentChapter, page: currentSlot) + 1)"
+        }
+        return "\(chapterName(currentChapter)), s. \(currentSlot + 1)"
+    }
+
+    /// Går tillbaka dit man var före senaste hoppet.
+    private func goBack() {
+        backStack.goBack()
     }
 
     // MARK: Meddelanden
@@ -1194,7 +1198,7 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
             if touched.isDescendant(of: bottomBar) {
                 return false
             }
-            if let back = backButton, touched.isDescendant(of: back) {
+            if touched.isDescendant(of: backStack.control) {
                 return false
             }
             if let bar = markBar, touched.isDescendant(of: bar) {
@@ -1336,10 +1340,14 @@ extension ReflowReaderViewController {
                 follow(link.url)
                 _ = await waitUntilShown()
                 logState("Efter länken")
+                SelfTest.log("Tillbaka (V4): \(backStack.isShowing ? "syns" : "FEL, syns inte"), knappen visar "
+                             + "\(backStack.control.title ?? "inget"), senaste platser \(backStack.recentLabels.joined(separator: ", "))")
                 SelfTest.saveScreen(view, name: "05-lank")
                 goBack()
                 _ = await waitUntilShown()
                 logState("Tillbaka")
+                SelfTest.log("Efter Tillbaka: knappen \(backStack.isShowing ? "FEL, syns" : "dold"), "
+                             + "kvar i historiken \(backStack.recentLabels.count)")
                 SelfTest.saveScreen(view, name: "06-tillbaka")
             } else {
                 SelfTest.log("FEL: inga länkar på sidan")
@@ -2059,8 +2067,7 @@ extension ReflowReaderViewController {
         switch kind {
         case .bookmarks:
             guard let bookmark = AnnotationStore.shared.bookmarks(book: bookKey).first(where: { $0.id == id }) else { return }
-            hideBackButton()
-            jump(to: ReflowLocation(chapter: bookmark.section, progression: bookmark.progression))
+            hop(to: ReflowLocation(chapter: bookmark.section, progression: bookmark.progression))
         case .highlights:
             guard let highlight = AnnotationStore.shared.highlight(id: id) else { return }
             reveal(chapter: highlight.section, body: "return lasaMarks.reveal(start, length);",
@@ -2086,7 +2093,7 @@ extension ReflowReaderViewController {
     /// Visar sidan där ett textintervall står och markerar det en kort stund. Webbvyn letar upp sidan.
     fileprivate func reveal(chapter: Int, body: String, arguments: [String: Any]) {
         guard let renderer = renderer else { return }
-        hideBackButton()
+        recordPlace()
         spinner.startAnimating()
         renderer.setWindow(center: chapter)
         renderer.evaluate(body, arguments: arguments, in: chapter) { [weak self] value in

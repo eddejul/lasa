@@ -46,6 +46,11 @@ final class ReaderChrome {
     }()
     private let actions: Actions
     private var isBookmarked = false
+    /// V4: de senaste platserna i Mer, den senaste först, och vad som händer när en väljs.
+    private var historyLabels: [String] = []
+    private var onHistory: ((Int) -> Void)?
+    /// V4: Tillbaka i sidans hörn, som följer temat.
+    weak var backControl: ReaderBackControl?
 
     /// Om menyraden och nederkanten är dolda.
     private(set) var isHidden = false
@@ -168,7 +173,24 @@ final class ReaderChrome {
                 self?.send(zoom)
             })
         }
+        if !historyLabels.isEmpty {
+            // V4: platserna man hoppat ifrån, även när Tillbaka i hörnet har dolts.
+            let places = historyLabels.enumerated().map { offset, label in
+                UIAction(title: label) { [weak self] _ in
+                    self?.onHistory?(offset)
+                }
+            }
+            children.append(UIMenu(title: "Senaste platser", image: UIImage(systemName: "clock.arrow.circlepath"),
+                                   children: places))
+        }
         return UIMenu(title: "", children: children)
+    }
+
+    /// V4: de senaste platserna (den senaste först) i Mer. En tom lista tar bort raden.
+    func setHistory(_ labels: [String], onSelect: @escaping (Int) -> Void) {
+        historyLabels = labels
+        onHistory = onSelect
+        moreItem.menu = makeMoreMenu()
     }
 
     /// Skickar en åtgärd till läsaren, som har metoden.
@@ -221,6 +243,7 @@ final class ReaderChrome {
         controller.navigationItem.compactAppearance = appearance
         controller.navigationController?.navigationBar.tintColor = palette.accent
         bottomBar.apply(palette)
+        backControl?.apply(palette)
         applyTitleStyle()
     }
 
