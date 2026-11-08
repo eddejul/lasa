@@ -93,6 +93,24 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         updateEmptyState()
         updateExpiryBanner()
         resolvePending(scanned.pending, urls: scanned.urls)
+        fillMissingHashes(scanned.books)
+    }
+
+    private static var didFillHashes = false
+
+    /// Böcker från före G3 har ingen kontrollsumma i registret. Den räknas i bakgrunden en gång per start,
+    /// så att en bok som sedan döps om eller flyttas känns igen på innehållet.
+    private func fillMissingHashes(_ books: [Book]) {
+        guard !Self.didFillHashes else { return }
+        Self.didFillHashes = true
+        let missing = books.filter { BookRegistry.shared.record(id: $0.id)?.sha256.isEmpty ?? false }
+        guard !missing.isEmpty else { return }
+        Task { @MainActor in
+            let started = CACurrentMediaTime()
+            let ids = await BookIdentity.ids(for: missing)
+            AppLog.shared.write("Kontrollsumma räknad för \(ids.count) av \(missing.count) böcker på "
+                                + "\(Int(((CACurrentMediaTime() - started) * 1000).rounded())) ms")
+        }
     }
 
     // MARK: Nya och ändrade filer (G3)
