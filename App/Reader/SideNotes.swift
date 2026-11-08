@@ -69,6 +69,11 @@ final class SideNotesPanel: UIView, UITextViewDelegate {
     private let placeholder = UILabel()
     private var book = ""
     private var section = -1
+    /// D4-3: sparningen en sekund efter senaste ändringen, och observatörerna för bakgrunden.
+    private var pendingSave: DispatchWorkItem?
+    private var observers: [NSObjectProtocol] = []
+    /// Antalet sparningar medan man skriver, till självtestet.
+    private(set) var savesWhileTyping = 0
 
     /// Sidan som panelen visar, till självtestet.
     var shownSection: Int {
@@ -125,6 +130,21 @@ final class SideNotesPanel: UIView, UITextViewDelegate {
             placeholder.trailingAnchor.constraint(equalTo: textView.trailingAnchor, constant: -11),
         ])
         applyTheme()
+        // D4-3: det som skrivits sparas när appen lämnar förgrunden, så att inget försvinner om iOS avslutar
+        // appen i bakgrunden.
+        let center = NotificationCenter.default
+        for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.saveNow()
+            })
+        }
+    }
+
+    deinit {
+        pendingSave?.cancel()
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -157,19 +177,34 @@ final class SideNotesPanel: UIView, UITextViewDelegate {
     }
 
     func saveNow() {
+        pendingSave?.cancel()
+        pendingSave = nil
         guard !book.isEmpty, section >= 0 else { return }
         PageNoteStore.shared.save(book: book, section: section, text: textView.text ?? "")
     }
 
-    /// Självtestet: skriv en text som om den skrivits för hand.
+    /// D4-3: sparar en sekund efter senaste ändringen medan man skriver.
+    private func scheduleSave() {
+        pendingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.pendingSave = nil
+            self.savesWhileTyping += 1
+            self.saveNow()
+        }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    /// Självtestet: skriv en text som om den skrivits för hand. Sparas av fördröjningen, inte av ett anrop.
     func typeForSelfTest(_ text: String) {
         textView.text = text
         textViewDidChange(textView)
-        saveNow()
     }
 
     func textViewDidChange(_ textView: UITextView) {
         placeholder.isHidden = !textView.text.isEmpty
+        scheduleSave()
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {

@@ -2391,8 +2391,11 @@ extension PDFCurlReaderViewController {
         await pause(0.5)
         if let panel = sideNotes {
             panel.typeForSelfTest("Självtest: en fråga till sidan")
+            let before = PageNoteStore.shared.note(book: bookKey, section: panel.shownSection)
+            await pause(1.5)
             let saved = PageNoteStore.shared.note(book: bookKey, section: panel.shownSection)
-            SelfTest.log("Anteckningar bredvid texten (K12): sidan \(panel.shownSection + 1), sparat \"\(saved)\"")
+            SelfTest.log("Anteckningar bredvid texten (K12): sidan \(panel.shownSection + 1), före fördröjningen \"\(before)\", "
+                         + "sparat medan man skriver (D4-3) \"\(saved)\", sparningar \(panel.savesWhileTyping)")
             SelfTest.saveScreen(view, name: "12c-bredvid")
         } else {
             SelfTest.log("FEL: panelen Anteckningar bredvid texten öppnades inte")
