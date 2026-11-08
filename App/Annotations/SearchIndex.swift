@@ -350,6 +350,8 @@ final class SearchIndex {
             }
             details = found
             self.db = db
+            // Om iPadens SQLite har FTS5 med trigram syns här (provat bara i simulatorn).
+            AppLog.shared.write("Sökregistret: SQLite \(found.sqliteVersion), söker med \(found.mode.rawValue)")
         } catch {
             AppLog.shared.write("sokregister.sqlite gick inte att öppna: \(error)")
         }
