@@ -323,9 +323,9 @@ def make_pdf(path, rng):
         annots = ""
         if number == 3:
             # V5: en fotnotssiffra med en intern länk till noten nederst på sida 8.
-            content.append(f"BT /F1 12 Tf 60 763 Td {pdf_string('Det här stycket har en fotnot.')} Tj ET")
-            content.append(f"BT /F1 8 Tf 216 768 Td {pdf_string('1')} Tj ET")
-            annots = (" /Annots [<< /Type /Annot /Subtype /Link /Rect [212 762 226 778] /Border [0 0 0] "
+            content.append(f"BT /F1 12 Tf 60 806 Td {pdf_string('Det här stycket har en fotnot.')} Tj ET")
+            content.append(f"BT /F1 8 Tf 216 811 Td {pdf_string('1')} Tj ET")
+            annots = (" /Annots [<< /Type /Annot /Subtype /Link /Rect [212 805 226 821] /Border [0 0 0] "
                       "/Dest [%d 0 R /XYZ 0 84 0] >>]" % kids[7])
         if number == 8:
             content.append(f"BT /F1 9 Tf 60 70 Td {pdf_string('1 Fotnoten i PDF:en. En kort förklaring som visas i en ruta vid siffran.')} Tj ET")

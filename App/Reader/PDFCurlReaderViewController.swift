@@ -716,8 +716,10 @@ final class PDFCurlReaderViewController: UIViewController {
                 return
             }
             self.lastNoteMilliseconds = Int(((CACurrentMediaTime() - started) * 1000).rounded())
+            // Bara siffran i rubriken: länkens ruta kan ta med en punkt eller en hakparentes bredvid.
+            let number = link.label.filter(\.isNumber)
             NotePopoverViewController.present(from: self, sourceView: self.view, sourceRect: anchor,
-                                              heading: "Not \(link.label)", text: text) { [weak self] in
+                                              heading: number.isEmpty ? "Not" : "Not \(number)", text: text) { [weak self] in
                 self?.hop(to: link.page)
             }
         }
@@ -1602,9 +1604,12 @@ extension PDFCurlReaderViewController {
                      + "\(bottomBar.chapterLabel.text ?? "inget kapitel"), \(bottomBar.infoButton.title(for: .normal) ?? ""). "
                      + "Linjen ritad på \(String(format: "%.2f", drawMs)) ms")
         let index = min(renderer.pageCount - 1, 5)
+        let shown = timeline.value
+        timeline.value = Float(index)
         timeline.previewBubble(chapterTitle(for: index).map { "\($0)\n\(pageText(for: [index]))" } ?? pageText(for: [index]))
         SelfTest.saveScreen(view, name: "03b-tidslinje")
         timeline.previewBubble(nil)
+        timeline.value = shown
     }
 
     fileprivate func toggleBookmarks(onIndices shown: [Int]) {

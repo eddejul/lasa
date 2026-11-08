@@ -2233,9 +2233,12 @@ extension ReflowReaderViewController {
         if let content = content {
             let target = content.location(atFraction: 0.6)
             let name = content.title(ofChapter: target.chapter) ?? "Avsnitt \(target.chapter + 1)"
+            let shown = timeline.value
+            timeline.value = 0.6
             timeline.previewBubble("\(name)\n\(pageLabel(for: target, content: content))")
             SelfTest.saveScreen(view, name: "03i-tidslinje")
             timeline.previewBubble(nil)
+            timeline.value = shown
         }
     }
 
