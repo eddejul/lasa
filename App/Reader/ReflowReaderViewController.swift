@@ -342,10 +342,25 @@ final class ReflowReaderViewController: UIViewController {
         let pageWidth = mode == .spread ? (size.width / 2).rounded(.down) : size.width
         let factor = typography.margin.factor
         let side = min(max((pageWidth * 0.075 * factor).rounded(), 16), 90) + max(insets.left, insets.right)
-        let padding = UIEdgeInsets(top: insets.top + 30, left: side, bottom: insets.bottom + 36, right: side)
+        // Menyraden och nederkanten ska bara ligga över marginalen, som i Apple Books (Edvin 8 nov: de täckte
+        // första och sista raden). Måtten är fasta (menyradens höjd för enheten och nederkantens höjd), inte
+        // menyns läge, så att sidan står still när menyn visas och döljs.
+        let padding = UIEdgeInsets(top: insets.top + max(30, Self.navigationBarHeight(for: traitCollection) + 10),
+                                   left: side,
+                                   bottom: insets.bottom + max(36, ReaderBottomBar.height + 8),
+                                   right: side)
         return ReflowLayout(pageSize: CGSize(width: pageWidth, height: size.height),
                             padding: padding,
                             typography: typography)
+    }
+
+    /// Menyradens höjd under statusfältet: 50 punkter på iPad, 44 på iPhone och 32 på iPhone liggande.
+    /// Ett fast mått, så att sidan inte beror på om menyn syns.
+    static func navigationBarHeight(for traits: UITraitCollection) -> CGFloat {
+        if traits.userInterfaceIdiom == .pad {
+            return 50
+        }
+        return traits.verticalSizeClass == .compact ? 32 : 44
     }
 
     private func installPageController(with pages: [UIViewController]) {
@@ -1553,6 +1568,7 @@ extension ReflowReaderViewController {
                      + "Boken uppackad och läst efter \(since(loadedAt)) ms, första kapitlet mätt efter \(since(firstMeasuredAt)) ms.")
         logState("Start")
         SelfTest.saveScreen(view, name: "01-start")
+        selfTestChromeCoverage("stående")
 
         for _ in 0..<4 {
             turn(forward: true)
@@ -1771,6 +1787,7 @@ extension ReflowReaderViewController {
         _ = await waitUntilShown()
         logState("Liggande")
         SelfTest.saveScreen(view, name: "11-liggande")
+        selfTestChromeCoverage("liggande")
         turn(forward: true)
         await pause(1.5)
         _ = await waitUntilShown()
@@ -2254,6 +2271,42 @@ extension ReflowReaderViewController {
             if margin == .normal {
                 SelfTest.saveScreen(view, name: "15-radlangd-normal")
             }
+        }
+    }
+
+    /// Edvin 8 nov: menyraden och nederkanten täckte första och sista raden. Med menyn framme mäts var texten
+    /// börjar och slutar på bladen som syns, mot menyradens underkant och nederkantens överkant.
+    fileprivate func selfTestChromeCoverage(_ label: String) {
+        let wasHidden = chromeHidden
+        setChromeHidden(false, animated: false)
+        navigationController?.view.layoutIfNeeded()
+        view.layoutIfNeeded()
+        guard let bar = navigationController?.navigationBar else {
+            SelfTest.log("FEL: ingen menyrad (U3, \(label))")
+            return
+        }
+        let barFrame = bar.convert(bar.bounds, to: view)
+        let bottomTop = bottomBar.convert(bottomBar.bounds, to: view).minY
+        var parts: [String] = []
+        var covered = false
+        for page in visiblePages where !page.isBlank {
+            guard let image = page.currentImage,
+                  let rows = SelfTest.inkRows(in: image, paper: theme.paperColor) else { continue }
+            let frame = page.view.convert(page.view.bounds, to: view)
+            let top = frame.minY + CGFloat(rows.top) * frame.height
+            let bottom = frame.minY + CGFloat(rows.bottom) * frame.height
+            if top < barFrame.maxY || bottom > bottomTop {
+                covered = true
+            }
+            parts.append("text \(Int(top)) till \(Int(bottom))")
+        }
+        let verdict = parts.isEmpty ? "FEL, ingen sidbild" : (covered ? "FEL, menyn täcker text" : "ingen rad täcks")
+        SelfTest.log("Menyn över texten (U3, \(label)): menyraden \(Int(barFrame.minY)) till \(Int(barFrame.maxY)) "
+                     + "(höjd \(Int(barFrame.height)), fast mått \(Int(Self.navigationBarHeight(for: traitCollection)))), "
+                     + "nederkanten från \(Int(bottomTop)) (höjd \(Int(bottomBar.bounds.height))), "
+                     + "\(parts.joined(separator: "; ")): \(verdict). Layout \(lastLayout?.key ?? "ingen")")
+        if wasHidden {
+            setChromeHidden(true, animated: false)
         }
     }
 

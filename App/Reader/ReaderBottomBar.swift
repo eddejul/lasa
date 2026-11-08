@@ -5,6 +5,10 @@ import UIKit
 /// (PDF) eller Innehåll (EPUB), och sidor kvar växlar mellan kapitlet och boken när man trycker.
 final class ReaderBottomBar: UIView {
 
+    /// Nederkantens fasta höjd ovanför hemindikatorn: 10 + tidslinjen 30 + 2 + raden 30 + 6. Läsarnas
+    /// marginal nedtill räknas från den, så att nederkanten bara ligger över marginalen (Edvin 8 nov).
+    static let height: CGFloat = 78
+
     /// V2: tidslinjen (heter slider sedan reglagets tid, läsarna använder den som ett reglage).
     let slider = ReaderTimeline()
     let pageButton = UIButton(type: .system)
@@ -61,6 +65,7 @@ final class ReaderBottomBar: UIView {
             slider.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -20),
 
             pageButton.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 2),
+            pageButton.heightAnchor.constraint(equalToConstant: 30),
             pageButton.leadingAnchor.constraint(equalTo: slider.leadingAnchor),
             pageButton.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -6),
 

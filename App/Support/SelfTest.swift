@@ -99,6 +99,43 @@ enum SelfTest {
         return Double(counted) * 100 / Double(band)
     }
 
+    /// Första och sista raden med text i en sidbild, som andel (0 till 1) av bildens höjd. Nil om bilden är tom.
+    /// Till kontrollen att menyraden och nederkanten bara ligger över marginalen (Edvin 8 nov).
+    static func inkRows(in image: UIImage, paper: UIColor) -> (top: Double, bottom: Double)? {
+        guard let cg = image.cgImage, image.size.width > 0, image.size.height > 0 else { return nil }
+        let width = 200
+        let height = max(Int((Double(width) * Double(image.size.height / image.size.width)).rounded()), 1)
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        paper.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        let paperRGB = [Int(red * 255), Int(green * 255), Int(blue * 255)]
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let rows: [Int] = pixels.withUnsafeMutableBytes { buffer -> [Int] in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return [] }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            var found: [Int] = []
+            for row in 0..<height {
+                var ink = 0
+                for column in 0..<width {
+                    let index = (row * width + column) * 4
+                    let difference = abs(Int(bytes[index]) - paperRGB[0]) + abs(Int(bytes[index + 1]) - paperRGB[1])
+                        + abs(Int(bytes[index + 2]) - paperRGB[2])
+                    if difference > 60 {
+                        ink += 1
+                    }
+                }
+                if ink >= 2 {
+                    found.append(row)
+                }
+            }
+            return found
+        }
+        guard let first = rows.first, let last = rows.last else { return nil }
+        return (Double(first) / Double(height), Double(last + 1) / Double(height))
+    }
+
     static func finish() {
         log("KLART")
         try? Data().write(to: directory.appendingPathComponent(stem + ".klar"))
