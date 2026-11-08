@@ -123,6 +123,43 @@ for table, rows in data["tables"].items():
 print("  anrop:", len(data["requests"]))
 SUMMARY
 
+# A1 och U7 utan riktig nyckel: Förklara stycket och nyckelguiden mot en låtsas-Gemini.
+echo "== ai"
+python3 tools/simtest/mock_gemini.py 54322 "$OUT/mock-gemini.json" &
+GEMINI=$!
+sleep 1
+rm -f "$DATA/Documents/selftest/ai.klar"
+xcrun simctl launch "$UDID" "$BUNDLE" -LasaSelfTest ai -LasaGeminiURL http://127.0.0.1:54322
+waited=0
+shot=0
+while [ ! -f "$DATA/Documents/selftest/ai.klar" ] && [ $waited -lt 180 ]; do
+  sleep 4
+  waited=$((waited + 4))
+  # Markeringsraden och rutan som popover syns bara i simctl:s skärmbilder (glas i iOS 26).
+  if [ $waited -ge 20 ] && [ $shot -lt 8 ]; then
+    shot=$((shot + 1))
+    xcrun simctl io "$UDID" screenshot "$OUT/ai-skarm-$shot.png" > /dev/null 2>&1 || true
+  fi
+done
+if [ -f "$DATA/Documents/selftest/ai.klar" ]; then
+  echo "Klart efter cirka $waited sekunder."
+else
+  echo "Självtestet för AI blev inte klart inom 180 sekunder."
+  status=1
+fi
+xcrun simctl terminate "$UDID" "$BUNDLE" || true
+kill $GEMINI 2> /dev/null || true
+python3 - "$OUT/mock-gemini.json" << 'SUMMARY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+print("Låtsas-Gemini fick", len(data["requests"]), "anrop:")
+for entry in data["requests"]:
+    print("  ", entry["method"], entry["path"], entry["key"], "fråga", entry["prompt_length"], "tecken, schema",
+          entry["schema"])
+longest = max((entry["prompt_length"] for entry in data["requests"]), default=0)
+print("  längsta frågan:", longest, "tecken")
+SUMMARY
+
 cp -R "$DATA/Documents/selftest/." "$OUT/" 2> /dev/null || true
 # Loggen i Filer (G4) och säkerhetskopiorna (G1).
 cp -R "$DATA/Documents/Diagnostik" "$OUT/Diagnostik" 2> /dev/null || true
