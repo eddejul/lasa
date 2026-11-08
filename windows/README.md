@@ -166,7 +166,8 @@ windows/
                       pending_read) och installationens krokar (nsis-hooks.nsh)
   dev/server.py       kör gränssnittet i en vanlig webbläsare utan Tauri
   tests/              paritetstest, enhetstester och provkörning i Chrome
-  tools/              vendor.mjs (kopierar pdf.js), make_icons.py (ikonen)
+  tools/              vendor.mjs (kopierar pdf.js)
+  src-tauri/icons/    ikonen (S med gul överstrykning), ritad utanför repot och incheckad som filer
 ```
 
 **Uppslagslogiken finns i tre kopior:** `tools/dictionary/lookup.py`, `App/Dictionary/WordDictionary.swift`
