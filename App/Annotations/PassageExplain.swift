@@ -275,15 +275,29 @@ enum PassageText {
         return paragraphPassage(highlight, paragraphs: paragraphs(html: html))
     }
 
+    /// Början och slutet av markeringen som letas upp i styckena, längst först. En markering över en
+    /// styckegräns hittas med en kortare bit, som bara ligger i det ena stycket.
+    private static let pieceLengths = [60, 40, 24, 12, 6]
+
+    private static func paragraph(containing marked: String, in paragraphs: [String], from start: Int,
+                                  end: Bool) -> Int? {
+        for length in pieceLengths {
+            let piece = end ? String(marked.suffix(length)) : String(marked.prefix(length))
+            guard !piece.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            if let index = paragraphs[start...].firstIndex(where: { $0.contains(piece) }) {
+                return index
+            }
+        }
+        return nil
+    }
+
     static func paragraphPassage(_ highlight: Highlight, paragraphs: [String]) -> Passage {
         let marked = collapse(highlight.text)
-        guard !marked.isEmpty, !paragraphs.isEmpty else { return markedOnly(highlight) }
-        let head = String(marked.prefix(60))
-        let tail = String(marked.suffix(60))
-        guard let first = paragraphs.firstIndex(where: { $0.contains(head) }) else {
+        guard !marked.isEmpty, !paragraphs.isEmpty,
+              let first = paragraph(containing: marked, in: paragraphs, from: 0, end: false) else {
             return markedOnly(highlight)
         }
-        let last = paragraphs[first...].firstIndex(where: { $0.contains(tail) }) ?? first
+        let last = paragraph(containing: marked, in: paragraphs, from: first, end: true) ?? first
         guard last - first <= 3 else { return markedOnly(highlight) }
         let context = paragraphs[first...last].joined(separator: "\n\n")
         let shortMarked = String(marked.prefix(maxMarked))
@@ -292,7 +306,10 @@ enum PassageText {
         }
         // För långt: meningarna runt markeringen i stycket.
         let joined = context as NSString
-        let found = joined.range(of: head)
+        var found = NSRange(location: NSNotFound, length: 0)
+        for length in pieceLengths where found.location == NSNotFound {
+            found = joined.range(of: String(marked.prefix(length)))
+        }
         guard found.location != NSNotFound else { return Passage(context: shortMarked, marked: shortMarked) }
         let local = Highlight(id: highlight.id, book: highlight.book, section: highlight.section,
                               start: found.location, length: min((marked as NSString).length, joined.length - found.location),
