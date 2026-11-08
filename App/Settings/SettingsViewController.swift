@@ -1,15 +1,14 @@
 import UIKit
 
-/// Inställningar (fas 6): bläddringsljud, nyckeln till AI-knappen, synken, säkerhetskopian (G1) och loggen (G4).
+/// Inställningar (fas 6): bläddringsljud, Förklaring med AI (raden öppnar guiden för nyckeln, U7), synken,
+/// säkerhetskopian (G1) och loggen (G4).
 /// Hemligheter sparas i nyckelringen, aldrig i filer.
 final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
     private enum Row {
         case followSystem
         case pageSound
-        case geminiKey
-        case geminiModel
-        case geminiTest
+        case aiStatus
         case syncURL
         case syncAnonKey
         case syncEmail
@@ -34,7 +33,6 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
     private var sections: [Section] = []
     private var password = ""
-    private var geminiStatus: String?
     private var syncBusy = false
     private var syncMessage: String?
     private var backupBusy = false
@@ -63,6 +61,8 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         Theme.style(tableView)
+        // Raden Förklaring med AI visar läget efter guiden (U7).
+        rebuild()
     }
 
     @objc private func syncFinished() {
@@ -85,11 +85,11 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
             Section(title: "Utseende och läsaren", rows: [.followSystem, .pageSound],
                     footer: "Med Följ systemet blir appen mörk när iPaden är i mörkt läge och har annars "
                         + "bakgrunden du valt i läsaren. Väljer du en bakgrund i läsaren stängs Följ systemet av."),
-            Section(title: "Förklaring med AI", rows: [.geminiKey, .geminiModel, .geminiTest],
-                    footer: "Knappen Förklara i meningen i ordrutan använder Google Gemini. En gratis nyckel skapas i "
-                        + "Google AI Studio (aistudio.google.com, Get API key). Nyckeln sparas bara i iPadens nyckelring. "
-                        + "Meningen och ordet skickas till Google, och på gratisnivån får Google använda det för att "
-                        + "förbättra sina tjänster. Utan nyckel syns ingen AI-knapp."),
+            Section(title: "Förklaring med AI", rows: [.aiStatus],
+                    footer: "Förklara i meningen i ordrutan och Förklara i markeringsraden använder Google Gemini på "
+                        + "gratisnivån. Tryck på raden för att skapa och klistra in en gratis nyckel, steg för steg. "
+                        + "Bara det du trycker på skickas till Google, och på gratisnivån får Google använda det för "
+                        + "att förbättra sina tjänster."),
             Section(title: "Säkerhetskopia", rows: [.backupStatus, .backupNow, .backupRestore],
                     footer: "En kopia sparas varje dag i Filer under \(Self.filesLocation), Säkerhetskopia, och de "
                         + "sju senaste dagarna sparas. Dagens kopior sparas alla, också de du gör själv. Kopian från "
@@ -129,12 +129,6 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let row = sections[indexPath.section].rows[indexPath.row]
         switch row {
-        case .geminiKey:
-            return field(indexPath, title: "API-nyckel", text: Keychain.string(.geminiAPIKey) ?? "",
-                         placeholder: "Klistra in nyckeln", secure: true, tag: 1)
-        case .geminiModel:
-            return field(indexPath, title: "Modell", text: GeminiClient.model,
-                         placeholder: GeminiClient.defaultModel, secure: false, tag: 2)
         case .syncURL:
             return field(indexPath, title: "Projektets adress", text: SyncClient.shared.projectURL,
                          placeholder: "https://abcd.supabase.co", secure: false, tag: 3, keyboard: .URL)
@@ -183,12 +177,36 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
             }, for: .valueChanged)
             cell.accessoryView = toggle
             cell.selectionStyle = .none
-        case .geminiTest:
+        case .aiStatus:
             content = UIListContentConfiguration.subtitleCell()
-            content.text = "Prova nyckeln"
-            content.textProperties.color = view.tintColor
-            content.secondaryText = geminiStatus
+            content.text = "Förklaring med AI"
+            let status = AIClient.keyStatus
+            let palette = Theme.current
+            switch status {
+            case .notSet:
+                content.secondaryText = "Inte uppsatt. Tryck för att komma igång."
+                content.secondaryTextProperties.color = palette.inkSoft
+                content.image = UIImage(systemName: "circle")
+                content.imageProperties.tintColor = palette.inkFaint
+            case .untested:
+                content.secondaryText = "Nyckeln är sparad men inte provad. Tryck för att prova den."
+                content.secondaryTextProperties.color = palette.warning
+                content.image = UIImage(systemName: "circle.dashed")
+                content.imageProperties.tintColor = palette.warning
+            case .working:
+                let calls = AIClient.callsToday
+                content.secondaryText = "Fungerar. \(calls) anrop till Gemini i dag."
+                content.secondaryTextProperties.color = palette.success
+                content.image = UIImage(systemName: "checkmark.circle.fill")
+                content.imageProperties.tintColor = palette.success
+            case .failing(let message):
+                content.secondaryText = "Fel. " + message
+                content.secondaryTextProperties.color = .systemRed
+                content.image = UIImage(systemName: "exclamationmark.circle.fill")
+                content.imageProperties.tintColor = .systemRed
+            }
             content.secondaryTextProperties.numberOfLines = 0
+            cell.accessoryType = .disclosureIndicator
         case .syncSignIn:
             content = UIListContentConfiguration.subtitleCell()
             content.text = syncBusy ? "Loggar in …" : "Logga in"
@@ -289,8 +307,8 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         tableView.deselectRow(at: indexPath, animated: true)
         view.endEditing(true)
         switch sections[indexPath.section].rows[indexPath.row] {
-        case .geminiTest:
-            testGemini()
+        case .aiStatus:
+            navigationController?.pushViewController(AIKeyGuideViewController(), animated: true)
         case .syncSignIn:
             signIn()
         case .syncNow:
@@ -440,11 +458,6 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     func textFieldDidEndEditing(_ textField: UITextField) {
         let text = textField.text ?? ""
         switch textField.tag {
-        case 1:
-            Keychain.set(text, for: .geminiAPIKey)
-            geminiStatus = nil
-        case 2:
-            GeminiClient.model = text
         case 3:
             SyncClient.shared.projectURL = text
         case 4:
@@ -464,25 +477,6 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     }
 
     // MARK: Knapparna
-
-    private func testGemini() {
-        guard let key = Keychain.string(.geminiAPIKey) else {
-            geminiStatus = "Skriv in en nyckel först."
-            rebuild()
-            return
-        }
-        geminiStatus = "Frågar Gemini …"
-        rebuild()
-        GeminiClient.test(key: key) { [weak self] result in
-            switch result {
-            case .success:
-                self?.geminiStatus = "Nyckeln fungerar med \(GeminiClient.model)."
-            case .failure(let error):
-                self?.geminiStatus = error.localizedDescription
-            }
-            self?.rebuild()
-        }
-    }
 
     private func signIn() {
         let client = SyncClient.shared
