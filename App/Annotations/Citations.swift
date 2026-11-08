@@ -384,8 +384,11 @@ final class CitationViewController: UIViewController, UIPopoverPresentationContr
         infoLabel.numberOfLines = 0
         infoLabel.font = .preferredFont(forTextStyle: .footnote)
         infoLabel.textColor = palette.inkSoft
-        let pageText = page.map { "Sida \($0) i boken." }
-            ?? pageHint ?? "Ingen sida (EPUB och text har inga fasta sidor)."
+        // D4-1: en PDF utan sida har aldrig EPUB:ens förklaring, så att det inte ser ut som att allt är rätt.
+        let missing = book.kind == .pdf
+            ? "Bokens sidnummer är inte inställt, så citatet har ingen sida."
+            : "Ingen sida (EPUB och text har inga fasta sidor)."
+        let pageText = page.map { "Sida \($0) i boken." } ?? pageHint ?? missing
         infoLabel.text = "Bokinfo: " + Citation.reference(.harvard, source: source) + "\n" + pageText
         let edit = button("Ändra bokinfo", filled: false) { [weak self] in
             guard let self = self else { return }

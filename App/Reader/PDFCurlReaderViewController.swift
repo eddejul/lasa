@@ -2420,7 +2420,11 @@ extension PDFCurlReaderViewController {
             for style in CitationStyle.allCases {
                 SelfTest.log("Citat (K3) \(style.title): \(Citation.quote(highlight.text, style: style, source: source, page: citationPage(for: highlight)).prefix(160))")
             }
-            CitationViewController.present(book: book, text: highlight.text, page: citationPage(for: highlight), from: self,
+            // Som knappen Citat: utan inställt sidnummer får rutan förklaringen och knappen till Bokens sidnummer (D4-1).
+            let page = citationPage(for: highlight)
+            CitationViewController.present(book: book, text: highlight.text, page: page,
+                                           pageHint: page == nil ? missingPageHint(for: highlight) : nil,
+                                           onSetPages: { [weak self] in self?.showBookPages() }, from: self,
                                            sourceView: view, sourceRect: CGRect(x: view.bounds.midX, y: 120, width: 2, height: 2))
             await pause(0.9)
             if let navigation = presentedViewController as? UINavigationController {
