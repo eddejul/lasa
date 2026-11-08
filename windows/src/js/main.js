@@ -1,14 +1,17 @@
-// Läsa för Windows: start, flikarna Bibliotek, Sparade ord och Om ordboken, och läsaren.
+// Sensus (tidigare Läsa) för Windows: start, flikarna Bibliotek, Sparade ord och Om ordboken, och läsaren.
 
 import { renderAbout } from './about.js';
-import { checkDictionary } from './context.js';
+import { checkDictionary, dictionary } from './context.js';
+import { onOpenFiles, pendingRead, pendingTake } from './backend.js';
 import { ACCEPT_ATTRIBUTE, importFiles, renderLibrary } from './library.js';
 import { setAboutHandler } from './popup.js';
-import { applyTheme, closeReader, openReader } from './reader.js';
+import { closeReader, isReaderOpen, openReader } from './reader.js';
 import { renderSavedWords } from './savedwords.js';
 import { renderSettings } from './settings.js';
+import { blockBrowserKeys, showShortcuts, toggleFullscreen } from './shortcuts.js';
 import { getBook, openStore, settings } from './store.js';
 import { syncSoon, syncState } from './sync.js';
+import { applyTheme, cycleTheme } from './theme.js';
 import { el, replace, toast } from './ui.js';
 
 const app = document.getElementById('app');
@@ -20,25 +23,33 @@ const TABS = [
 ];
 let currentTab = null;
 
+// Ett enda filval för hela appen: knappen Lägg till böcker och Ctrl och O.
+const fileInput = el('input', { type: 'file', multiple: true, accept: ACCEPT_ATTRIBUTE, hidden: true, dataset: { testid: 'file-input' } });
+fileInput.addEventListener('change', async () => {
+  const files = [...fileInput.files];
+  fileInput.value = '';
+  if (await importFiles(files) && currentTab === 'library') showTab('library');
+});
+
+function chooseFiles() {
+  fileInput.click();
+}
+
 async function showTab(tab) {
   await closeReader();
   currentTab = tab;
-  document.title = 'Läsa';
+  document.title = 'Sensus';
   const content = el('main', { class: 'main-content', dataset: { view: tab } });
-  const fileInput = el('input', { type: 'file', multiple: true, accept: ACCEPT_ATTRIBUTE, hidden: true, dataset: { testid: 'file-input' } });
-  fileInput.addEventListener('change', async () => {
-    const files = [...fileInput.files];
-    fileInput.value = '';
-    if (await importFiles(files) && currentTab === 'library') showTab('library');
-  });
   const header = el('header', { class: 'toolbar main-toolbar' },
-    el('div', { class: 'app-name' }, 'Läsa'),
+    el('div', { class: 'app-name' }, 'Sensus'),
     el('nav', { class: 'tabs' }, TABS.map((item) => el('button', {
       class: `tab${item.id === tab ? ' selected' : ''}`, onclick: () => showTab(item.id), dataset: { testid: `tab-${item.id}` },
     }, item.title))),
     el('div', { class: 'toolbar-spacer' }),
-    tab === 'library' ? el('button', { class: 'button primary', onclick: () => fileInput.click(), dataset: { testid: 'add-books' } }, 'Lägg till böcker') : null,
-    fileInput);
+    el('button', { class: 'toolbar-button', onclick: () => showShortcuts(), title: 'Tangentbordsgenvägar (?)',
+      'aria-label': 'Tangentbordsgenvägar', dataset: { testid: 'shortcuts-button' } }, '?'),
+    tab === 'library' ? el('button', { class: 'button primary', onclick: chooseFiles, title: 'Lägg till böcker (Ctrl och O)',
+      dataset: { testid: 'add-books' } }, 'Lägg till böcker') : null);
   replace(app, header, content);
   if (tab === 'library') await renderLibrary(content, { onOpen: openBook });
   else if (tab === 'saved') await renderSavedWords(content);
@@ -79,10 +90,11 @@ async function openBook(id) {
     return;
   }
   currentTab = null;
-  document.title = `${book.title} · Läsa`;
+  document.title = `${book.title} · Sensus`;
   const container = el('div', { class: 'reader-container' });
   replace(app, container);
   await openReader(container, book, {
+    onAppKey: handleAppKey,
     onBack: () => showTab('library'),
     onSavedWords: () => openModal('Sparade ord', renderSavedWords),
     onAbout: () => openModal('Om ordboken', renderAbout),
@@ -118,16 +130,89 @@ function setUpDrop() {
   });
 }
 
+/** Öppna med i Utforskaren: böckerna läggs till (om de inte redan finns) och den första öppnas. */
+async function openPendingFiles() {
+  let list = [];
+  try {
+    list = await pendingTake();
+  } catch {
+    return;
+  }
+  if (!list?.length) return;
+  const files = [];
+  for (const [index, item] of list.entries()) {
+    try {
+      files.push(new File([await pendingRead(index)], item.name));
+    } catch (error) {
+      toast(`${item.name} kunde inte läsas (${error?.message ?? error}).`);
+    }
+  }
+  const ids = [];
+  await importFiles(files, { ids });
+  if (ids.length) await openBook(ids[0]);
+  else if (currentTab === 'library') showTab('library');
+}
+
+/** Genvägar som gäller i hela appen. Läsaren skickar hit tangenter som trycks i ett EPUB-kapitel. */
+export function handleAppKey(event) {
+  if (event.defaultPrevented) return;
+  const ctrl = event.ctrlKey || event.metaKey;
+  const key = event.key ?? '';
+  if (key === 'F11') {
+    event.preventDefault();
+    toggleFullscreen().catch((error) => toast(`Helskärm gick inte (${error?.message ?? error}).`));
+    return;
+  }
+  if (ctrl && !event.altKey && key.toLowerCase() === 'o') {
+    event.preventDefault();
+    chooseFiles();
+    return;
+  }
+  // Ctrl och F och Ctrl och G sköts av läsaren. Utanför den gör de ingenting (inte webbvyns egen sökning).
+  if (ctrl && !event.altKey && ['f', 'g'].includes(key.toLowerCase()) && !isReaderOpen()) {
+    event.preventDefault();
+    return;
+  }
+  if (ctrl || event.altKey) return;
+  const target = event.target;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName ?? '') || target?.isContentEditable) return;
+  if (document.querySelector('#modal-layer .modal-backdrop')) return;
+  if (key === '?') {
+    event.preventDefault();
+    showShortcuts();
+  } else if (key === 't' || key === 'T') {
+    event.preventDefault();
+    cycleTheme().then((title) => toast(`Tema: ${title}`, 2));
+  }
+}
+
+/** Slår upp några ord i bakgrunden efter start, så att ordboksfilen och frågorna är varma och första
+ *  dubbelklicket går lika fort som de följande. Inget sparas och inget visas. */
+function warmDictionary() {
+  setTimeout(async () => {
+    for (const [word, language] of [['undersökningen', 'sv'], ['sprang', 'sv'], ['went', 'en'], ['libraries', 'en']]) {
+      try {
+        await dictionary.lookup(word, { language });
+      } catch {
+        return;
+      }
+    }
+  }, 400);
+}
+
 async function start() {
   try {
     await openStore();
   } catch (error) {
-    replace(app, el('div', { class: 'empty' }, el('p', {}, 'Läsa kunde inte öppna sina filer.'), el('p', { class: 'muted' }, String(error?.message ?? error))));
+    replace(app, el('div', { class: 'empty' }, el('p', {}, 'Sensus kunde inte öppna sina filer.'), el('p', { class: 'muted' }, String(error?.message ?? error))));
     return;
   }
   applyTheme(settings.theme);
   setAboutHandler(() => openModal('Om ordboken', renderAbout));
   setUpDrop();
+  document.body.append(fileInput);
+  blockBrowserKeys(window);
+  document.addEventListener('keydown', handleAppKey);
   // Webbvyns egen högerklicksmeny (Uppdatera, Spara som och liknande) passar inte i appen.
   // Högerklick på ett ord i en bok slår upp ordet, det sköter läsarna själva.
   document.addEventListener('contextmenu', (event) => {
@@ -135,6 +220,7 @@ async function start() {
   });
   const { error } = await checkDictionary();
   if (error) toast(error, 10);
+  else warmDictionary();
   // Efter en synk visas hämtade ord direkt om Sparade ord är öppet.
   window.addEventListener('lasa-sync', () => {
     if (!syncState.running && currentTab === 'saved') {
@@ -143,6 +229,8 @@ async function start() {
     }
   });
   await showTab('library');
+  onOpenFiles(openPendingFiles);
+  await openPendingFiles();
   syncSoon();
 }
 

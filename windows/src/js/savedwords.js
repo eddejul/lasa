@@ -1,6 +1,7 @@
 // Sparade ord: varje ord som har slagits upp i en bok, med meningen det stod i. Senast först.
 
 import { showWordPopup } from './popup.js';
+import { openReview, reviewCount } from './reviewview.js';
 import { deleteSavedWord, listBooks, savedWords } from './store.js';
 import { el, formatDate, replace } from './ui.js';
 
@@ -34,7 +35,15 @@ export async function renderSavedWords(container) {
       word.sentence ? el('div', { class: 'saved-sentence' }, word.sentence) : null,
       el('div', { class: 'list-secondary' }, details.join(' · ')));
   });
-  replace(container, el('section', { class: 'list-section' },
+  const count = await reviewCount();
+  const reviewBar = el('div', { class: 'list-section review-bar' },
+    el('button', { class: 'button primary', dataset: { testid: 'review-button' },
+      onclick: () => openReview({ onClose: () => renderSavedWords(container) }) },
+    count ? `Repetera (${count})` : 'Repetera'),
+    el('span', { class: 'list-secondary' }, count
+      ? `${count} ord att repetera nu, med samma schema som på iPaden.`
+      : 'Inga ord att repetera just nu.'));
+  replace(container, reviewBar, el('section', { class: 'list-section' },
     el('div', { class: 'list-group' }, rows),
     el('p', { class: 'list-footer' }, `${words.length} ord. Ett ord som slås upp igen flyttas överst.`)));
 }

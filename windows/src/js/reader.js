@@ -1,24 +1,26 @@
 // Läsarens ram: verktygsraden, sidan, reglaget och sidnumret nere, tangenter och mushjul.
 // Själva sidorna ritas av PdfReader (PDF) eller ReflowReader (EPUB och text).
 
-import { readBookFile } from './backend.js';
+import { bookFileSize, inTauri, readBookFile, readBookRange } from './backend.js';
+import {
+  BookAnnotations, closeMarkMenu, editNote, isMarkMenuOpen, lastColor, renderMarksPanel, showHighlightMenu, showSelectionMenu,
+} from './annotations.js';
+import { bookErrorMessage } from './bookerrors.js';
 import { closeWordPopup, isWordPopupOpen, showWordPopup } from './popup.js';
 import { PdfReader } from './pdfreader.js';
 import { FONTS, ReflowReader, SIZES } from './reflowreader.js';
+import { newSearchState, renderSearchPanel } from './searchpanel.js';
+import { isBrowserKey } from './shortcuts.js';
 import { markOpened, savePosition, setSetting, settings } from './store.js';
 import { syncSoon } from './sync.js';
+import { THEMES, applyTheme, resolvedTheme, setThemeListener } from './theme.js';
 import { el, promptDialog, replace, toast } from './ui.js';
-
-const THEMES = [
-  { id: 'white', title: 'Vitt' },
-  { id: 'sepia', title: 'Sepia' },
-  { id: 'dark', title: 'Mörkt' },
-];
 
 let active = null;
 
-export function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
+/** Sant medan en bok är öppen. */
+export function isReaderOpen() {
+  return active !== null;
 }
 
 export async function closeReader() {
@@ -31,22 +33,30 @@ export async function closeReader() {
 }
 
 /** Öppnar en bok i `container`. onBack går tillbaka till biblioteket. */
-export async function openReader(container, book, { onBack, onSavedWords, onAbout }) {
+export async function openReader(container, book, { onBack, onSavedWords, onAbout, onAppKey = null }) {
   await closeReader();
-  const bytes = await readBookFile(book.id, book.ext);
   const stage = el('div', { class: 'reader-stage', tabindex: '-1' });
+  const loading = el('div', { class: 'reader-loading', dataset: { testid: 'reader-loading' } }, 'Öppnar boken ...');
   const label = el('button', { class: 'page-label', title: book.format === 'pdf' ? 'Gå till sida' : null }, '');
   const slider = el('input', { type: 'range', class: 'page-slider', min: '0', max: '1000', value: '0', 'aria-label': 'Plats i boken' });
   const panel = el('div', { class: 'reader-panel', hidden: true });
 
+  const annotations = new BookAnnotations(book);
+  const bookmarkButton = el('button', { class: 'toolbar-button bookmark-button', onclick: () => toggleBookmark(),
+    title: 'Bokmärke på sidan (B)', 'aria-pressed': 'false', dataset: { testid: 'bookmark-button' } }, 'Bokmärke');
   const toolbar = el('header', { class: 'toolbar reader-toolbar' },
     el('button', { class: 'toolbar-button', onclick: () => onBack(), title: 'Tillbaka till biblioteket (Esc)' }, '‹ Bibliotek'),
     el('div', { class: 'reader-title', title: book.title }, book.title),
     el('div', { class: 'toolbar-buttons' },
       el('button', { class: 'toolbar-button', onclick: () => togglePanel('toc'), dataset: { testid: 'toc-button' } }, 'Innehåll'),
+      el('button', { class: 'toolbar-button', onclick: () => togglePanel('search'), title: 'Sök i boken (Ctrl och F)',
+        dataset: { testid: 'search-button' } }, 'Sök'),
       book.format === 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => goToPage() }, 'Gå till sida') : null,
       book.format === 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('zoom'), dataset: { testid: 'zoom-button' } }, 'Visning') : null,
       book.format !== 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('type'), title: 'Typsnitt och storlek' }, 'Aa') : null,
+      el('button', { class: 'toolbar-button', onclick: () => togglePanel('marks'), title: 'Markeringar och bokmärken',
+        dataset: { testid: 'marks-button' } }, 'Markeringar'),
+      bookmarkButton,
       el('button', { class: 'toolbar-button', onclick: () => togglePanel('theme'), dataset: { testid: 'theme-button' } }, 'Tema'),
       el('button', { class: 'toolbar-button', onclick: () => onSavedWords() }, 'Sparade ord'),
       el('button', { class: 'toolbar-button', onclick: () => onAbout() }, 'Om ordboken')));
@@ -57,7 +67,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   ];
   const view = el('div', { class: 'reader' },
     toolbar,
-    el('div', { class: 'reader-body' }, stage, arrows, panel),
+    el('div', { class: 'reader-body' }, stage, loading, arrows, panel),
     el('footer', { class: 'reader-bottom' }, slider, label));
   replace(container, view);
 
@@ -77,8 +87,18 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     baseline = key;
     return savePosition(book.id, location.position, location.fraction);
   };
+  let currentPlace = null;
+  let currentPlaceLabel = '';
+  const updateBookmarkButton = () => {
+    const marked = annotations.bookmarksAt(currentPlace).length > 0;
+    bookmarkButton.classList.toggle('active', marked);
+    bookmarkButton.setAttribute('aria-pressed', String(marked));
+  };
   const onRelocate = (next) => {
     label.textContent = next.label;
+    currentPlace = next.place ?? null;
+    currentPlaceLabel = next.placeLabel ?? next.label;
+    updateBookmarkButton();
     if (document.activeElement !== slider) slider.value = String(Math.round(next.fraction * 1000));
     // Medan boken öppnas sparas inget, platsen blir utgångsläget när den har öppnats klart.
     if (baseline === null) {
@@ -113,7 +133,25 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     await setSetting('pdfZoom', reader.zoom);
   };
   const onKey = (event) => {
+    // Tangenter i ett EPUB-kapitel kommer hit från kapitlets ram: webbläsarens egna stoppas, och appens
+    // genvägar (F11, Ctrl och O, ?, T) skickas vidare.
+    const origin = event.target?.ownerDocument ?? event.target;
+    if (origin && origin !== document) {
+      if (isBrowserKey(event)) {
+        event.preventDefault();
+        return;
+      }
+      onAppKey?.(event);
+    }
     if (event.defaultPrevented) return;
+    const ctrl = event.ctrlKey || event.metaKey;
+    const letter = (event.key ?? '').toLowerCase();
+    if (ctrl && !event.altKey && !event.shiftKey && (letter === 'f' || letter === 'g')) {
+      event.preventDefault();
+      if (letter === 'f') openSearch();
+      else goToPage();
+      return;
+    }
     if (event.ctrlKey && !event.altKey && reader.zoomStep) {
       if (['+', '=', 'Add'].includes(event.key)) {
         event.preventDefault();
@@ -130,7 +168,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (document.querySelector('#modal-layer .modal-backdrop')) return;
     if (event.key === 'Escape') {
-      if (isWordPopupOpen()) closeWordPopup();
+      if (isMarkMenuOpen()) closeMarkMenu();
+      else if (isWordPopupOpen()) closeWordPopup();
       else if (!panel.hidden) togglePanel(null);
       else onBack();
       event.preventDefault();
@@ -146,6 +185,9 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     } else if (down || up) {
       event.preventDefault();
       step(down ? 1 : -1);
+    } else if ((event.key === 'b' || event.key === 'B') && !event.shiftKey) {
+      event.preventDefault();
+      toggleBookmark();
     } else if (event.key === 'Home') {
       event.preventDefault();
       reader.goToFraction(0);
@@ -187,14 +229,87 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   };
   const onPointerDown = () => {
     if (isWordPopupOpen()) closeWordPopup();
+    if (isMarkMenuOpen()) closeMarkMenu();
+    clearTimeout(markClickTimer);
   };
+
+  // Markeringar: färgval när text markeras med musen, meny vid klick på en markering.
+  const getMarks = (section, text) => annotations.marksFor(section, text);
+  const addHighlight = async (selection, color) => {
+    const highlight = await annotations.add(selection, color);
+    selection.clear();
+    reader.refreshMarks();
+    refreshMarksPanel();
+    return highlight;
+  };
+  const writeNote = async (highlight) => {
+    const note = await editNote(highlight);
+    if (note === null) return;
+    await annotations.update(highlight.id, { note });
+    reader.refreshMarks();
+    refreshMarksPanel();
+  };
+  const onSelect = (selection) => {
+    if (isWordPopupOpen()) return;
+    showSelectionMenu(selection.rect, {
+      onColor: (color) => addHighlight(selection, color),
+      onNote: async () => writeNote(await addHighlight(selection, lastColor())),
+    });
+  };
+  // Ett klick på en markering väntar en kort stund, så att ett dubbelklick (ordfunktionen) inte öppnar menyn.
+  let markClickTimer = null;
+  const onMarkClick = (mark, rect) => {
+    clearTimeout(markClickTimer);
+    markClickTimer = setTimeout(() => {
+      const highlight = annotations.get(mark.id);
+      if (!highlight || isWordPopupOpen()) return;
+      showHighlightMenu(rect, highlight, {
+        onColor: async (color) => {
+          await annotations.update(highlight.id, { color });
+          reader.refreshMarks();
+          refreshMarksPanel();
+        },
+        onNote: () => writeNote(highlight),
+        onDelete: async () => {
+          await annotations.remove(highlight.id);
+          reader.refreshMarks();
+          refreshMarksPanel();
+          toast('Markeringen togs bort.', 2);
+        },
+      });
+    }, 280);
+  };
+  stage.addEventListener('mousedown', () => clearTimeout(markClickTimer));
+
+  async function toggleBookmark() {
+    if (!currentPlace) return;
+    const label = book.format === 'pdf' ? `Sida ${reader.pageName(currentPlace.pages[0])}` : currentPlaceLabel;
+    const added = await annotations.toggleBookmark(currentPlace, label);
+    updateBookmarkButton();
+    refreshMarksPanel();
+    toast(added ? 'Bokmärke på sidan.' : 'Bokmärket togs bort.', 2);
+  }
+
+  const placeName = (section) => (book.format === 'pdf' ? `s. ${reader.pageName(section)}` : reader.chapterLabel(section));
+  function refreshMarksPanel() {
+    if (panel.dataset.name !== 'marks') return;
+    renderMarksPanel(panel, annotations, {
+      onClose: () => togglePanel(null),
+      onGoToBookmark: (bookmark) => reader.goToPlace(bookmark.section, bookmark.progression),
+      onGoToHighlight: (highlight) => reader.showMark(highlight.section, highlight.text, highlight),
+      placeName,
+      onChanged: updateBookmarkButton,
+    });
+  }
 
   const reader = book.format === 'pdf'
     ? new PdfReader(stage, { onRelocate, onWord, onMessage: (message) => toast(message),
-      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1 })
-    : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown });
+      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, spread: settings.pdfSpread ?? 'auto', getMarks, onSelect, onMarkClick })
+    : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks, onSelect, onMarkClick });
 
   document.addEventListener('keydown', onKey);
+  // Provkörningen i webbläsaren (dev/server.py) når läsaren härifrån. Finns inte i appen.
+  if (!inTauri) globalThis.lasaTest = { reader, book };
   stage.addEventListener('wheel', onWheel, { passive: false });
   slider.addEventListener('change', () => reader.goToFraction(Number(slider.value) / 1000));
   label.addEventListener('click', () => (book.format === 'pdf' ? goToPage() : null));
@@ -203,21 +318,57 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   });
 
   async function goToPage() {
-    const answer = await promptDialog({ title: 'Gå till sida', message: 'Skriv bokens sidnummer (till exempel 45 eller xii).',
-      confirm: 'Gå', placeholder: 'Sidnummer' });
+    if (document.querySelector('#modal-layer .modal-backdrop')) return;
+    const pdf = book.format === 'pdf';
+    const total = reader.placeCount ?? 0;
+    const answer = await promptDialog(pdf
+      ? { title: 'Gå till sida', message: 'Skriv bokens sidnummer (till exempel 45 eller xii).', confirm: 'Gå', placeholder: 'Sidnummer' }
+      : { title: 'Gå till plats', message: `Skriv platsen (1 till ${total || 'slutet'}) eller hur långt in i boken, som 50 %.`,
+        confirm: 'Gå', placeholder: 'Plats eller procent' });
     if (answer === null) return;
-    if (!reader.goToPageText(answer)) toast(`Hittade ingen sida ${answer}.`);
+    if (!reader.goToPageText(answer)) toast(pdf ? `Hittade ingen sida ${answer}.` : `Hittade ingen plats ${answer}.`);
+  }
+
+  /** Ctrl och F: öppnar sökpanelen, eller går till sökfältet om den redan är öppen. */
+  function openSearch() {
+    if (panel.dataset.name === 'search') {
+      const input = panel.querySelector('input');
+      input?.focus();
+      input?.select();
+    } else {
+      togglePanel('search');
+    }
+  }
+
+  const searchState = newSearchState();
+
+  /** Valet av uppslag: Automatiskt, En sida eller Två sidor. */
+  function spreadChoices(current, onChoose) {
+    const choices = [
+      { id: 'auto', title: 'Automatiskt', note: 'Två sidor bredvid varandra när fönstret är brett nog.' },
+      { id: 'one', title: 'En sida', note: 'Alltid en sida åt gången.' },
+      { id: 'two', title: 'Två sidor', note: 'Alltid två sidor bredvid varandra, som en uppslagen bok.' },
+    ];
+    return el('div', { class: 'font-list' }, choices.map((choice) => el('button', {
+      class: `font-choice${current === choice.id ? ' selected' : ''}`, dataset: { testid: `spread-${choice.id}` },
+      onclick: () => onChoose(choice.id) }, el('div', {}, choice.title), el('div', { class: 'choice-note' }, choice.note))));
   }
 
   async function togglePanel(name) {
+    if (panel.dataset.name === 'search' && name !== 'search') reader.clearSearchHit?.();
     if (!name || panel.dataset.name === name) {
       panel.hidden = true;
       panel.dataset.name = '';
+      stage.focus({ preventScroll: true });
       return;
     }
     panel.dataset.name = name;
     panel.hidden = false;
-    if (name === 'toc') {
+    if (name === 'search') {
+      renderSearchPanel(panel, reader, searchState, { onClose: () => togglePanel(null) });
+    } else if (name === 'marks') {
+      refreshMarksPanel();
+    } else if (name === 'toc') {
       const items = await reader.toc();
       const list = (entries, depth) => el('ul', { class: `toc-list depth-${depth}` }, entries.map((entry) => el('li', {},
         el('button', { class: 'toc-item', onclick: async () => {
@@ -237,10 +388,11 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
         onclick: async () => {
           await setSetting('theme', theme.id);
           applyTheme(theme.id);
-          reader.setSettings?.({ theme: theme.id });
+          reader.setSettings?.({ theme: resolvedTheme() });
           togglePanel(null);
         } }, theme.title))),
-      el('p', { class: 'muted' }, 'Gäller alla böcker. Mörkt vänder ljusheten på PDF-sidor men behåller färgerna.'));
+      el('p', { class: 'muted' }, 'Gäller alla böcker. Mörkt vänder ljusheten på PDF-sidor men behåller färgerna. '
+        + 'Följ systemet blir ljust eller mörkt som Windows.'));
     } else if (name === 'zoom') {
       const fits = [
         { id: 'auto', title: 'Automatiskt', note: 'Hela sidan om texten blir läsbar, annars en sida i läsbar storlek som du rullar i.' },
@@ -258,6 +410,13 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
           togglePanel(null);
           togglePanel('zoom');
         } }, el('div', {}, fit.title), el('div', { class: 'choice-note' }, fit.note)))),
+      el('h3', { class: 'panel-subhead' }, 'Uppslag'),
+      spreadChoices(reader.spread, async (spread) => {
+        await reader.setView({ spread });
+        await setSetting('pdfSpread', spread);
+        togglePanel(null);
+        togglePanel('zoom');
+      }),
       el('h3', { class: 'panel-subhead' }, 'Zoom'),
       el('div', { class: 'size-row' },
         el('button', { class: 'button', onclick: async () => { await zoom(-1); zoomLabel.textContent = `${Math.round(reader.zoom * 100)} %`; },
@@ -276,6 +435,14 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
       };
       replace(panel, el('div', { class: 'panel-head' }, el('h2', {}, 'Typsnitt och storlek'),
         el('button', { class: 'popup-close', onclick: () => togglePanel(null), 'aria-label': 'Stäng' }, '×')),
+      el('h3', { class: 'panel-subhead' }, 'Uppslag'),
+      spreadChoices(settings.reflowSpread ?? 'auto', async (spread) => {
+        await setSetting('reflowSpread', spread);
+        reader.setSettings({ spread });
+        togglePanel(null);
+        togglePanel('type');
+      }),
+      el('h3', { class: 'panel-subhead' }, 'Textstorlek'),
       el('div', { class: 'size-row' },
         el('button', { class: 'button', onclick: () => setSize(settings.size - 1), 'aria-label': 'Mindre text' }, 'A−'),
         sizeLabel,
@@ -295,20 +462,54 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   active = {
     async close() {
       document.removeEventListener('keydown', onKey);
+      setThemeListener(null);
+      clearTimeout(markClickTimer);
+      closeMarkMenu();
       closeWordPopup();
       await save();
       reader.destroy();
     },
   };
+  // Följ systemet: när Windows byter mellan ljust och mörkt följer EPUB-sidorna med.
+  setThemeListener((theme) => reader.setSettings?.({ theme }));
+
+  /** En stor PDF (över 16 MB) läses i bitar, en mindre läses hel. Går bitarna inte att läsa provas hela filen. */
+  async function openPdfBook() {
+    const limit = Number.isFinite(settings.pdfRangeMin) ? settings.pdfRangeMin : 16 * 1024 * 1024;
+    let length = 0;
+    try {
+      length = await bookFileSize(book.id, book.ext);
+    } catch {
+      length = 0;
+    }
+    if (length > limit) {
+      try {
+        await reader.open({ length, read: (start, end) => readBookRange(book.id, book.ext, start, end) }, book.position);
+        return;
+      } catch (error) {
+        if (['PasswordException', 'InvalidPDFException', 'FormatError'].includes(error?.name)) throw error;
+        console.warn('PDF:en kunde inte läsas i bitar, läser hela filen', error);
+      }
+    }
+    await reader.open(await readBookFile(book.id, book.ext), book.position);
+  }
 
   await markOpened(book.id);
+  await annotations.load();
   try {
-    if (book.format === 'pdf') await reader.open(bytes, book.position);
-    else await reader.open(bytes, book.position, { ext: book.ext, title: book.title, settings: { ...settings } });
+    // Bokfilen läses först nu, så att läsaren och Öppnar boken syns direkt. En stor PDF läses i bitar.
+    if (book.format === 'pdf') await openPdfBook();
+    else {
+      const bytes = await readBookFile(book.id, book.ext);
+      await reader.open(bytes, book.position, { ext: book.ext, title: book.title,
+        settings: { ...settings, theme: resolvedTheme(), spread: settings.reflowSpread ?? 'auto' } });
+    }
   } catch (error) {
     console.error(error);
-    replace(stage, el('div', { class: 'empty' }, el('p', {}, 'Boken kunde inte öppnas.'), el('p', { class: 'muted' }, String(error?.message ?? error))));
+    replace(stage, el('div', { class: 'empty', dataset: { testid: 'open-error' } },
+      el('p', {}, 'Boken kunde inte öppnas.'), el('p', { class: 'muted' }, bookErrorMessage(error, book.title))));
   }
+  loading.remove();
   // Boken har öppnats: platsen nu är utgångsläget, och först en flytt härifrån sparas.
   baseline = positionKey(location?.position);
   stage.focus({ preventScroll: true });

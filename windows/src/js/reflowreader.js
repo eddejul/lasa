@@ -2,8 +2,31 @@
 // uppslag) när fönstret är brett, annars en. Ord tas fram som lasa.wordAt i App/Reader/ReflowStyle.swift.
 
 import '../vendor/foliate-js/view.js';
+import { Overlayer } from '../vendor/foliate-js/overlayer.js';
+import { chapterNodes, offsetsFromRange, rangeFromOffsets, relocate } from './chaptertext.js';
+import { MAX_HITS, breathe, excerpt, findAll, foldQuery } from './search.js';
 import { makeTextBook } from './textbook.js';
 import { reflowCandidates, sentenceAround } from './wordfind.js';
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+/** En markering i kapitlet: färgen över texten, och ett streck under om den har en anteckning. */
+function drawMark(rects, { color, strong, note }) {
+  const group = Overlayer.highlight(rects, { color });
+  if (!note) return group;
+  const wrapper = document.createElementNS(SVG, 'g');
+  wrapper.append(group);
+  for (const { left, bottom, width } of rects) {
+    const line = document.createElementNS(SVG, 'rect');
+    line.setAttribute('x', left);
+    line.setAttribute('y', bottom - 1.5);
+    line.setAttribute('width', width);
+    line.setAttribute('height', 2);
+    line.setAttribute('fill', strong);
+    wrapper.append(line);
+  }
+  return wrapper;
+}
 
 // Typsnitt som finns i Windows. Samma nycklar som på iPaden där det går (original, georgia, palatino, system).
 export const FONTS = [
@@ -97,7 +120,7 @@ export function wordAt(doc, x, y) {
 }
 
 export class ReflowReader {
-  constructor(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown }) {
+  constructor(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks = null, onMarkClick = null, onSelect = null }) {
     this.kind = 'reflow';
     this.stage = stage;
     this.onRelocate = onRelocate;
@@ -105,7 +128,13 @@ export class ReflowReader {
     this.onKey = onKey;
     this.onWheel = onWheel;
     this.onPointerDown = onPointerDown;
+    // Markeringar (se annotations.js): getMarks(kapitel, kapitlets text) ger [{ id, start, end, color, note }].
+    this.getMarks = getMarks;
+    this.onMarkClick = onMarkClick;
+    this.onSelect = onSelect;
     this.settings = { theme: 'white', font: 'original', size: 2 };
+    this.annotations = new Map(); // CFI -> { value, index, kind: 'mark' eller 'search', mark }
+    this.searchHit = null;
   }
 
   async open(bytes, position, { ext, title, settings }) {
@@ -117,13 +146,16 @@ export class ReflowReader {
       ? new File([bytes], 'bok.epub', { type: 'application/epub+zip' })
       : makeTextBook(bytes, { title, ext });
     await this.view.open(book);
+    this.guardRender(this.view.renderer);
     this.mapSections();
+    this.view.addEventListener('draw-annotation', (event) => this.drawAnnotation(event.detail));
+    this.view.addEventListener('create-overlay', (event) => this.paintMarks(event.detail.index));
+    this.view.addEventListener('show-annotation', (event) => this.showAnnotation(event.detail));
     const renderer = this.view.renderer;
     // Lyssnar på sidornas egen händelse (den kommer efter vyns), som har andelen av kapitlet.
     renderer.addEventListener('relocate', (event) => this.onRelocateEvent(event.detail));
     renderer.setAttribute('flow', 'paginated');
-    renderer.setAttribute('max-inline-size', '620px');
-    renderer.setAttribute('max-column-count', '2');
+    this.applyLayout();
     renderer.setAttribute('gap', '6%');
     renderer.setAttribute('margin', '40px');
     renderer.setAttribute('animated', '');
@@ -135,6 +167,23 @@ export class ReflowReader {
     } else {
       await this.view.init({ lastLocation: position?.cfi ?? null });
     }
+  }
+
+  /** foliate-js ritar ibland om sidorna (en ResizeObserver i paginator.js) i ögonblicket när ett kapitels
+   *  dokument byts, innan dokumentet har fått sitt html-element, och kastar då ett TypeError. Kapitlet
+   *  ritas ändå när det har laddats, så just det felet hoppas över. Filerna i vendor ändras inte. */
+  guardRender(renderer) {
+    if (!renderer || renderer.lasaGuarded) return;
+    const render = renderer.render.bind(renderer);
+    renderer.render = (...args) => {
+      try {
+        return render(...args);
+      } catch (error) {
+        if (error instanceof TypeError && /'style' of 'el'|reading 'style'/.test(error.message)) return undefined;
+        throw error;
+      }
+    };
+    renderer.lasaGuarded = true;
   }
 
   /** Kapitlens nummer för synken: bara poster i läsordningen (spine) som är (X)HTML-dokument räknas,
@@ -161,8 +210,9 @@ export class ReflowReader {
     });
   }
 
-  onLoad({ doc }) {
+  onLoad({ doc, index }) {
     this.applyFontSize(doc);
+    doc.addEventListener('mouseup', (event) => this.onSelectionEnd(doc, index, event));
     doc.addEventListener('dblclick', (event) => this.handleWord(doc, event));
     doc.addEventListener('contextmenu', (event) => {
       event.preventDefault();
@@ -178,7 +228,7 @@ export class ReflowReader {
 
   /** Sidornas händelse: index är sektionen i foliate-js, fraction andelen av den. Vyns sammanställning
    *  (CFI, plats i boken, innehåll) finns redan i view.lastLocation. */
-  onRelocateEvent({ index, fraction: sectionFraction, reason }) {
+  onRelocateEvent({ index, fraction: sectionFraction, reason, size }) {
     const detail = this.view?.lastLocation ?? {};
     const total = detail.location?.total ?? 0;
     const current = (detail.location?.current ?? 0) + 1;
@@ -187,6 +237,7 @@ export class ReflowReader {
     if (total) parts.push(`plats ${Math.min(current, total)} av ${total}`);
     this.lastPage = detail.location?.current ?? 0;
     const position = { cfi: detail.cfi };
+    this.lastSize = size;
     // Synkens plats: kapitlet bland bokens dokument och andelen av kapitlet (bara EPUB).
     const section = this.view?.book?.resources ? this.documentOfSection?.[index] : null;
     if (Number.isInteger(section)) {
@@ -198,6 +249,10 @@ export class ReflowReader {
       page: this.lastPage,
       fraction: detail.fraction ?? 0,
       position,
+      // Platsen för bokmärken: kapitlet, var sidan börjar i kapitlet och hur stor del av kapitlet den är.
+      place: { section: this.documentIndex(index), progression: Math.min(Math.max(Number(sectionFraction) || 0, 0), 1),
+        extent: Number(size) || 0 },
+      placeLabel: parts.join(', '),
       // 'anchor' är när sidorna ritas om på samma ställe (typsnitt som laddas, fönstret som ändras).
       // Det är ingen flytt och ska inte ge positionen en ny ändringstid.
       moved: reason !== 'anchor',
@@ -206,6 +261,179 @@ export class ReflowReader {
 
   get book() {
     return this.view?.book;
+  }
+
+  /** Musen släpps i ett kapitel: markerad text blir ett förslag till markering. Dubbelklick räknas inte. */
+  onSelectionEnd(doc, index, event) {
+    if (event.button !== 0 || event.detail !== 1) return;
+    const selection = doc.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return;
+    const info = chapterNodes(doc);
+    const offsets = offsetsFromRange(doc, selection.getRangeAt(0), info);
+    if (!offsets) return;
+    let { start, end } = offsets;
+    while (start < end && /\s/.test(info.text[start])) start += 1;
+    while (end > start && /\s/.test(info.text[end - 1])) end -= 1;
+    if (end <= start || !/[\p{L}\p{N}]/u.test(info.text.slice(start, end))) return;
+    const range = selection.getRangeAt(0);
+    const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+    this.onSelect?.({ section: this.documentIndex(index), start, end, sectionText: info.text,
+      rect: this.frameRect(doc, rects[0] ?? range.getBoundingClientRect()), clear: () => doc.getSelection()?.removeAllRanges() });
+  }
+
+  /** Kapitlets namn (bland bokens dokument), för listan med markeringar. */
+  chapterLabel(section) {
+    const index = this.sectionOfDocument?.[section] ?? section;
+    return (this.view ? this.sectionLabels()[index] : '') || `Kapitel ${section + 1}`;
+  }
+
+  /** Går till ett kapitel (bland bokens dokument) och en andel av det, som ett bokmärke. */
+  goToPlace(section, progression) {
+    const index = this.sectionOfDocument?.[section] ?? section;
+    return this.view?.renderer.goTo({ index, anchor: Math.min(Math.max(Number(progression) || 0, 0), 0.9999) });
+  }
+
+  /** Går till en markering: kapitlet, och sidan där markeringens text står. */
+  showMark(section, text, mark) {
+    const index = this.sectionOfDocument?.[section] ?? section;
+    return this.view?.renderer.goTo({ index, anchor: (doc) => {
+      const info = chapterNodes(doc);
+      const place = relocate(info.text, mark);
+      return (place && rangeFromOffsets(doc, place.start, place.end, info)) ?? 0;
+    } });
+  }
+
+  // Markeringar och sökträffar, ritade av foliate-js (overlayer.js) ovanpå kapitlet.
+
+  /** Kapitlet bland bokens dokument (som synken och iPaden räknar), för foliate-js sektion. */
+  documentIndex(index) {
+    return this.documentOfSection?.[index] ?? index;
+  }
+
+  drawAnnotation({ draw, annotation }) {
+    if (annotation.kind === 'search') draw(Overlayer.outline, { color: 'rgba(230, 140, 0, 0.95)', width: 2.5, radius: 3 });
+    else draw(drawMark, annotation.style);
+  }
+
+  loadedDoc(index) {
+    return this.view?.renderer?.getContents().find((content) => content.index === index)?.doc ?? null;
+  }
+
+  /** Lägger markeringarna i ett kapitel som har laddats (eller ritar om dem efter en ändring). */
+  paintMarks(index) {
+    const doc = this.loadedDoc(index);
+    if (!doc) return;
+    const info = chapterNodes(doc);
+    const fresh = new Map();
+    for (const mark of this.getMarks?.(this.documentIndex(index), info.text) ?? []) {
+      const range = rangeFromOffsets(doc, mark.start, mark.end, info);
+      if (!range) continue;
+      const value = this.view.getCFI(index, range);
+      fresh.set(value, { value, index, kind: 'mark', mark, style: mark.style });
+    }
+    // Borttagna markeringar tas bort, de andra ritas om (samma CFI ersätter den gamla).
+    for (const [value, annotation] of [...this.annotations]) {
+      if (annotation.kind === 'mark' && annotation.index === index && !fresh.has(value)) {
+        this.view.deleteAnnotation(annotation);
+        this.annotations.delete(value);
+      }
+    }
+    for (const [value, annotation] of fresh) {
+      this.annotations.set(value, annotation);
+      this.view.addAnnotation(annotation);
+    }
+    if (this.searchHit?.index === index) this.view.addAnnotation(this.searchHit.annotation);
+  }
+
+  refreshMarks() {
+    for (const { index } of this.view?.renderer?.getContents() ?? []) this.paintMarks(index);
+  }
+
+  showAnnotation({ value, range }) {
+    const annotation = this.annotations.get(value);
+    if (annotation?.kind !== 'mark') return;
+    const doc = range?.startContainer?.ownerDocument;
+    if (doc && !doc.getSelection()?.isCollapsed) return;
+    this.onMarkClick?.(annotation.mark, this.frameRect(doc, range.getBoundingClientRect()));
+  }
+
+  /** En ruta i ett kapitel i fönstrets koordinater. */
+  frameRect(doc, rect) {
+    const frame = doc?.defaultView?.frameElement?.getBoundingClientRect() ?? new DOMRect(0, 0, 0, 0);
+    return new DOMRect(frame.left + rect.left, frame.top + rect.top, rect.width, rect.height);
+  }
+
+  // Sök
+
+  /** Kapitlens namn ur innehållsförteckningen, för träfflistan. */
+  sectionLabels() {
+    if (this.labels) return this.labels;
+    const labels = [];
+    const book = this.view.book;
+    const walk = (items) => {
+      for (const item of items ?? []) {
+        let index = null;
+        try {
+          index = book.resolveHref?.(item.href)?.index ?? null;
+        } catch {
+          index = null;
+        }
+        if (Number.isInteger(index) && labels[index] === undefined) labels[index] = (item.label ?? '').trim();
+        walk(item.subitems);
+      }
+    };
+    walk(book.toc);
+    let last = '';
+    this.labels = book.sections.map((_, index) => {
+      if (labels[index]) last = labels[index];
+      return last;
+    });
+    return this.labels;
+  }
+
+  /** Söker kapitel för kapitel. onResult får varje träff, onProgress andelen av boken. */
+  async search(query, { onResult, onProgress, isCurrent }) {
+    const needle = foldQuery(query);
+    const sections = this.view?.book?.sections ?? [];
+    if (!needle) return 0;
+    const labels = this.sectionLabels();
+    let total = 0;
+    for (const [index, section] of sections.entries()) {
+      if (!isCurrent() || !this.view || total >= MAX_HITS) return total;
+      if (!section.createDocument || this.documentOfSection?.[index] === null) continue;
+      let doc;
+      try {
+        doc = await section.createDocument();
+      } catch {
+        continue;
+      }
+      if (!isCurrent() || !this.view) return total;
+      const info = chapterNodes(doc);
+      for (const [start, end] of findAll(info.text, needle, MAX_HITS - total)) {
+        const range = rangeFromOffsets(doc, start, end, info);
+        if (!range) continue;
+        total += 1;
+        onResult({ section: index, start, end, cfi: this.view.getCFI(index, range), excerpt: excerpt(info.text, start, end),
+          label: labels[index] || `Kapitel ${this.documentIndex(index) + 1}` });
+      }
+      onProgress?.((index + 1) / sections.length);
+      await breathe();
+    }
+    return total;
+  }
+
+  async showHit(hit) {
+    this.clearSearchHit();
+    const annotation = { value: hit.cfi, index: hit.section, kind: 'search' };
+    this.searchHit = { ...hit, index: hit.section, annotation };
+    await this.view.goTo(hit.cfi);
+    await this.view.addAnnotation(annotation);
+  }
+
+  clearSearchHit() {
+    if (!this.searchHit) return;
+    this.view?.deleteAnnotation(this.searchHit.annotation);
+    this.searchHit = null;
   }
 
   next() {
@@ -220,6 +448,28 @@ export class ReflowReader {
     return this.view?.goToFraction(Math.min(Math.max(fraction, 0), 0.9999));
   }
 
+  /** Antalet platser i boken (en plats är ungefär 1 500 tecken). */
+  get placeCount() {
+    return this.view?.lastLocation?.location?.total ?? 0;
+  }
+
+  /** Gå till sida i en EPUB: en plats (1 till antalet) eller hur långt in i boken ("50 %"). */
+  goToPageText(text) {
+    const value = String(text).trim().replace(',', '.');
+    let fraction = null;
+    if (value.endsWith('%')) {
+      const percent = parseFloat(value);
+      if (percent >= 0 && percent <= 100) fraction = percent / 100;
+    } else {
+      const number = parseInt(value, 10);
+      const total = this.placeCount;
+      if (String(number) === value && total && number >= 1 && number <= total) fraction = (number - 1) / total;
+    }
+    if (fraction === null) return false;
+    this.goToFraction(fraction);
+    return true;
+  }
+
   async toc() {
     const convert = (items) => (items ?? []).map((item) => ({ label: (item.label ?? '').trim(), target: item.href, subitems: convert(item.subitems) }));
     return convert(this.view?.book?.toc);
@@ -229,8 +479,20 @@ export class ReflowReader {
     return this.view?.goTo(href);
   }
 
+  /** Uppslag: Automatiskt (två spalter när fönstret är brett), En sida eller Två sidor. */
+  applyLayout() {
+    const renderer = this.view?.renderer;
+    if (!renderer) return;
+    const spread = this.settings.spread ?? 'auto';
+    renderer.setAttribute('max-column-count', spread === 'one' ? '1' : '2');
+    // Två sidor: smalare spalter, så att två ryms även i ett lägre eller smalare fönster.
+    renderer.setAttribute('max-inline-size', spread === 'two' ? '360px' : '620px');
+  }
+
   setSettings(settings) {
+    const layoutChanged = 'spread' in settings && settings.spread !== this.settings.spread;
     this.settings = { ...this.settings, ...settings };
+    if (layoutChanged) this.applyLayout();
     this.applyStyles();
     for (const { doc } of this.view?.renderer?.getContents() ?? []) this.applyFontSize(doc);
   }

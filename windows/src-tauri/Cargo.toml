@@ -11,6 +11,8 @@ tauri-build = { version = "=2.7.4", features = [] }
 [dependencies]
 tauri = { version = "=2.12.5", features = [] }
 tauri-plugin-opener = "=2.7.2"
+# En enda instans: Öppna med i Utforskaren öppnar boken i fönstret som redan är öppet.
+tauri-plugin-single-instance = "=2.5.5"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 # Synkens publika nyckel och förnyelsetoken i Windows Autentiseringshanteraren (Credential Manager).
 keyring = { version = "=3.6.3", features = ["windows-native"] }

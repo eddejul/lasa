@@ -79,7 +79,7 @@ def api(base, command, args):
 
 
 def setting(base, key):
-    rows = api(base, "user_query", {"db": "bibliotek", "sql": "SELECT value FROM settings WHERE key = ?", "params": [key]})
+    rows = api(base, "test_sql", {"db": "bibliotek", "sql": "SELECT value FROM settings WHERE key = ?", "params": [key]})
     return json.loads(rows[0][0]) if rows else None
 
 
@@ -162,7 +162,7 @@ def run(url, books, out, port):
             check(report == {"books": 2, "pushed": 2, "pulled": 3}, f'första synken: {report}')
             check(setting(url, "syncError") is None, f'inget fel: {setting(url, "syncError")}')
             page.screenshot(path=os.path.join(out, "s1-installningar.png"), full_page=True)
-            check('provlosenord' not in json.dumps(api(url, "user_query", {"db": "bibliotek", "sql": "SELECT * FROM settings", "params": []})),
+            check('provlosenord' not in json.dumps(api(url, "test_sql", {"db": "bibliotek", "sql": "SELECT * FROM settings", "params": []})),
                   'lösenordet finns inte i inställningarna')
             check(page.input_value('[data-testid="sync-password"]') == '', 'lösenordsfältet töms efter inloggningen')
             check(api(url, "secret_get", {"name": "sync-refresh-token"}) == "refresh-1", 'förnyelsetoken sparas som hemlighet')
@@ -183,12 +183,12 @@ def run(url, books, out, port):
                   and "kunskap" in word["sentence"], f'ordet kunskap på servern: {word}')
 
             # Fröet i appen
-            rows = api(url, "user_query", {"db": "bibliotek", "sql": "SELECT position, position_updated FROM books WHERE id = ?",
+            rows = api(url, "test_sql", {"db": "bibliotek", "sql": "SELECT position, position_updated FROM books WHERE id = ?",
                                            "params": [epub_id]})
             seed_ms = int(datetime.datetime(2026, 11, 7, 9, 0, 0, 123000, tzinfo=datetime.timezone.utc).timestamp() * 1000)
             check(json.loads(rows[0][0]) == {"section": 2, "progression": 0.5} and round(rows[0][1] * 1000) == seed_ms,
                   f'EPUB-positionen från fröet, med fröets tid i millisekunder: {rows}')
-            words = api(url, "user_query", {"db": "ord", "sql": "SELECT lemma, deleted, due, interval, ease, reps, lapses, "
+            words = api(url, "test_sql", {"db": "ord", "sql": "SELECT lemma, deleted, due, interval, ease, reps, lapses, "
                                             "review_updated, updated FROM saved_words ORDER BY lemma", "params": []})
             bro = next((row for row in words if row[0] == "bro"), None)
             check(bro is not None and bro[1] == 0 and bro[2:7] == [1794000000.5, 3.0, 2.5, 2, 1],

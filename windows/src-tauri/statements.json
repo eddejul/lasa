@@ -1,0 +1,248 @@
+{
+  "_om": [
+    "Alla databasfrågor som Windows-appen får ställa mot användarens egna databaser (W12). Gränssnittet",
+    "anropar dem med namn (db_read och db_write i src-tauri/src/main.rs), och kan aldrig skicka egen SQL.",
+    "Rust-delen läser filen när den byggs (include_str), och dev/server.py läser samma fil.",
+    "schema körs och columns läggs till när appen startar, så att en databas från en äldre version fungerar."
+  ],
+  "databases": {
+    "ord": {
+      "file": "anvandarord.sqlite",
+      "schema": [
+        "CREATE TABLE IF NOT EXISTS saved_words (",
+        "  id INTEGER PRIMARY KEY,",
+        "  word TEXT NOT NULL,",
+        "  lemma TEXT NOT NULL,",
+        "  language TEXT NOT NULL,",
+        "  sentence TEXT NOT NULL,",
+        "  book TEXT NOT NULL,",
+        "  page INTEGER NOT NULL,",
+        "  lookups INTEGER NOT NULL DEFAULT 1,",
+        "  created REAL NOT NULL,",
+        "  updated REAL NOT NULL,",
+        "  uuid TEXT NOT NULL DEFAULT '',",
+        "  book_id TEXT NOT NULL DEFAULT '',",
+        "  UNIQUE (lemma, language)",
+        ");",
+        "CREATE TABLE IF NOT EXISTS hidden_pairs (",
+        "  language TEXT NOT NULL,",
+        "  lemma TEXT NOT NULL,",
+        "  synonym TEXT NOT NULL,",
+        "  created REAL NOT NULL,",
+        "  PRIMARY KEY (language, lemma, synonym)",
+        ");"
+      ],
+      "columns": {
+        "saved_words": [
+          [
+            "deleted",
+            "INTEGER NOT NULL DEFAULT 0"
+          ],
+          [
+            "due",
+            "REAL"
+          ],
+          [
+            "interval",
+            "REAL"
+          ],
+          [
+            "ease",
+            "REAL"
+          ],
+          [
+            "reps",
+            "INTEGER"
+          ],
+          [
+            "lapses",
+            "INTEGER"
+          ],
+          [
+            "review_updated",
+            "REAL"
+          ],
+          [
+            "review_introduced",
+            "REAL"
+          ]
+        ]
+      }
+    },
+    "bibliotek": {
+      "file": "bibliotek.sqlite",
+      "schema": [
+        "CREATE TABLE IF NOT EXISTS books (",
+        "  id TEXT PRIMARY KEY,",
+        "  title TEXT NOT NULL,",
+        "  author TEXT NOT NULL DEFAULT '',",
+        "  format TEXT NOT NULL,",
+        "  ext TEXT NOT NULL,",
+        "  file_name TEXT NOT NULL,",
+        "  size INTEGER NOT NULL,",
+        "  added REAL NOT NULL,",
+        "  opened REAL NOT NULL DEFAULT 0,",
+        "  position TEXT NOT NULL DEFAULT '',",
+        "  progress REAL NOT NULL DEFAULT 0",
+        ");",
+        "CREATE TABLE IF NOT EXISTS settings (",
+        "  key TEXT PRIMARY KEY,",
+        "  value TEXT NOT NULL",
+        ");",
+        "CREATE TABLE IF NOT EXISTS highlights (",
+        "  id TEXT PRIMARY KEY,",
+        "  book TEXT NOT NULL,",
+        "  section INTEGER NOT NULL,",
+        "  start INTEGER NOT NULL,",
+        "  length INTEGER NOT NULL,",
+        "  text TEXT NOT NULL,",
+        "  color TEXT NOT NULL,",
+        "  note TEXT NOT NULL DEFAULT '',",
+        "  created REAL NOT NULL,",
+        "  updated REAL NOT NULL,",
+        "  deleted INTEGER NOT NULL DEFAULT 0",
+        ");",
+        "CREATE INDEX IF NOT EXISTS highlights_book ON highlights (book, section);",
+        "CREATE TABLE IF NOT EXISTS bookmarks (",
+        "  id TEXT PRIMARY KEY,",
+        "  book TEXT NOT NULL,",
+        "  section INTEGER NOT NULL,",
+        "  progression REAL NOT NULL,",
+        "  label TEXT NOT NULL,",
+        "  created REAL NOT NULL,",
+        "  updated REAL NOT NULL,",
+        "  deleted INTEGER NOT NULL DEFAULT 0",
+        ");",
+        "CREATE INDEX IF NOT EXISTS bookmarks_book ON bookmarks (book, section);"
+      ],
+      "columns": {
+        "books": [
+          [
+            "cover",
+            "TEXT NOT NULL DEFAULT ''"
+          ],
+          [
+            "position_updated",
+            "REAL"
+          ]
+        ]
+      }
+    }
+  },
+  "read": {
+    "settings_all": [
+      "bibliotek",
+      "SELECT key, value FROM settings"
+    ],
+    "books_list": [
+      "bibliotek",
+      "SELECT id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated FROM books ORDER BY CASE WHEN opened > 0 THEN opened ELSE added END DESC"
+    ],
+    "book_get": [
+      "bibliotek",
+      "SELECT id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated FROM books WHERE id = ?"
+    ],
+    "highlights_of_book": [
+      "bibliotek",
+      "SELECT id, book, section, start, length, text, color, note, created, updated FROM highlights WHERE book = ? AND deleted = 0 ORDER BY section, start"
+    ],
+    "bookmarks_of_book": [
+      "bibliotek",
+      "SELECT id, book, section, progression, label, created, updated FROM bookmarks WHERE book = ? AND deleted = 0 ORDER BY section, progression"
+    ],
+    "words_saved": [
+      "ord",
+      "SELECT id, word, lemma, language, sentence, book, page, lookups, updated, uuid, book_id FROM saved_words WHERE deleted = 0 ORDER BY updated DESC"
+    ],
+    "word_is_saved": [
+      "ord",
+      "SELECT 1 FROM saved_words WHERE lemma = ? AND language = ? AND deleted = 0"
+    ],
+    "words_for_sync": [
+      "ord",
+      "SELECT lemma, language, word, sentence, book, page, lookups, created, updated, deleted, due, interval, ease, reps, lapses, review_updated, uuid, book_id FROM saved_words"
+    ],
+    "words_for_review": [
+      "ord",
+      "SELECT id, word, lemma, language, sentence, book, page, updated, due, interval, ease, reps, lapses, review_introduced FROM saved_words WHERE deleted = 0 ORDER BY updated DESC"
+    ],
+    "hidden_pairs_all": [
+      "ord",
+      "SELECT language, lemma, synonym FROM hidden_pairs ORDER BY lemma, synonym"
+    ]
+  },
+  "write": {
+    "setting_delete": [
+      "bibliotek",
+      "DELETE FROM settings WHERE key = ?"
+    ],
+    "setting_set": [
+      "bibliotek",
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value"
+    ],
+    "book_add": [
+      "bibliotek",
+      "INSERT INTO books (id, title, author, format, ext, file_name, size, added, cover) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ],
+    "book_remove": [
+      "bibliotek",
+      "DELETE FROM books WHERE id = ?"
+    ],
+    "book_opened": [
+      "bibliotek",
+      "UPDATE books SET opened = ? WHERE id = ?"
+    ],
+    "book_position": [
+      "bibliotek",
+      "UPDATE books SET position = ?, progress = ?, position_updated = ? WHERE id = ?"
+    ],
+    "book_synced_position": [
+      "bibliotek",
+      "UPDATE books SET position = ?, position_updated = ? WHERE id = ?"
+    ],
+    "highlight_save": [
+      "bibliotek",
+      "INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)"
+    ],
+    "highlight_delete": [
+      "bibliotek",
+      "UPDATE highlights SET deleted = 1, updated = ? WHERE id = ?"
+    ],
+    "bookmark_add": [
+      "bibliotek",
+      "INSERT INTO bookmarks (id, book, section, progression, label, created, updated, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)"
+    ],
+    "bookmark_delete": [
+      "bibliotek",
+      "UPDATE bookmarks SET deleted = 1, updated = ? WHERE id = ?"
+    ],
+    "word_save": [
+      "ord",
+      "INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated, uuid, book_id) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT (lemma, language) DO UPDATE SET word = excluded.word, sentence = excluded.sentence, book = excluded.book, page = excluded.page, book_id = excluded.book_id, lookups = CASE WHEN deleted THEN 1 ELSE lookups + 1 END, created = CASE WHEN deleted THEN excluded.created ELSE created END, deleted = 0, updated = excluded.updated"
+    ],
+    "word_delete_by_id": [
+      "ord",
+      "UPDATE saved_words SET deleted = 1, updated = ?, due = NULL, interval = NULL, ease = NULL, reps = NULL, lapses = NULL, review_updated = NULL, review_introduced = NULL WHERE id = ?"
+    ],
+    "word_delete_by_lemma": [
+      "ord",
+      "UPDATE saved_words SET deleted = 1, updated = ?, due = NULL, interval = NULL, ease = NULL, reps = NULL, lapses = NULL, review_updated = NULL, review_introduced = NULL WHERE lemma = ? AND language = ?"
+    ],
+    "word_synced": [
+      "ord",
+      "INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated, uuid, book_id, deleted, due, interval, ease, reps, lapses, review_updated, review_introduced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lemma, language) DO UPDATE SET word = excluded.word, sentence = excluded.sentence, book = excluded.book, page = excluded.page, lookups = excluded.lookups, created = excluded.created, updated = excluded.updated, deleted = excluded.deleted, due = excluded.due, interval = excluded.interval, ease = excluded.ease, reps = excluded.reps, lapses = excluded.lapses, review_updated = excluded.review_updated, review_introduced = CASE WHEN excluded.due IS NULL THEN NULL ELSE COALESCE(review_introduced, excluded.review_introduced) END"
+    ],
+    "word_review": [
+      "ord",
+      "UPDATE saved_words SET due = ?, interval = ?, ease = ?, reps = ?, lapses = ?, review_updated = ?, review_introduced = COALESCE(review_introduced, ?) WHERE lemma = ? AND language = ? AND deleted = 0"
+    ],
+    "hidden_pair_add": [
+      "ord",
+      "INSERT OR IGNORE INTO hidden_pairs VALUES (?, ?, ?, ?)"
+    ],
+    "hidden_pair_remove": [
+      "ord",
+      "DELETE FROM hidden_pairs WHERE language = ? AND lemma = ? AND synonym = ?"
+    ]
+  }
+}

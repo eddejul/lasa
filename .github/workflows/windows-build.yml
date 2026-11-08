@@ -97,10 +97,10 @@ jobs:
         with:
           node-version: "24"
 
-      - name: lookup.js mot lookup.py över testlistan, och ordreglerna
+      - name: lookup.js mot lookup.py över testlistan, och enhetstesterna (ordreglerna, textfilerna, repetitionen)
         run: |
           node --no-warnings windows/tests/parity.mjs build/ordbok/lasa-ordbok.sqlite tools/dictionary/testwords.txt python3
-          node --test windows/tests/wordfind.test.mjs
+          node --test windows/tests/*.test.mjs
 
   build:
     name: Appen för Windows

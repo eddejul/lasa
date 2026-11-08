@@ -108,12 +108,43 @@ def make_script_epub(path):
         archive.writestr("OEBPS/kap1.xhtml", chapter, compress_type=zipfile.ZIP_DEFLATED)
 
 
+def make_locked_pdf(path):
+    """En PDF som kräver lösenord för att öppnas. Läsaren ska säga att den är låst."""
+    c = canvas.Canvas(path, pagesize=A4, encrypt="hemligt")
+    c.drawString(72, 780, "Den här sidan är låst med lösenord.")
+    c.showPage()
+    c.save()
+
+
+def make_html(path):
+    """En html-fil med rubrik, stycken och skript som inte får köras."""
+    html = """<!DOCTYPE html>
+<html lang="sv"><head><meta charset="utf-8"><title>Artikel i HTML</title>
+<script>parent.document.title = 'HACKAD'; parent.hacked = true;</script></head>
+<body><h1>Artikel i HTML</h1>
+<p onclick="parent.hacked = true">Det var en klar morgon i början av september när hon gick genom den gamla staden.</p>
+<p>Undersökningen visade att de flesta invånarna hade bott på orten i mer än tjugo år.</p>
+<p><a href="javascript:parent.hacked=true">En länk som inte gör något</a></p>
+<iframe srcdoc="<script>parent.parent.hacked = true</script>"></iframe>
+</body></html>
+"""
+    with open(path, "w", encoding="utf-8") as file:
+        file.write(html)
+
+
 def main():
     folder = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "out", "books")
     os.makedirs(folder, exist_ok=True)
+    # make_books.py gör också en test.pdf (för iPadens självtest). Den körs först, så att Windows-testets
+    # egen PDF (med titel, innehåll och sidetiketter) skriver över den.
+    subprocess.run([sys.executable, SIMTEST, folder], check=True)
     make_pdf(os.path.join(folder, "test.pdf"))
     make_script_epub(os.path.join(folder, "skript.epub"))
-    subprocess.run([sys.executable, SIMTEST, folder], check=True)
+    make_locked_pdf(os.path.join(folder, "last.pdf"))
+    make_html(os.path.join(folder, "artikel.html"))
+    # En fil som heter .pdf men inte är någon PDF.
+    with open(os.path.join(folder, "trasig.pdf"), "wb") as file:
+        file.write(b"Det har ar ingen PDF, bara text med fel filandelse.\n" * 20)
     for name in sorted(os.listdir(folder)):
         print(name, os.path.getsize(os.path.join(folder, name)))
 

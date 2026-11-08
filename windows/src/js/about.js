@@ -11,7 +11,7 @@ const SOURCES = [
   { name: 'Folkets synonymlexikon (Synlex)',
     use: 'Svenska synonympar med betyg. Bara par med betyg 3 eller högre på den femgradiga skalan visas.',
     license: 'Copyright (c) Viggo Kann, KTH, 2009. Fri att använda och kopiera med upphovsnotisen kvar. '
-      + 'Läsa använder en bearbetad version: paren är kopplade till betydelser och ordklasser.',
+      + 'Sensus använder en bearbetad version: paren är kopplade till betydelser och ordklasser.',
     url: 'https://folkets-lexikon.csc.kth.se/synlex.html' },
   { name: 'Swesaurus, Språkbanken Text, Göteborgs universitet',
     use: 'Vilken betydelse en svensk synonym hör till.',
@@ -27,7 +27,7 @@ const SOURCES = [
     url: 'https://en-word.net' },
   { name: 'Folkets lexikon, KTH',
     use: 'Svensk översättning av engelska ord, definitioner på enkel svenska och oregelbundna engelska böjningar.',
-    license: 'CC BY-SA 2.5. Den bearbetade versionen i Läsa delas under samma licens.',
+    license: 'CC BY-SA 2.5. Den bearbetade versionen i Sensus delas under samma licens.',
     url: 'https://folkets-lexikon.csc.kth.se/folkets/' },
   { name: 'wordfreq, Robyn Speer',
     use: 'Hur vanliga orden är, så att vanliga synonymer visas först. Bygger bland annat på Wikipedia, '

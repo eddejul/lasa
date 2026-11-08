@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Läsa",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "identifier": "se.edvin.lasa",
   "build": {
     "frontendDist": "../src"
@@ -11,19 +11,20 @@
     "windows": [
       {
         "label": "main",
-        "title": "Läsa",
+        "title": "Sensus",
         "width": 1200,
         "height": 760,
         "minWidth": 640,
         "minHeight": 480,
         "center": true,
         "maximized": true,
+        "visible": false,
         "dragDropEnabled": false
       }
     ],
     "security": {
       "dangerousDisableAssetCspModification": ["style-src"],
-      "csp":"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob: data:; connect-src 'self' ipc: http://ipc.localhost blob: data: https://*.supabase.co; frame-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
+      "csp":"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob: data:; connect-src 'self' ipc: http://ipc.localhost blob: data: https://*.supabase.co https://generativelanguage.googleapis.com; frame-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {
@@ -32,7 +33,7 @@
     "publisher": "Edvin",
     "category": "Education",
     "shortDescription": "Läsapp för PDF, EPUB och textfiler med ordfunktion",
-    "longDescription": "Läsa visar kurslitteratur i PDF, EPUB och text. Dubbelklicka på ett ord för synonymer, betydelse och svensk översättning, utan internet.",
+    "longDescription": "Sensus visar kurslitteratur i PDF, EPUB och text. Dubbelklicka på ett ord för synonymer, betydelse och svensk översättning, utan internet.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,7 +46,8 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["Swedish"]
+        "languages": ["Swedish"],
+        "installerHooks": "nsis-hooks.nsh"
       },
       "wix": {
         "language": "sv-SE"

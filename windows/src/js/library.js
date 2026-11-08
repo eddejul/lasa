@@ -3,16 +3,22 @@
 // (gemener, 64 tecken), samma id som iPaden använder för synken i fas 6.
 
 import { deleteBookFile, storeBookFile } from './backend.js';
+import { bookErrorMessage, isUnreadable, unreadable } from './bookerrors.js';
 import { closePdf, openPdf } from './pdfjs.js';
 import { addBook, getBook, listBooks, removeBook } from './store.js';
-import { confirmDialog, el, replace, toast } from './ui.js';
+import { htmlTitle } from './textbook.js';
+import { confirmDialog, el, replace, statusBox, toast } from './ui.js';
 
-export const ACCEPTED = ['pdf', 'epub', 'txt', 'md'];
-export const ACCEPT_ATTRIBUTE = '.pdf,.epub,.txt,.md,.markdown';
+// Samma filtyper som på iPaden: PDF, EPUB och text (txt, md, rtf, html).
+export const ACCEPTED = ['pdf', 'epub', 'txt', 'md', 'rtf', 'html'];
+export const ACCEPT_ATTRIBUTE = '.pdf,.epub,.txt,.md,.markdown,.rtf,.html,.htm';
+const TEXT_FORMATS = ['txt', 'md', 'rtf', 'html'];
 
 export function extensionOf(name) {
   const ext = String(name).split('.').pop().toLowerCase();
-  return ext === 'markdown' ? 'md' : ext;
+  if (ext === 'markdown') return 'md';
+  if (ext === 'htm') return 'html';
+  return ext;
 }
 
 export async function sha256(bytes) {
@@ -73,7 +79,9 @@ async function blobCover(blob) {
   }
 }
 
-/** Titel, författare och omslag ur filen. Titeln blir filnamnet om filen inte har någon. */
+/** Titel, författare och omslag ur filen. Titeln blir filnamnet om filen inte har någon.
+ *  En PDF tas över av pdf.js (bytes går inte att använda efteråt), så att boken inte kopieras.
+ *  Kastar ett fel bara om filen aldrig kommer att gå att öppna (låst eller trasig, se bookerrors.js). */
 async function readMetadata(bytes, ext, fileName) {
   const result = { title: stripExtension(fileName), author: '', cover: '' };
   try {
@@ -89,45 +97,68 @@ async function readMetadata(bytes, ext, fileName) {
       }
     } else if (ext === 'epub') {
       const { makeBook } = await import('../vendor/foliate-js/view.js');
-      const book = await makeBook(new File([bytes], 'bok.epub', { type: 'application/epub+zip' }));
+      let book;
+      try {
+        book = await makeBook(new File([bytes], 'bok.epub', { type: 'application/epub+zip' }));
+      } catch (error) {
+        console.warn(error);
+        throw unreadable('filen är trasig eller ingen riktig EPUB, så den går inte att öppna.');
+      }
       result.title = textOf(book.metadata?.title).trim() || result.title;
       result.author = textOf(book.metadata?.author).trim();
       const cover = await Promise.resolve(book.getCover?.()).catch(() => null);
       if (cover) result.cover = await blobCover(cover).catch(() => '');
       book.destroy?.();
+    } else if (ext === 'html') {
+      result.title = htmlTitle(bytes) || result.title;
     }
   } catch (error) {
+    if (isUnreadable(error)) throw error;
     console.warn('Kunde inte läsa bokens uppgifter', error);
   }
   return result;
 }
 
-/** Lägger till filer i biblioteket. Ger antalet nya böcker. */
-export async function importFiles(files) {
+/** Lägger till filer i biblioteket. Ger antalet nya böcker. Medan filerna läses in visas hur långt det
+ *  har kommit ("Lägger till 3 av 7"). */
+export async function importFiles(files, { ids = null } = {}) {
   let added = 0;
-  for (const file of files) {
+  const list = [...files];
+  const status = list.length ? statusBox() : null;
+  for (const [index, file] of list.entries()) {
+    status?.set(list.length > 1 ? `Lägger till ${index + 1} av ${list.length}: ${file.name}` : `Lägger till ${file.name} ...`);
     const ext = extensionOf(file.name);
     if (!ACCEPTED.includes(ext)) {
-      toast(`${file.name} kan inte läsas. Läsa tar PDF, EPUB, txt och md.`);
+      toast(`${file.name} kan inte läsas. Sensus tar PDF, EPUB och text (txt, md, rtf, html).`);
       continue;
     }
+    let stored = null;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
+      const size = bytes.length;
       const id = await sha256(bytes);
       if (await getBook(id)) {
-        toast(`${file.name} finns redan i biblioteket.`);
+        if (ids) ids.push(id);
+        else toast(`${file.name} finns redan i biblioteket.`);
         continue;
       }
-      const meta = await readMetadata(bytes, ext, file.name);
+      // Filen sparas först, eftersom pdf.js tar över byten när titel och omslag läses.
       await storeBookFile(id, ext, bytes);
-      await addBook({ id, title: meta.title, author: meta.author, format: ext === 'md' || ext === 'txt' ? 'text' : ext,
-        ext, fileName: file.name, size: bytes.length, cover: meta.cover });
+      stored = { id, ext };
+      const meta = await readMetadata(bytes, ext, file.name);
+      await addBook({ id, title: meta.title, author: meta.author, format: TEXT_FORMATS.includes(ext) ? 'text' : ext,
+        ext, fileName: file.name, size, cover: meta.cover });
+      stored = null;
       added += 1;
+      ids?.push(id);
     } catch (error) {
       console.error(error);
-      toast(`${file.name} kunde inte läggas till (${error?.message ?? error}).`);
+      toast(isUnreadable(error) ? bookErrorMessage(error, file.name)
+        : `${file.name} kunde inte läggas till (${error?.message ?? error}).`);
+      if (stored) await deleteBookFile(stored.id, stored.ext).catch(() => {});
     }
   }
+  status?.close();
   if (added) toast(added === 1 ? 'En bok lades till.' : `${added} böcker lades till.`);
   return added;
 }
@@ -146,7 +177,7 @@ export async function renderLibrary(container, { onOpen }) {
   if (!books.length) {
     replace(container, el('div', { class: 'empty' },
       el('p', {}, 'Inga böcker än.'),
-      el('p', {}, 'Klicka på Lägg till böcker, eller dra in PDF-, EPUB- eller textfiler (txt, md) i fönstret.')));
+      el('p', {}, 'Klicka på Lägg till böcker (Ctrl och O), eller dra in PDF-, EPUB- eller textfiler (txt, md, rtf, html) i fönstret.')));
     return;
   }
   const cards = books.map((book) => el('div', { class: 'book-card', dataset: { testid: 'book', id: book.id } },
@@ -163,7 +194,7 @@ export async function renderLibrary(container, { onOpen }) {
         el('span', {}, progressText(book))),
       el('button', { class: 'link-button danger', onclick: async () => {
         const ok = await confirmDialog({ title: `Ta bort ${book.title}?`,
-          message: 'Boken och läspositionen tas bort ur Läsa. Originalfilen där du hämtade den finns kvar, och sparade ord ligger kvar.',
+          message: 'Boken och läspositionen tas bort ur Sensus. Originalfilen där du hämtade den finns kvar, och sparade ord ligger kvar.',
           confirm: 'Ta bort', danger: true });
         if (!ok) return;
         await deleteBookFile(book.id, book.ext);

@@ -10,7 +10,7 @@
 // förnyelsetoken ligger i Windows Autentiseringshanteraren (secret_get och secret_set i Rust). Lösenordet
 // sparas aldrig, och åtkomsttoken finns bara i minnet.
 
-import { secretGet, secretSet } from './backend.js';
+import { inTauri, secretGet, secretSet } from './backend.js';
 import {
   applySyncedPosition, applySyncedWord, listBooks, setSetting, settings, wordsForSync,
 } from './store.js';
@@ -61,6 +61,26 @@ function failure(status, message) {
 }
 
 let access = { token: null, expires: 0 };
+
+/** Fel på svenska om adressen inte är ett Supabase-projekt, annars null. Appen får bara kontakta
+ *  https://*.supabase.co (Content-Security-Policy i tauri.conf.json), så en annan adress skulle bara ge
+ *  "Ingen kontakt". Provservern (dev/server.py) släpper också fram låtsasservern på 127.0.0.1. */
+export function syncUrlProblem(text) {
+  const value = String(text ?? '').trim();
+  if (!value) return 'Fyll i projektets adress, till exempel https://abcdefgh.supabase.co.';
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'Adressen går inte att läsa. Den ska se ut som https://abcdefgh.supabase.co.';
+  }
+  if (!inTauri && url.protocol === 'http:' && url.hostname === '127.0.0.1') return null;
+  if (url.protocol !== 'https:' || !url.hostname.endsWith('.supabase.co') || url.hostname === '.supabase.co') {
+    return 'Adressen ska vara projektets adress hos Supabase, till exempel https://abcdefgh.supabase.co '
+      + '(Settings, API Keys i Supabase). Synken kan bara kontakta supabase.co.';
+  }
+  return null;
+}
 
 function baseUrl() {
   const text = String(settings.syncUrl ?? '').trim().replace(/\/+$/, '');
@@ -131,7 +151,9 @@ export async function isSignedIn() {
 
 /** Loggar in med e-post och lösenord. Adressen och nyckeln sparas först. Lösenordet sparas aldrig. */
 export async function signIn({ url, key, email, password }) {
-  await setSetting('syncUrl', String(url ?? '').trim());
+  const problem = syncUrlProblem(url);
+  if (problem) throw new SyncFailure(problem);
+  await setSetting('syncUrl', String(url ?? '').trim().replace(/\/+$/, ''));
   await secretSet(KEY_SECRET, String(key ?? '').trim());
   await setSetting('syncEmail', String(email ?? '').trim());
   const json = await authRequest('password', { email: String(email ?? '').trim(), password });
