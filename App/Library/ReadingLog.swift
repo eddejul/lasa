@@ -371,7 +371,9 @@ final class ReadingWeekCell: UICollectionViewCell {
         contentView.backgroundColor = palette.surface
         title.textColor = palette.ink
         summary.textColor = palette.ink
-        summary.text = week.summary
+        // Två rader med radbrytning i texten, så att raden inte kortas i en smal ruta (iPhone).
+        summary.text = week.summary.replacingOccurrences(of: ", läst", with: ",
+läst")
         goal.textColor = palette.inkSoft
         let today = week.days[safe: week.todayIndex]?.seconds ?? 0
         if goalMinutes > 0 {
