@@ -149,7 +149,7 @@ final class ReflowReaderViewController: UIViewController {
         self.lastReadDate = LibraryStore.shared.positionDate(for: book)
         self.location = LibraryStore.shared.savedLocation(for: book) ?? ReflowLocation(chapter: 0, progression: 0)
         super.init(nibName: nil, bundle: nil)
-        title = book.title
+        title = book.displayTitle
         navigationItem.largeTitleDisplayMode = .never
     }
 
@@ -189,6 +189,8 @@ final class ReflowReaderViewController: UIViewController {
         setUpBottomBar()
         setUpBackStack()
         setUpTaps()
+        // B5: stegen i exempelboken, en rad längst ner som inte tar tryck.
+        OnboardingTips.shared.attach(to: view, book: book)
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.hidesWhenStopped = true
@@ -274,7 +276,7 @@ final class ReflowReaderViewController: UIViewController {
             if location.chapter < 0 || location.chapter >= content.chapters.count {
                 location = ReflowLocation(chapter: 0, progression: 0)
             }
-            title = content.title
+            title = book.customTitle ?? content.title
             let renderer = ReflowRenderer(book: content, host: webHost, theme: theme)
             renderer.onChapterMeasured = { [weak self] chapter in
                 self?.chapterMeasured(chapter)
@@ -739,6 +741,23 @@ final class ReflowReaderViewController: UIViewController {
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(content.fraction(at: currentLocation()))
         }
+        reportReadingStatus(content: content, renderer: renderer)
+    }
+
+    /// Var man är, till biblioteket (B1, B2): andel läst, kapitlet, och sidan och sidantalet när hela boken
+    /// är mätt, annars sidor kvar i kapitlet.
+    private func reportReadingStatus(content: ReflowableBook, renderer: ReflowRenderer) {
+        var status = ReadingStatus(progress: content.fraction(at: currentLocation()),
+                                   chapter: content.title(ofChapter: currentChapter) ?? "")
+        let slot = visiblePages.compactMap { $0.page }.max() ?? currentSlot
+        if let count = currentCount, count > 0 {
+            status.chapterLeft = max(count - slot - 1, 0)
+        }
+        if let all = renderer.allPageCounts() {
+            status.page = all.prefix(currentChapter).reduce(0, +) + slot + 1
+            status.pages = all.reduce(0, +)
+        }
+        LibraryStore.shared.saveStatus(status, for: book)
     }
 
     /// "s. 52 av 300" när hela boken är mätt, annars sidan i kapitlet: "s. 3 av 12 i kapitlet".
@@ -1073,6 +1092,7 @@ final class ReflowReaderViewController: UIViewController {
             showMessage(title: "Ordboken saknas", message: "Den här versionen av appen byggdes utan ordboken.")
             return
         }
+        OnboardingTips.shared.record(.word, book: book)
         let (sentence, range) = ReflowValues.sentence(before: found.before, word: found.word, after: found.after)
         var candidates = [found.word]
         if found.word.contains("-") {
@@ -1344,6 +1364,7 @@ extension ReflowReaderViewController: UIPageViewControllerDataSource, UIPageView
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
         pagesChanged()
+        OnboardingTips.shared.record(.turn, book: book)
     }
 }
 
@@ -1429,7 +1450,8 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
 extension ReflowReaderViewController {
 
     private func startSelfTestIfNeeded() {
-        guard SelfTest.isActive, !selfTestStarted else { return }
+        // Bara boken som självtestet startades med. Exempelboken som fas 6 öppnar (B5) kör inget läsartest.
+        guard SelfTest.isActive, SelfTest.bookName == book.url.lastPathComponent, !selfTestStarted else { return }
         selfTestStarted = true
         Task { @MainActor [weak self] in
             await self?.runSelfTest()
@@ -2028,6 +2050,7 @@ extension ReflowReaderViewController {
 
     fileprivate func createHighlight(chapter: Int, range: ReflowTextRange) {
         guard !range.text.isEmpty else { return }
+        OnboardingTips.shared.record(.highlight, book: book)
         let highlight = AnnotationStore.shared.addHighlight(book: bookKey, section: chapter, start: range.start,
                                                             length: range.length, text: range.text,
                                                             color: ReaderSettings.highlightColor)
@@ -2254,6 +2277,11 @@ extension ReflowReaderViewController {
             Haptics.shared.wordTapped()
         } else {
             existing.forEach { AnnotationStore.shared.delete($0) }
+            // Granskning 2, N7: ett tryck på bandet ska aldrig ta bort ett bokmärke utan väg tillbaka.
+            UndoBar.show(existing.count == 1 ? "Bokmärket borttaget" : "Bokmärkena borttagna", in: view) { [weak self] in
+                existing.forEach { AnnotationStore.shared.undelete($0) }
+                self?.bookmarksChanged()
+            }
         }
         bookmarksChanged()
     }
@@ -2442,6 +2470,18 @@ extension ReflowReaderViewController {
         await pause(0.3)
         SelfTest.log("Bokmärke: \(bookmarkItem?.accessibilityValue ?? "inget"), \(bookmarks.count) i boken")
         selfTestChromeLayout()
+        // Granskning 2, N7: bokmärket tas bort med raden Ångra, och Ångra tar tillbaka det.
+        let bookmarksBefore = bookmarks.count
+        toggleBookmark()
+        await pause(0.3)
+        let bookmarksRemoved = bookmarks.count
+        let undoShown = UndoBar.current != nil
+        UndoBar.current?.performUndo()
+        await pause(0.3)
+        SelfTest.log("Bokmärket bort med bandet (N7): \(bookmarksBefore) före, \(bookmarksRemoved) efter, raden Ångra "
+                     + "\(undoShown ? "visas" : "saknas"), \(bookmarks.count) efter Ångra. "
+                     + (bookmarksBefore > 0 && bookmarksRemoved == bookmarksBefore - 1 && undoShown
+                        && bookmarks.count == bookmarksBefore ? "Rätt" : "FEL"))
         setMarkMode(true)
         await pause(0.5)
         SelfTest.saveScreen(view, name: "03d-markeringslage")

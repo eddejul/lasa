@@ -16,6 +16,66 @@ struct BookRecord: Equatable {
     var added: Double
     /// Filen finns inte längre. Raden finns kvar, så att markeringarna kommer tillbaka om filen läggs in igen.
     var missing: Bool
+
+    // B1 och B2 (steg 4 i trappan). Skrivs bara av sina egna funktioner i `BookRegistry`, aldrig av `save`,
+    // så att en rad som sparas om (namnbyte, ny kontrollsumma) behåller dem.
+
+    /// Bokens egen titel ur filen (EPUB:ens dc:title, PDF:ens Title, Markdownens första rubrik). Tom om ingen finns.
+    var bookTitle: String = ""
+    /// Bokens egen författare ur filen. Tom om ingen finns.
+    var author: String = ""
+    /// Titel och författare som läsaren skrivit själv (Byt namn). Tomma: bokens egna.
+    var customTitle: String = ""
+    var customAuthor: String = ""
+    /// Omslagets filnamn i Library/Caches/Omslag. Tomt, eller filen borta: omslaget ritas om.
+    var cover: String = ""
+    /// Sidan (från 0) som läsaren valt som omslag i en PDF, -1 för den första sidan. Det enda om omslaget
+    /// som inte kan ritas om, därför sparas sidan och inte bilden.
+    var coverPage: Int = -1
+    /// Filens storlek och ändringstid när titel och författare lästes, så att de läses om när filen byts.
+    var metaKey: String = ""
+    /// Hur långt man läst, 0 till 1.
+    var progress: Double = 0
+    /// Markera som läst.
+    var finished: Bool = false
+    /// Var man är (B2): kapitlets namn, sidan (från 1), bokens sidantal (0 när det inte är känt) och sidor
+    /// kvar i kapitlet (-1 när det inte är känt).
+    var chapter: String = ""
+    var page: Int = 0
+    var pages: Int = 0
+    var chapterLeft: Int = -1
+}
+
+extension BookRecord {
+
+    /// Titeln som biblioteket visar: läsarens egen, annars bokens, annars filnamnet utan understreck.
+    var displayTitle: String {
+        if !customTitle.isEmpty { return customTitle }
+        if !bookTitle.isEmpty { return bookTitle }
+        return Self.cleanedTitle(title)
+    }
+
+    var displayAuthor: String {
+        customAuthor.isEmpty ? author : customAuthor
+    }
+
+    /// Filnamnet som titel: understreck blir mellanslag och blanktecken slås ihop. Bindestreck står kvar,
+    /// de hör ofta till namnet.
+    static func cleanedTitle(_ name: String) -> String {
+        let spaced = name.replacingOccurrences(of: "_", with: " ")
+        let words = spaced.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        return words.isEmpty ? name : words.joined(separator: " ")
+    }
+
+    /// Nyckeln för titel och författare: läses om när filen byter storlek eller ändringstid.
+    var currentMetaKey: String {
+        "\(size)-\(modified)"
+    }
+
+    /// Utläst: markerad som läst, eller läst till slutet.
+    var isFinished: Bool {
+        finished || progress >= 0.995
+    }
 }
 
 /// En fil i Böcker, som den ser ut på disken just nu.
@@ -69,10 +129,14 @@ enum BookMatcher {
                 return .known(id: record.id)
             }
             if record.sha256.isEmpty {
+                // En platshållare (storlek 0) för en bok som togs bort i gamla appen har ingen kontrollsumma att
+                // jämföra med. En fil med samma namn kan vara en annan bok, så frågan ställs (granskning 2, N2).
+                if record.size == 0 {
+                    return .newVersion(id: record.id)
+                }
                 // En bok från före G3 som inte hunnit räknas. Samma storlek: samma bok (filen har sparats om).
-                // En rad för en bok som inte fanns i Böcker vid flytten (storlek 0) är också samma bok.
                 // Annan storlek: filen har ersatts, och frågan om en ny version ställs (granskningens fynd 8).
-                if record.size == file.size || record.size == 0 {
+                if record.size == file.size {
                     return .known(id: record.id)
                 }
                 return .newVersion(id: record.id)
@@ -147,10 +211,29 @@ final class BookRegistry {
         }
         var result: [BookRecord] = []
         store.readBooks { db in
-            try db.query("SELECT id, sha256, file, title, size, modified, added, missing FROM books") { row in
-                result.append(BookRecord(id: row.string(0), sha256: row.string(1), file: row.string(2),
-                                         title: row.string(3), size: row.int(4), modified: row.int(5),
-                                         added: row.double(6), missing: row.int(7) != 0))
+            try db.query("""
+                SELECT id, sha256, file, title, size, modified, added, missing, book_title, author, custom_title,
+                       custom_author, cover, cover_page, meta_key, progress, finished, chapter, page, pages,
+                       chapter_left
+                FROM books
+                """) { row in
+                var record = BookRecord(id: row.string(0), sha256: row.string(1), file: row.string(2),
+                                        title: row.string(3), size: row.int(4), modified: row.int(5),
+                                        added: row.double(6), missing: row.int(7) != 0)
+                record.bookTitle = row.string(8)
+                record.author = row.string(9)
+                record.customTitle = row.string(10)
+                record.customAuthor = row.string(11)
+                record.cover = row.string(12)
+                record.coverPage = row.int(13)
+                record.metaKey = row.string(14)
+                record.progress = row.double(15)
+                record.finished = row.int(16) != 0
+                record.chapter = row.string(17)
+                record.page = row.int(18)
+                record.pages = row.int(19)
+                record.chapterLeft = row.int(20)
+                result.append(record)
             }
         }
         cache = result
@@ -187,12 +270,105 @@ final class BookRegistry {
         return ok
     }
 
+    /// Lägger till en rad eller skriver över radens grundfält. Ingen `INSERT OR REPLACE`: den tar bort raden
+    /// först, och då skulle titel, författare, omslag och andel läst (B1) bli tomma varje gång raden sparas.
     static func insert(_ record: BookRecord, into db: SQLiteDatabase) throws {
         try db.execute("""
-            INSERT OR REPLACE INTO books (id, sha256, file, title, size, modified, added, missing)
+            INSERT INTO books (id, sha256, file, title, size, modified, added, missing)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET sha256 = excluded.sha256, file = excluded.file, title = excluded.title,
+                size = excluded.size, modified = excluded.modified, added = excluded.added, missing = excluded.missing
             """, [record.id, record.sha256, record.file, record.title, record.size, record.modified,
                   record.added, record.missing ? 1 : 0])
+    }
+
+    // MARK: Titel, omslag och andel läst (B1, B2)
+
+    /// Ändrar några fält i en rad utan att röra resten. `apply` gör samma ändring i det som redan lästs in,
+    /// så att inget behöver läsas om (läsarna sparar var man är vid varje bläddring).
+    @discardableResult
+    private func update(_ id: String, what: String, sql: String, _ arguments: [Any?],
+                        apply: (inout BookRecord) -> Void) -> Bool {
+        let ok = store.writeBooks(what) { db in
+            try db.execute(sql, arguments + [id as Any?])
+        }
+        if ok, var list = cache, let index = list.firstIndex(where: { $0.id == id }) {
+            apply(&list[index])
+            cache = list
+        } else {
+            cache = nil
+        }
+        return ok
+    }
+
+    /// Titel och författare ur filen, och nyckeln för filen de lästes ur.
+    func setMetadata(id: String, title: String, author: String, key: String) {
+        update(id, what: "bokens titel", sql: "UPDATE books SET book_title = ?, author = ?, meta_key = ? WHERE id = ?",
+               [title, author, key]) {
+            $0.bookTitle = title
+            $0.author = author
+            $0.metaKey = key
+        }
+    }
+
+    /// Omslagets filnamn i cachen (tomt: rita om).
+    func setCover(id: String, file: String) {
+        guard record(id: id)?.cover != file else { return }
+        update(id, what: "omslaget", sql: "UPDATE books SET cover = ? WHERE id = ?", [file]) {
+            $0.cover = file
+        }
+    }
+
+    /// Välj omslag: sidan i en PDF (-1 för den första). Omslaget ritas om.
+    func setCoverPage(id: String, page: Int) {
+        update(id, what: "omslaget", sql: "UPDATE books SET cover_page = ?, cover = '' WHERE id = ?", [page]) {
+            $0.coverPage = page
+            $0.cover = ""
+        }
+    }
+
+    /// Byt namn: läsarens egen titel och författare. Tomma: bokens egna igen.
+    func rename(id: String, title: String, author: String) {
+        update(id, what: "bokens namn", sql: "UPDATE books SET custom_title = ?, custom_author = ? WHERE id = ?",
+               [title, author]) {
+            $0.customTitle = title
+            $0.customAuthor = author
+        }
+    }
+
+    /// Markera som läst, eller ta bort markeringen.
+    func setFinished(id: String, _ finished: Bool) {
+        update(id, what: "Markera som läst", sql: "UPDATE books SET finished = ? WHERE id = ?", [finished ? 1 : 0]) {
+            $0.finished = finished
+        }
+    }
+
+    /// Var man är och hur långt man läst (B1, B2). Sparas bara när något ändrats.
+    func setStatus(id: String, _ status: ReadingStatus) {
+        guard let record = record(id: id) else { return }
+        let progress = min(max(status.progress, 0), 1)
+        if abs(record.progress - progress) < 0.0005, record.chapter == status.chapter, record.page == status.page,
+           record.pages == status.pages, record.chapterLeft == status.chapterLeft {
+            return
+        }
+        update(id, what: "läsläget",
+               sql: "UPDATE books SET progress = ?, chapter = ?, page = ?, pages = ?, chapter_left = ? WHERE id = ?",
+               [progress, status.chapter, status.page, status.pages, status.chapterLeft]) {
+            $0.progress = progress
+            $0.chapter = status.chapter
+            $0.page = status.page
+            $0.pages = status.pages
+            $0.chapterLeft = status.chapterLeft
+        }
+    }
+
+    /// Andelen läst för en bok som inte öppnats sedan B1, räknad ur den sparade läspositionen (B1).
+    func setInitialProgress(id: String, progress: Double, pages: Int) {
+        update(id, what: "läsläget", sql: "UPDATE books SET progress = ?, pages = ? WHERE id = ?",
+               [min(max(progress, 0), 1), pages]) {
+            $0.progress = min(max(progress, 0), 1)
+            $0.pages = pages
+        }
     }
 
     /// En ny bok med ett nytt id.
@@ -278,6 +454,10 @@ final class BookRegistry {
         var message: String {
             let old = record.file
             let new = file.path
+            if old == new, record.missing {
+                return "Det finns markeringar, anteckningar och en läsposition från en bok som hette \(old) och togs "
+                    + "bort. Är den nya filen samma bok? Då följer de med till den."
+            }
             if old == new {
                 return "Filen \(new) har ändrats. Ska markeringar, anteckningar och läsposition följa med till den "
                     + "nya versionen?"
@@ -384,8 +564,9 @@ final class BookRegistry {
             return id
         case .newVersion(let id):
             // Samma plats: filen har ersatts, och frågan ställdes vid importen. Den tar över bokens id,
-            // och markeringarnas rutor (G6) räknas om från den nya filen.
-            if var record = records.first(where: { $0.id == id }), record.file == file.path {
+            // och markeringarnas rutor (G6) räknas om från den nya filen. En bok vars fil saknas (en platshållare
+            // eller en borttagen bok) tas aldrig över utan frågan Ny version (`importQuestion`, granskning 2, N2).
+            if var record = records.first(where: { $0.id == id }), record.file == file.path, !record.missing {
                 store.clearRects(book: id)
                 record.sha256 = hash
                 record.size = file.size
@@ -403,6 +584,19 @@ final class BookRegistry {
             save([record])
             return record.id
         }
+    }
+
+    /// En fil som läggs in (G10) och som matchern säger kan vara en ny version av en bok vars fil saknas:
+    /// samma plats (en platshållare eller en borttagen bok) eller ett liknande namn. Då ställs frågan Ny version
+    /// i stället för att filen tyst tar över bokens markeringar (granskning 2, N2).
+    func importQuestion(for file: BookFile, hash: String) -> VersionQuestion? {
+        let present = Set(LibraryStore.shared.listFiles().files.map(\.path))
+        let records = self.records()
+        guard case .newVersion(let id) = BookMatcher.match(file, hash: hash, records: records, present: present),
+              let record = records.first(where: { $0.id == id }), record.missing || record.file != file.path else {
+            return nil
+        }
+        return VersionQuestion(file: file, hash: hash, record: record)
     }
 
     /// Lägger in en fil som en ny bok, även om en annan bok haft samma plats (Ersätt och börja om).
@@ -495,19 +689,29 @@ enum LegacyBookMigration {
         return done
     }
 
-    /// Filnamnen i gamla nycklar (`position.Bok.pdf` och så vidare). Längsta prefixet först, eftersom
-    /// `positionDate.` också börjar med `position.`.
-    static func legacyKeyNames(_ defaults: UserDefaults) -> Set<String> {
+    /// Filnamnen i gamla nycklar (`position.Bok.pdf` och så vidare) med de gamla prefix som finns för varje.
+    /// Längsta prefixet först, eftersom `positionDate.` också börjar med `position.`.
+    static func legacyKeys(_ defaults: UserDefaults) -> [String: Set<String>] {
         let prefixes = keyPairs.map { $0.old }.sorted { $0.count > $1.count }
-        var names = Set<String>()
+        var names: [String: Set<String>] = [:]
         for key in defaults.dictionaryRepresentation().keys {
             guard let prefix = prefixes.first(where: { key.hasPrefix($0) }) else { continue }
             let name = String(key.dropFirst(prefix.count))
             if !(name as NSString).pathExtension.isEmpty {
-                names.insert(name)
+                names[name, default: []].insert(prefix)
             }
         }
         return names
+    }
+
+    static func legacyKeyNames(_ defaults: UserDefaults) -> Set<String> {
+        Set(legacyKeys(defaults).keys)
+    }
+
+    /// Filnamn med en riktig läsposition (`position.` eller `location.`). En ensam `positionDate.`, som gamla
+    /// appens Ta bort lämnade kvar, är ingen läsposition och räknas inte som något att flytta (granskning 2, N4).
+    static func positionKeyNames(_ defaults: UserDefaults) -> Set<String> {
+        Set(legacyKeys(defaults).filter { $0.value.contains("position.") || $0.value.contains("location.") }.keys)
     }
 
     /// `book` i markeringar och bokmärken som inte är id:t för någon bok i registret (eller i `records`):
@@ -528,28 +732,31 @@ enum LegacyBookMigration {
         return names
     }
 
-    /// Boken som ett gammalt filnamn hör till: en bok som finns med samma plats, annars den enda bok som finns
-    /// med samma filnamn i en undermapp (en bok som flyttats till en mapp före första starten), annars den
-    /// senast tillagda saknade boken med samma plats.
-    static func target(forLegacyName name: String, records: [BookRecord]) -> BookRecord? {
+    /// Boken som ett gammalt filnamn hör till: en bok som finns med samma plats, annars den senast tillagda
+    /// saknade boken med samma plats. Vid första flytten (`firstMigration`) också den enda bok som finns med
+    /// samma filnamn i en undermapp (en bok som flyttats till en mapp före första starten). Senare kan det lika
+    /// gärna vara en annan bok med samma namn, så regeln gäller bara då (granskning 2, N3).
+    static func target(forLegacyName name: String, records: [BookRecord], firstMigration: Bool = true) -> BookRecord? {
         let present = records.filter { !$0.missing }
         if let exact = present.first(where: { $0.file == name }) {
             return exact
         }
-        let sameName = present.filter { ($0.file as NSString).lastPathComponent == name }
-        if sameName.count == 1 {
-            return sameName[0]
+        if firstMigration {
+            let sameName = present.filter { ($0.file as NSString).lastPathComponent == name }
+            if sameName.count == 1 {
+                return sameName[0]
+            }
         }
         return records.filter { $0.missing && $0.file == name }.max { $0.added < $1.added }
     }
 
-    /// Sant om något finns att flytta: markeringar eller bokmärken under ett filnamn, eller gamla nycklar
-    /// för en bok som finns i registret.
+    /// Sant om något finns att flytta: markeringar eller bokmärken under ett filnamn, eller en gammal
+    /// läsposition (`position.` eller `location.`). En ensam `positionDate.` räknas inte (N4).
     static func hasWork(db: SQLiteDatabase, records: [BookRecord], defaults: UserDefaults) -> Bool {
         if let orphans = try? orphanBooks(db, records: records), !orphans.isEmpty {
             return true
         }
-        return legacyKeyNames(defaults).contains { target(forLegacyName: $0, records: records) != nil }
+        return !positionKeyNames(defaults).isEmpty
     }
 
     /// Flyttar allt som hör till ett gammalt filnamn till bokens id. Markeringar och bokmärken för ett filnamn
@@ -563,13 +770,17 @@ enum LegacyBookMigration {
                     now: Date = Date()) throws -> Result {
         var result = Result()
         var records = records
+        let firstMigration = try !isDone(db)
         let rowNames = try orphanBooks(db, records: records)
+        let positionNames = positionKeyNames(defaults)
         var mapping: [String: BookRecord] = [:]
         var placeholders: [BookRecord] = []
-        for name in rowNames.union(legacyKeyNames(defaults)).sorted() {
-            if let record = target(forLegacyName: name, records: records) {
+        for name in rowNames.union(positionNames).sorted() {
+            if let record = target(forLegacyName: name, records: records, firstMigration: firstMigration) {
                 mapping[name] = record
-            } else if rowNames.contains(name) {
+            } else {
+                // Markeringar eller en läsposition för en bok som inte finns: en platshållare, så att de kommer
+                // tillbaka (med frågan Ny version, N2) om filen läggs in igen.
                 let title = ((name as NSString).lastPathComponent as NSString).deletingPathExtension
                 let placeholder = BookRecord(id: UUID().uuidString.lowercased(), sha256: "", file: name, title: title,
                                              size: 0, modified: 0, added: now.timeIntervalSince1970, missing: true)
@@ -612,7 +823,9 @@ enum LegacyBookMigration {
             try db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, '1')", [doneKey])
         }
         result.placeholders = placeholders.count
-        for name in mapping.keys {
+        // Alla gamla nycklar tas bort efteråt, också ensamma `positionDate.` utan läsposition (N4): de har
+        // inget mål och skulle annars ge en gammal tid till en annan bok med samma namn.
+        for name in Set(mapping.keys).union(legacyKeyNames(defaults)) {
             for pair in keyPairs {
                 defaults.removeObject(forKey: pair.old + name)
             }

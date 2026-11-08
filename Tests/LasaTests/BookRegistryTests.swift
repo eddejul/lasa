@@ -75,10 +75,13 @@ final class BookMatcherTests: XCTestCase {
 
     func testBookWithoutFileAtFirstStartComesBack() {
         // Granskningens fynd 5: raden från flytten (storlek 0, tom kontrollsumma, borta) och samma filnamn igen.
+        // Granskning 2, N2: det kan vara en annan bok med samma namn, så frågan Ny version ställs.
         let records = [record("a", file: "Bok.pdf", sha: "", size: 0, modified: 0, missing: true)]
         let file = BookFile(path: "Bok.pdf", size: 4000, modified: 9)
         XCTAssertEqual(BookMatcher.match(file, hash: nil, records: records, present: ["Bok.pdf"]), .needsHash)
-        XCTAssertEqual(BookMatcher.match(file, hash: "h1", records: records, present: ["Bok.pdf"]), .known(id: "a"))
+        XCTAssertEqual(BookMatcher.match(file, hash: "h1", records: records, present: ["Bok.pdf"]), .newVersion(id: "a"))
+        let question = BookRegistry.VersionQuestion(file: file, hash: "h1", record: records[0])
+        XCTAssertTrue(question.message.contains("togs bort"))
     }
 
     func testVersionQuestionShowsBothNames() {
@@ -236,6 +239,51 @@ final class LegacyBookMigrationTests: XCTestCase {
         XCTAssertFalse(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
     }
 
+    /// Granskning 2, N3: efter första flytten får en bok med samma filnamn i en undermapp inte gammal data.
+    /// Markeringen och läspositionen får en platshållare i stället, som ger frågan Ny version (N2).
+    func testSubfolderRuleOnlyAtFirstMigration() throws {
+        let db = try SQLiteDatabase(path: ":memory:", readOnly: false)
+        try db.migrate(AnnotationStore.migrations)
+        let records = [BookRecord(id: "p", sha256: "", file: "RETA30/Bok.pdf", title: "Bok", size: 1, modified: 1,
+                                  added: 0, missing: false)]
+        try BookRegistry.insert(records[0], into: db)
+        try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+        XCTAssertTrue(try LegacyBookMigration.isDone(db))
+        // Senare: en äldre version av appen sparar under Bok.pdf, som inte finns direkt i Böcker.
+        defaults.set(40, forKey: "position.Bok.pdf")
+        try db.execute("""
+            INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+            VALUES ('sen', 'Bok.pdf', 3, 0, 5, 't', 'yellow', '', 1, 2, 0)
+            """)
+        XCTAssertTrue(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
+        let result = try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+        XCTAssertEqual(result.placeholders, 1)
+        XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM highlights WHERE book = 'p'"), 0)
+        XCTAssertEqual(try count(db, """
+            SELECT COUNT(*) FROM highlights h JOIN books b ON b.id = h.book WHERE b.file = 'Bok.pdf' AND b.missing = 1
+            """), 1)
+        XCTAssertEqual(defaults.object(forKey: "bookPosition.p") as? Int, nil)
+        XCTAssertNil(defaults.object(forKey: "position.Bok.pdf"))
+    }
+
+    /// Granskning 2, N4: en ensam positionDate. (som gamla appens Ta bort lämnade kvar) är inget att flytta,
+    /// och den tas bort när flytten väl körs.
+    func testLonePositionDateIsNotWork() throws {
+        let db = try SQLiteDatabase(path: ":memory:", readOnly: false)
+        try db.migrate(AnnotationStore.migrations)
+        let records = [BookRecord(id: "p", sha256: "", file: "Bok.pdf", title: "Bok", size: 1, modified: 1, added: 0,
+                                  missing: false)]
+        defaults.set(1_700_000_000.0, forKey: "positionDate.Bok.pdf")
+        XCTAssertFalse(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
+        defaults.set(5, forKey: "position.Annan.pdf")
+        XCTAssertTrue(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
+        try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+        XCTAssertNil(defaults.object(forKey: "positionDate.Bok.pdf"))
+        XCTAssertEqual(defaults.double(forKey: "bookPositionDate.p"), 0, "ingen gammal tid till boken")
+        XCTAssertNil(defaults.object(forKey: "position.Annan.pdf"))
+        XCTAssertFalse(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
+    }
+
     func testNewerOldPositionWinsAfterDowngrade() throws {
         // Granskningens fynd 6: en äldre version av appen har sparat en nyare läsposition och en ny markering
         // under filnamnet efter att flytten redan gjorts. Flytten körs igen, och den nyaste platsen vinner.
@@ -274,29 +322,64 @@ final class LegacyBookMigrationTests: XCTestCase {
 /// Granskningens fynd 1 och 2: vilka säkerhetskopior som rensas.
 final class BackupPruneTests: XCTestCase {
 
-    private func copy(daysAgo: Double, hour: Double = 10, beforeUpdate: Bool = false, name: String? = nil) -> Backup.Copy {
-        let base = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000))
+    private let base = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000))
+
+    /// Klockan 23 i dag i proven.
+    private var now: Date {
+        base.addingTimeInterval(23 * 3600)
+    }
+
+    private func copy(daysAgo: Double, hour: Double = 10, beforeUpdate: Bool = false, name: String? = nil,
+                      kind: Backup.Kind = .automatic) -> Backup.Copy {
         let date = base.addingTimeInterval(-daysAgo * 86_400 + hour * 3600)
         let url = URL(fileURLWithPath: "/kopior/\(name ?? "\(daysAgo)-\(hour)")", isDirectory: true)
-        return Backup.Copy(url: url, date: date, isBeforeUpdate: beforeUpdate)
+        return Backup.Copy(url: url, date: date, isBeforeUpdate: beforeUpdate, kind: kind)
     }
 
     func testSevenDaysAreKeptAndTheNewestCopyPerDay() {
         var copies = (0..<9).map { copy(daysAgo: Double($0)) }
         copies.append(copy(daysAgo: 0, hour: 8))
+        copies.append(copy(daysAgo: 2, hour: 8))
         copies.append(copy(daysAgo: 30, beforeUpdate: true, name: "fore"))
-        let removed = Backup.copiesToRemove(copies, keep: 7, protecting: nil)
+        let removed = Backup.copiesToRemove(copies, keep: 7, protecting: nil, now: now)
         let removedNames = Set(removed.map { $0.url.lastPathComponent })
-        // Dag 7 och 8 rensas, och den äldre kopian i dag ersätts av den nyare. Kopian före flytten rörs aldrig.
-        XCTAssertEqual(removedNames, ["7.0-10.0", "8.0-10.0", "0.0-8.0"])
+        // Dag 7 och 8 rensas, och den äldre automatiska kopian dag 2. Båda kopiorna i dag står kvar (N1).
+        // Kopian före flytten rörs aldrig.
+        XCTAssertEqual(removedNames, ["7.0-10.0", "8.0-10.0", "2.0-8.0"])
     }
 
     func testRestoredCopyIsNeverRemoved() {
         // Sju dagar, plus kopian före återställningen i dag: den äldsta (som återställts) får vara kvar.
         var copies = (0..<7).map { copy(daysAgo: Double($0) + 1) }
-        copies.append(copy(daysAgo: 0))
+        copies.append(copy(daysAgo: 0, kind: .beforeRestore))
         let oldest = copies[6]
-        XCTAssertEqual(Backup.copiesToRemove(copies, keep: 7, protecting: nil).map(\.url), [oldest.url])
-        XCTAssertTrue(Backup.copiesToRemove(copies, keep: 7, protecting: oldest.url).isEmpty)
+        XCTAssertEqual(Backup.copiesToRemove(copies, keep: 7, protecting: nil, now: now).map(\.url), [oldest.url])
+        XCTAssertTrue(Backup.copiesToRemove(copies, keep: 7, protecting: oldest.url, now: now).isEmpty)
+    }
+
+    /// N1: dagens automatiska kopia från 08:00 får aldrig tas bort av Spara en kopia nu 11:05, varken i dag
+    /// eller i morgon, och inte av kopian före en återställning.
+    func testOwnCopyNeverReplacesTodaysAutomaticCopy() {
+        let morning = copy(daysAgo: 0, hour: 8, name: "08")
+        let own = copy(daysAgo: 0, hour: 11, name: "11 egen", kind: .manual)
+        let beforeRestore = copy(daysAgo: 0, hour: 12, name: "12 fore", kind: .beforeRestore)
+        let copies = [morning, own, beforeRestore]
+        XCTAssertTrue(Backup.copiesToRemove(copies, keep: 7, protecting: nil, now: now).isEmpty)
+        // I morgon: den nyaste av varje slag står kvar, alltså alla tre.
+        let tomorrow = now.addingTimeInterval(86_400)
+        XCTAssertTrue(Backup.copiesToRemove(copies, keep: 7, protecting: nil, now: tomorrow).isEmpty)
+        // En andra automatisk kopia samma dag ersätter den första först en senare dag.
+        let evening = copy(daysAgo: 0, hour: 20, name: "20")
+        XCTAssertTrue(Backup.copiesToRemove(copies + [evening], keep: 7, protecting: nil, now: now).isEmpty)
+        XCTAssertEqual(Backup.copiesToRemove(copies + [evening], keep: 7, protecting: nil, now: tomorrow).map(\.url),
+                       [morning.url])
+    }
+
+    /// N1: fler än tio kopior i dag. De äldsta automatiska tas först, egna kopior står kvar.
+    func testTodayLimitRemovesOldestAutomaticFirst() {
+        var copies = (0..<6).map { copy(daysAgo: 0, hour: Double($0) + 1, name: "auto\($0)") }
+        copies += (0..<6).map { copy(daysAgo: 0, hour: Double($0) + 10, name: "egen\($0)", kind: .manual) }
+        let removed = Backup.copiesToRemove(copies, keep: 7, protecting: nil, now: now).map { $0.url.lastPathComponent }
+        XCTAssertEqual(removed, ["auto0", "auto1"])
     }
 }

@@ -156,24 +156,37 @@ final class SyncEngine {
     private(set) var lastReport: SyncReport?
     private var lastAttempt: Date?
     private static let lastSyncKey = "sync.last"
-    /// Sant efter en återställning från säkerhetskopian, tills appen startas om (granskningens fynd 3):
-    /// annars tar synken tillbaka nyare rader från servern och gör återställningen ogjord. Sparas inte.
-    private(set) var isPausedUntilRestart = false
+    /// Nyckeln för pausen efter en återställning. Den ligger i UserDefaults, så att en omstart inte startar
+    /// synken igen (granskning 2, fynd 3).
+    static let pausedKey = "sync.pausedAfterRestore"
 
-    /// Stänger av synken tills appen startas om.
-    func pauseUntilRestart() {
-        isPausedUntilRestart = true
-        AppLog.shared.write("Synken avstängd tills nästa start (återställning från säkerhetskopian)")
+    /// Sant efter en återställning från säkerhetskopian, tills läsaren själv startar synken igen i
+    /// Inställningar: annars tar synken tillbaka nyare rader från servern och gör återställningen ogjord.
+    var isPaused: Bool {
+        UserDefaults.standard.bool(forKey: Self.pausedKey)
+    }
+
+    /// Pausar synken efter en återställning. Den står still tills `resume()`, också efter en omstart.
+    func pauseAfterRestore() {
+        UserDefaults.standard.set(true, forKey: Self.pausedKey)
+        AppLog.shared.write("Synken pausad efter återställningen från säkerhetskopian")
+    }
+
+    /// Starta synken igen (Inställningar).
+    func resume() {
+        UserDefaults.standard.removeObject(forKey: Self.pausedKey)
+        AppLog.shared.write("Synken startad igen efter pausen")
     }
 
     /// Till självtestet: slår på synken igen.
     func resumeForSelfTest() {
-        isPausedUntilRestart = false
+        UserDefaults.standard.removeObject(forKey: Self.pausedKey)
     }
 
     struct PausedError: LocalizedError {
         var errorDescription: String? {
-            "Synken är avstängd efter återställningen från säkerhetskopian. Den startar igen när appen startas om."
+            "Synken är pausad efter återställningen från säkerhetskopian. Starta den igen under Inställningar, "
+                + "Synk med Windows-appen."
         }
     }
 
@@ -187,7 +200,7 @@ final class SyncEngine {
     /// Synkar i bakgrunden om man är inloggad, högst en gång i minuten. Används när appen öppnas och
     /// när man stänger en bok.
     func syncSoon() {
-        guard SyncClient.shared.isSignedIn, !isRunning, !isPausedUntilRestart else { return }
+        guard SyncClient.shared.isSignedIn, !isRunning, !isPaused else { return }
         if let last = lastAttempt, Date().timeIntervalSince(last) < 60 {
             return
         }
@@ -198,7 +211,7 @@ final class SyncEngine {
 
     @discardableResult
     func sync() async throws -> SyncReport {
-        guard !isPausedUntilRestart else { throw PausedError() }
+        guard !isPaused else { throw PausedError() }
         guard !isRunning else { return lastReport ?? SyncReport() }
         isRunning = true
         lastAttempt = Date()

@@ -146,7 +146,7 @@ final class PDFCurlReaderViewController: UIViewController {
         let saved = LibraryStore.shared.savedPageIndex(for: book)
         self.currentIndex = min(max(saved, 0), document.pageCount - 1)
         super.init(nibName: nil, bundle: nil)
-        title = book.title
+        title = book.displayTitle
         navigationItem.largeTitleDisplayMode = .never
     }
 
@@ -571,6 +571,17 @@ final class PDFCurlReaderViewController: UIViewController {
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(currentIndex)
         }
+        reportReadingStatus(indices)
+    }
+
+    /// Var man är, till biblioteket (B1, B2): andel läst, kapitlet, sidan och sidantalet.
+    private func reportReadingStatus(_ indices: [Int]) {
+        let count = renderer.pageCount
+        guard count > 0 else { return }
+        let index = min(max(indices.max() ?? currentIndex, 0), count - 1)
+        LibraryStore.shared.saveStatus(ReadingStatus(progress: Double(index + 1) / Double(count),
+                                                     chapter: chapterTitle(for: index) ?? "",
+                                                     page: index + 1, pages: count), for: book)
     }
 
     /// PDF:ens bokmärken (innehållet) med sidorna, i sidordning. Läses en gång, på huvudtråden.
@@ -1580,6 +1591,21 @@ extension PDFCurlReaderViewController {
         }
     }
 
+    /// Självtestet (granskning 2, N7): bokmärket tas bort med raden Ångra, och Ångra tar tillbaka det.
+    fileprivate func selfTestUndoBookmark() async {
+        let before = bookmarks.count
+        toggleBookmark()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let removed = bookmarks.count
+        let shown = UndoBar.current != nil
+        SelfTest.saveScreen(view, name: "03e-bokmarke-angra")
+        UndoBar.current?.performUndo()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let ok = before > 0 && removed == before - 1 && shown && bookmarks.count == before
+        SelfTest.log("Bokmärket bort med bandet (N7): \(before) före, \(removed) efter, raden Ångra "
+                     + "\(shown ? "visas" : "saknas"), \(bookmarks.count) efter Ångra. \(ok ? "Rätt" : "FEL")")
+    }
+
     /// Självtestet (U3): menyradens zoner och bandets tryckyta i hörnet.
     fileprivate func selfTestChromeLayout() {
         let left = (navigationItem.leftBarButtonItems ?? []).compactMap(\.accessibilityLabel)
@@ -1622,6 +1648,11 @@ extension PDFCurlReaderViewController {
             Haptics.shared.wordTapped()
         } else {
             existing.forEach { AnnotationStore.shared.delete($0) }
+            // Granskning 2, N7: ett tryck på bandet ska aldrig ta bort ett bokmärke utan väg tillbaka.
+            UndoBar.show(existing.count == 1 ? "Bokmärket borttaget" : "Bokmärkena borttagna", in: view) { [weak self] in
+                existing.forEach { AnnotationStore.shared.undelete($0) }
+                self?.bookmarksChanged()
+            }
         }
         bookmarksChanged()
     }
@@ -1976,6 +2007,7 @@ extension PDFCurlReaderViewController {
         await pause(0.4)
         SelfTest.saveScreen(view, name: "03-bokmarke")
         selfTestChromeLayout()
+        await selfTestUndoBookmark()
 
         setMarkMode(true)
         await pause(0.6)

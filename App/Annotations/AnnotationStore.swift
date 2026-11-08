@@ -164,6 +164,41 @@ final class AnnotationStore {
         """
             ALTER TABLE highlights ADD COLUMN rects TEXT NOT NULL DEFAULT '';
             """,
+        // Steg 4 (B1, B2): bokens titel och författare ur filen, läsarens egna, omslaget (filnamnet i cachen,
+        // och sidan läsaren valt i en PDF), andel läst, Markera som läst och var man är.
+        """
+            ALTER TABLE books ADD COLUMN book_title TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN author TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN custom_title TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN custom_author TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN cover TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN cover_page INTEGER NOT NULL DEFAULT -1;
+            ALTER TABLE books ADD COLUMN meta_key TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN progress REAL NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN finished INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN chapter TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN page INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN pages INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN chapter_left INTEGER NOT NULL DEFAULT -1;
+            """,
+        // Steg 5 (B3): kurserna och vilka böcker man lagt i dem. En undermapp i Böcker blir en kurs (`folder`).
+        // Ingen synk än, synken byggs om till iCloud Drive (F1).
+        """
+            CREATE TABLE IF NOT EXISTS courses (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                color TEXT NOT NULL DEFAULT '',
+                folder TEXT NOT NULL DEFAULT '',
+                added REAL NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS course_books (
+                course TEXT NOT NULL,
+                book TEXT NOT NULL,
+                added REAL NOT NULL,
+                PRIMARY KEY (course, book)
+            );
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.
@@ -207,6 +242,7 @@ final class AnnotationStore {
         try db.migrate(Self.migrations)
         // Kopian har sitt eget bokregister (eller inget, om den är från före G3). Böckerna läses in på nytt.
         BookRegistry.shared.reset()
+        CourseStore.shared.reset()
         NotificationCenter.default.post(name: Self.didChange, object: nil)
     }
 
@@ -438,6 +474,15 @@ final class AnnotationStore {
     func delete(_ bookmark: Bookmark) {
         write("borttagningen") { db in
             try Self.markDeleted(db, table: "bookmarks", id: bookmark.id, at: Date())
+        }
+        notify(bookmark.book)
+    }
+
+    /// Ångra en borttagning (granskning 2, N7): samma rad syns igen, med ny ändringstid för synken.
+    func undelete(_ bookmark: Bookmark) {
+        write("ångra borttagningen") { db in
+            try db.execute("UPDATE bookmarks SET deleted = 0, updated = ? WHERE id = ?",
+                           [Date().timeIntervalSince1970, bookmark.id])
         }
         notify(bookmark.book)
     }

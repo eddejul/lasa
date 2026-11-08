@@ -180,7 +180,7 @@ Den svåraste delen av appen. Byggd 7 november 2026.
 * Läsposition sparas som kapitel plus andel av kapitlet, så att den överlever byte av typsnitt, storlek och skärmläge.
 * Typsnitt: bokens eget, Iowan, Charter, Georgia, Palatino, Avenir och San Francisco. Storlek från 80 till 200 procent av bokens egen. Gäller alla EPUB- och textböcker.
 * Uppslag i liggande på iPad: varje kapitel börjar på en vänstersida.
-* Länkar i boken (innehållssidor) hoppar dit och visar Tillbaka (V4, se 6.11). Fotnoter visas i en ruta (V5). Webblänkar öppnas i Safari i appen.
+* Länkar i boken (innehållssidor) hoppar dit och visar Tillbaka (V4, se 6.12). Fotnoter visas i en ruta (V5). Webblänkar öppnas i Safari i appen.
 * Bygget kör ett simulatortest (`tools/simtest`): appen öppnar testböcker i en iPad-simulator, bläddrar, slår upp ett ord, byter typsnitt och tema och sparar bilder och logg i artefakten Simulatortest.
 
 ### 6.4 Markeringar, anteckningar, bokmärken och sök (fas 4)
@@ -233,14 +233,22 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Utseenderutan (U2):** Aa har bakgrunderna och, för EPUB och text, storlek, typsnitt, marginal, radavstånd, justering och Återställ. Raden hålls till ungefär 66 tecken, radavståndet är 1,5 och justerade stycken avstavas på bokens språk. PDF har bakgrunderna och Zooma sidan.
 * **Databasrättningar ur granskningen:** säkerhetskopiorna rensas per dag och aldrig kopian före uppdateringen eller den som återställts, synken väntar till nästa start efter en återställning, och böcker från före bokregistret känns igen på storlek och ändringstid.
 
-### 6.10 Våg 5 (8 november 2026)
+### 6.10 Våg 4 (8 november 2026)
+
+* **Biblioteket (B1, B2):** ett rutnät med omslag, riktiga titlar och författare ur filerna och en tunn stapel för hur långt man läst. Överst Fortsätt läsa med kapitel, sida och sidor kvar (ingen tid kvar). Filter (Alla, Pågående, Olästa, Utlästa) och Sortera (Senast läst, Titel, Tillagd). Håll fingret på ett omslag för Byt namn, Välj omslag (PDF), Lägg i kurs, Markera som läst och Ta bort.
+* **Kurser (B3):** sidopanel med Alla böcker, Läser nu, kurserna (mappar i Böcker blir kurser av sig själva), Repetera med antalet ord som väntar, Sparade ord och Om ordboken, och ett sökfält. En kurs kan få en färg som syns som rand på omslagen. Kurserna synkas inte än.
+* **Första start (B5):** en ny installation utan böcker får en välkomstsida och en exempelbok som lär ut bläddring, ordet under fingret och markering, och kortet Gör mer med Sensus (Förklaring med AI). Ett tomt bibliotek har Välj filer, Öppna från Filer och Prova exempelboken.
+* **iPhone (U9) och rörelser (U10):** två kolumner och en flikrad längst ner på iPhone. Boken öppnas från omslaget och stängs in i det, omslaget trycks ner lite, och med Minska rörelse blir det toningar.
+* **Databasrättningar 2:** dagens säkerhetskopior gallras inte bort, synken står still efter en återställning tills den startas i Inställningar, en fil med samma namn som en borttagen bok ger frågan Ny version, och bokmärkesbandet tar bort med Ångra.
+
+### 6.11 Våg 5 (8 november 2026)
 
 * **Ordkortet (U4):** ordet en gång, stort, med ordklass och SV eller EN. Svaret direkt under, synonymerna som knappar som slår upp ordet i samma ruta, meningen ur boken med ordet understruket och boken och sidan under. Förklara i meningen svarar i samma kort. Längst ner SO och SAOL, Sparat, Fel synonym och betydelserna. Ark i halv höjd på iPhone. Ingen uppläsning.
 * **Välj betydelse (O7):** ett tryck på en betydelse sparar den med ordet. Kortet visar den överst och repetitionen bara den. AI-knappen kan föreslå en betydelse, men man väljer själv.
 * **Ursprung, uttal och fler översättningar (O10):** ur Wiktionary via kaikki.org (CC BY-SA 4.0). Svenska ord får uttal (IPA) bredvid ordklassen och en rad om ursprunget (första meningen, språknamnen på svenska). Engelska ord får fler svenska översättningar, och ord som saknas i Folkets lexikon får sin översättning därifrån. Bara ord som redan finns i ordboken tas med. Källan står under Om ordboken.
 * **Dina ord i texten (O4):** sparade ord får ett streck under sig i alla böjningsformer, helt för ord man övar och prickat för ord man kan (repetitionens intervall minst tre veckor, ingen egen statusvy). Ett tryck på strecket mitt på sidan visar ordkortet med meningen ordet sparades i. Av och på i Aa (Dina ord i texten), från början på.
 
-### 6.11 Våg 6, läsvyn (8 november 2026)
+### 6.12 Våg 6, läsvyn (8 november 2026)
 
 * **Tillbaka och historik (V4):** varje hopp (innehåll, sök, länk, markering, bokmärke, gå till sida, tidslinjen, miniatyrer) sparar platsen man lämnade. Tillbaka till s. N ligger nere till vänster, ett långt tryck visar de fem senaste, krysset döljer knappen. Knappen döljs efter tre vikningar, men Mer har Senaste platser. Ersätter Tillbaka efter länkar i 6.3. Historiken gäller medan boken är öppen.
 * **Sidor kvar (V1):** under tidslinjen sidan till vänster och sidor kvar till höger, i kapitlet eller i boken (ett tryck växlar, valet sparas). Ingen tid kvar (Edvins beslut). En PDF utan innehållsförteckning visar boken. EPUB skriver cirka tills alla kapitel är mätta.

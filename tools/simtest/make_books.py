@@ -180,6 +180,7 @@ def make_epub(path, rng):
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:identifier id="uid">urn:uuid:lasa-testbok</dc:identifier>
 <dc:title>Testbok för Läsa</dc:title>
+<dc:creator>Sensus Testsson</dc:creator>
 <dc:language>sv</dc:language>
 <meta property="dcterms:modified">2026-11-07T12:00:00Z</meta>
 </metadata>
@@ -313,6 +314,8 @@ def make_pdf(path, rng):
     page_tree = add(None)
     regular = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
     bold = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+    # B1: titel och författare i dokumentets metadata, som biblioteket visar i stället för filnamnet.
+    info = add(b"<< /Title (Provbok med textlager) /Author (Sensus Testsson) >>")
     # Sidornas objekt först, så att länken på sida 3 kan peka på sida 8.
     kids = [add(None) for _ in pages]
     for number, (title, lines) in enumerate(pages, start=1):
@@ -361,8 +364,73 @@ def make_pdf(path, rng):
     data += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
     for offset in offsets:
         data += b"%010d 00000 n \n" % offset
-    data += b"trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, catalog, xref)
+    data += b"trailer\n<< /Size %d /Root %d 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1, catalog, info, xref)
     path.write_bytes(bytes(data))
+
+
+def make_png(width, height):
+    """En PNG utan bibliotek: bläckblå yta med en ljus ram, som omslag i roman.epub (B1)."""
+    import struct
+    import zlib
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            frame = (18 <= x < 24 or width - 24 <= x < width - 18 or 18 <= y < 24 or height - 24 <= y < height - 18)
+            band = height // 3 <= y < height // 3 + 70 and 50 <= x < width - 50
+            rows += bytes((244, 236, 216)) if frame or band else bytes((45, 91, 132))
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(bytes(rows), 9))
+            + chunk(b"IEND", b""))
+
+
+def make_cover_epub(path):
+    """B1: en kort EPUB 2 med ett PNG-omslag (<meta name="cover">) och två författare, för bibliotekets omslag."""
+    chapter = xhtml("Första kapitlet", "<h1>Första kapitlet</h1>"
+                    + "".join(f"<p>{line}</p>" for line in SWEDISH[:12]))
+    opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<dc:identifier id="uid">urn:uuid:lasa-omslagsbok</dc:identifier>
+<dc:title>Ljuset över hamnen</dc:title>
+<dc:creator opf:role="aut">Anna Exempel</dc:creator>
+<dc:creator opf:role="aut">Erik Prov</dc:creator>
+<dc:language>sv</dc:language>
+<meta name="cover" content="omslagsbild"/>
+</metadata>
+<manifest>
+<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="omslagsbild" href="bilder/framsida.png" media-type="image/png"/>
+<item id="kap1" href="text/kap1.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="ncx"><itemref idref="kap1"/></spine>
+</package>
+"""
+    ncx = """<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+<head><meta name="dtb:uid" content="urn:uuid:lasa-omslagsbok"/></head>
+<docTitle><text>Ljuset över hamnen</text></docTitle>
+<navMap><navPoint id="n1" playOrder="1"><navLabel><text>Första kapitlet</text></navLabel>
+<content src="text/kap1.xhtml"/></navPoint></navMap>
+</ncx>
+"""
+    container = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>
+"""
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        archive.writestr("META-INF/container.xml", container, compress_type=zipfile.ZIP_DEFLATED)
+        archive.writestr("OEBPS/content.opf", opf, compress_type=zipfile.ZIP_DEFLATED)
+        archive.writestr("OEBPS/toc.ncx", ncx, compress_type=zipfile.ZIP_DEFLATED)
+        archive.writestr("OEBPS/bilder/framsida.png", make_png(400, 600), compress_type=zipfile.ZIP_DEFLATED)
+        archive.writestr("OEBPS/text/kap1.xhtml", chapter, compress_type=zipfile.ZIP_DEFLATED)
 
 
 def make_photo_pdf(path, rng):
@@ -445,6 +513,7 @@ def main():
     make_md(folder / "test.md", rng)
     make_rtf(folder / "test.rtf", rng)
     make_pdf(folder / "test.pdf", rng)
+    make_cover_epub(folder / "roman.epub")
     if sys.platform == "darwin":
         make_photo_pdf(folder / "foto.pdf", random.Random(11))
     for item in sorted(folder.iterdir()):
