@@ -180,7 +180,7 @@ Den svåraste delen av appen. Byggd 7 november 2026.
 * Läsposition sparas som kapitel plus andel av kapitlet, så att den överlever byte av typsnitt, storlek och skärmläge.
 * Typsnitt: bokens eget, Iowan, Charter, Georgia, Palatino, Avenir och San Francisco. Storlek från 80 till 200 procent av bokens egen. Gäller alla EPUB- och textböcker.
 * Uppslag i liggande på iPad: varje kapitel börjar på en vänstersida.
-* Länkar i boken (fotnoter, innehållssidor) hoppar dit och visar en Tillbaka-knapp. Webblänkar öppnas i Safari i appen.
+* Länkar i boken (innehållssidor) hoppar dit och visar Tillbaka (V4, se 6.11). Fotnoter visas i en ruta (V5). Webblänkar öppnas i Safari i appen.
 * Bygget kör ett simulatortest (`tools/simtest`): appen öppnar testböcker i en iPad-simulator, bläddrar, slår upp ett ord, byter typsnitt och tema och sparar bilder och logg i artefakten Simulatortest.
 
 ### 6.4 Markeringar, anteckningar, bokmärken och sök (fas 4)
@@ -239,6 +239,15 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Välj betydelse (O7):** ett tryck på en betydelse sparar den med ordet. Kortet visar den överst och repetitionen bara den. AI-knappen kan föreslå en betydelse, men man väljer själv.
 * **Ursprung, uttal och fler översättningar (O10):** ur Wiktionary via kaikki.org (CC BY-SA 4.0). Svenska ord får uttal (IPA) bredvid ordklassen och en rad om ursprunget (första meningen, språknamnen på svenska). Engelska ord får fler svenska översättningar, och ord som saknas i Folkets lexikon får sin översättning därifrån. Bara ord som redan finns i ordboken tas med. Källan står under Om ordboken.
 * **Dina ord i texten (O4):** sparade ord får ett streck under sig i alla böjningsformer, helt för ord man övar och prickat för ord man kan (repetitionens intervall minst tre veckor, ingen egen statusvy). Ett tryck på strecket mitt på sidan visar ordkortet med meningen ordet sparades i. Av och på i Aa (Dina ord i texten), från början på.
+
+### 6.11 Våg 6, läsvyn (8 november 2026)
+
+* **Tillbaka och historik (V4):** varje hopp (innehåll, sök, länk, markering, bokmärke, gå till sida, tidslinjen, miniatyrer) sparar platsen man lämnade. Tillbaka till s. N ligger nere till vänster, ett långt tryck visar de fem senaste, krysset döljer knappen. Knappen döljs efter tre vikningar, men Mer har Senaste platser. Ersätter Tillbaka efter länkar i 6.3. Historiken gäller medan boken är öppen.
+* **Sidor kvar (V1):** under tidslinjen sidan till vänster och sidor kvar till höger, i kapitlet eller i boken (ett tryck växlar, valet sparas). Ingen tid kvar (Edvins beslut). En PDF utan innehållsförteckning visar boken. EPUB skriver cirka tills alla kapitel är mätta.
+* **Tidslinjen (V2):** ersätter reglaget. Streck vid kapitelgränserna, prickar i markeringarnas färger, röda streck för bokmärken, en rund markör. När man drar visar en bubbla kapitlet och sidan, och boken hoppar när man släpper. Kapitlets namn står i mitten under linjen. Lästa sidor (mörkare, även i Innehåll) väntar på läsloggen (K10).
+* **Miniatyrer (V3, PDF):** håll på tidslinjen eller välj Mer, Miniatyrer. Rutnät med sidbilder cirka 150 punkter breda, bara synliga ritas. Ett tryck hoppar dit, och Tillbaka ligger kvar tills man går tillbaka eller trycker på krysset. Inte i EPUB.
+* **Fotnoter i en ruta (V5):** ett tryck på en fotnotssiffra eller hänvisning visar noten i en ruta vid siffran, med Gå till noten. EPUB: epub:type noteref, role doc-noteref eller en länk till ett ankare vars text är en siffra eller ett tecken. PDF: bara interna länkar med kort text. Hittas noten inte hoppar boken som förut. Trycket går före ordstrecken och bläddringen.
+* **Här var du (V6):** öppnas en bok efter mer än ett dygn ligger ett kort över sidan med kapitlets rubrik och de tre senaste markeringarna. Ett tryck stänger det. Ingen fråga (Edvins beslut).
 
 ## 7. Bygge och installation
 
