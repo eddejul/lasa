@@ -175,6 +175,7 @@ final class ReflowReaderViewController: UIViewController {
     override func didReceiveMemoryWarning() {
         super.didReceiveMemoryWarning()
         renderer?.releaseMemory()
+        bookSearch?.releaseMemory()
     }
 
     // MARK: Öppna boken
@@ -222,6 +223,9 @@ final class ReflowReaderViewController: UIViewController {
             }
             installMarksProvider(on: renderer)
             self.renderer = renderer
+            // Sökregistret byggs i bakgrunden om det saknas, när de första sidorna hunnit visas (G11).
+            SearchIndex.shared.prepare(SearchIndex.Key.make(for: book, chapters: content.chapters.count),
+                                       source: .chapters(content.chapters.map { $0.url }), delay: 4)
             pendingJump = PendingJump(chapter: location.chapter, progression: location.progression, fragment: nil)
             bottomBar.slider.isEnabled = true
             updateLayoutIfNeeded(force: true)
@@ -1991,7 +1995,8 @@ extension ReflowReaderViewController {
 
     @objc fileprivate func showSearch() {
         guard presentedViewController == nil, let content = content else { return }
-        let search = bookSearch ?? BookSearch(source: .chapters(content.chapters.map { $0.url }))
+        let search = bookSearch ?? BookSearch(source: .chapters(content.chapters.map { $0.url }),
+                                              index: SearchIndex.Key.make(for: book, chapters: content.chapters.count))
         bookSearch = search
         let controller = BookSearchViewController(search: search, query: lastQuery) { [weak self] section in
             self?.chapterName(section) ?? "Avsnitt \(section + 1)"
@@ -2106,6 +2111,10 @@ extension ReflowReaderViewController {
         if presentedViewController != nil {
             dismiss(animated: false)
             await pause(0.4)
+        }
+        if let content = content {
+            await SearchIndexSelfTest.run(source: .chapters(content.chapters.map { $0.url }),
+                                          key: SearchIndex.Key.make(for: book, chapters: content.chapters.count))
         }
 
         showContents()

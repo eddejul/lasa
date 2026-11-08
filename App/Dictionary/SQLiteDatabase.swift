@@ -29,6 +29,14 @@ final class SQLiteDatabase {
         func isNull(_ column: Int32) -> Bool {
             sqlite3_column_type(statement, column) == SQLITE_NULL
         }
+
+        /// En kolumn med binärdata (BLOB), till exempel sökregistrets text (G11).
+        func data(_ column: Int32) -> Data {
+            let bytes = sqlite3_column_blob(statement, column)
+            let count = Int(sqlite3_column_bytes(statement, column))
+            guard let bytes = bytes, count > 0 else { return Data() }
+            return Data(bytes: bytes, count: count)
+        }
     }
 
     private var handle: OpaquePointer?
@@ -205,6 +213,14 @@ final class SQLiteDatabase {
             switch argument {
             case let value as String:
                 result = sqlite3_bind_text(statement, index, value, -1, Self.transient)
+            case let value as Data:
+                if value.isEmpty {
+                    result = sqlite3_bind_zeroblob(statement, index, 0)
+                } else {
+                    result = value.withUnsafeBytes { buffer in
+                        sqlite3_bind_blob(statement, index, buffer.baseAddress, Int32(buffer.count), Self.transient)
+                    }
+                }
             case let value as Int:
                 result = sqlite3_bind_int64(statement, index, Int64(value))
             case let value as Double:

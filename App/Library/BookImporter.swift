@@ -49,6 +49,8 @@ final class BookImporter {
                 Self.showMessage(on: presenter, title: "Några filer kunde inte läggas till",
                                  message: failed.joined(separator: "\n"))
             }
+            // Sökregistret (G11) byggs i bakgrunden för PDF:er. EPUB och text byggs när boken öppnas.
+            books.forEach { SearchIndex.shared.prepare($0) }
             completion(books)
         }
     }

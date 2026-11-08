@@ -135,6 +135,7 @@ final class LibraryStore {
         defaults.removeObject(forKey: positionKey(for: book))
         defaults.removeObject(forKey: locationKey(for: book))
         ReflowableBookLoader.removeCaches(for: book)
+        SearchIndex.shared.remove(book: book.id)
         // Bokens rad och markeringar finns kvar, så att de kommer tillbaka om samma fil läggs in igen.
         BookRegistry.shared.markMissing(id: book.id)
     }

@@ -68,7 +68,9 @@ final class PDFCurlReaderViewController: UIViewController {
     private var searchItem: UIBarButtonItem?
     private var markItem: UIBarButtonItem?
     private var bookmarkItem: UIBarButtonItem?
-    private lazy var bookSearch = BookSearch(source: .pdf(book.url))
+    /// Bokens nyckel i sökregistret (G11).
+    private lazy var searchKey = SearchIndex.Key.make(for: book, chapters: nil)
+    private lazy var bookSearch = BookSearch(source: .pdf(book.url), index: searchKey)
     private var lastQuery: String?
     private var selfTestStarted = false
 
@@ -124,6 +126,8 @@ final class PDFCurlReaderViewController: UIViewController {
         if !loggedFirstPage {
             AppLog.shared.write("Öppnade \(book.url.lastPathComponent) (PDF, \(document.pageCount) sidor)")
             logFirstPage()
+            // Sökregistret byggs i bakgrunden om det saknas, när de första sidorna hunnit ritas.
+            SearchIndex.shared.prepare(searchKey, source: .pdf(book.url), delay: 4)
         }
         PageTurnSound.shared.prepare()
         WordDictionary.warmUpLanguageModels()
@@ -145,6 +149,11 @@ final class PDFCurlReaderViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateLayoutIfNeeded()
+    }
+
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        bookSearch.releaseMemory()
     }
 
     /// Väntar på första sidbilden och skriver tiden i loggen.
@@ -1627,6 +1636,7 @@ extension PDFCurlReaderViewController {
             SelfTest.log("FEL: sökrutan öppnades inte")
         }
         await dismissPresented()
+        await SearchIndexSelfTest.run(source: .pdf(book.url), key: searchKey)
 
         showContents()
         if let container = await waitForPresented(ReaderContentsContainerViewController.self) {

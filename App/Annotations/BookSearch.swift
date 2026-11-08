@@ -2,7 +2,7 @@ import Foundation
 import PDFKit
 
 /// En träff i boken.
-struct SearchHit {
+struct SearchHit: Equatable {
     /// PDF: sidans plats i filen. EPUB och text: kapitlet.
     let section: Int
     /// PDF: var träffen står i sidans text (UTF-16). EPUB och text: i kapitlets text utan taggar.
@@ -114,6 +114,9 @@ struct FoldedText {
 }
 
 /// Söker i en bok i bakgrunden och lämnar träffarna i omgångar på huvudtråden.
+///
+/// Finns bokens sökregister (G11, `SearchIndex`) letar SQLite upp avsnitten där söktexten står, och bara de
+/// läses. Annars söker den direkt i boken som förut, och registret byggs i bakgrunden till nästa gång.
 final class BookSearch {
 
     /// Var texten kommer ifrån.
@@ -124,15 +127,27 @@ final class BookSearch {
         case chapters([URL])
     }
 
+    /// Vilken väg en sökning går. Läsarna använder `automatic`, de andra är till självtestet.
+    enum Path {
+        case automatic, direct, index, indexPlain
+    }
+
     static let maxHits = 500
     private static let context = 60
 
     private let source: Source
+    private let indexKey: SearchIndex.Key?
+    private let index: SearchIndex
     private let queue = DispatchQueue(label: "se.edvin.lasa.search", qos: .userInitiated)
     private var token: CancelToken?
-    /// Kapiteltexterna sparas mellan sökningarna, de är dyra att ta fram. Används bara på sökkön.
+    /// Kapiteltexterna sparas mellan sökningarna när registret saknas, de är dyra att ta fram. Bara på sökkön.
     private var chapterTexts: [Int: FoldedChapter] = [:]
+    /// Sökningens eget exemplar av PDF:en. Släpps när en sökning är klar och vid minnesvarning. Bara på sökkön.
     private var pdfDocument: PDFDocument?
+    /// Om den senaste sökningen gick i registret. Bara på sökkön.
+    private var lastRunUsedIndex = false
+
+    private struct IndexReadFailure: Error {}
 
     private struct FoldedChapter {
         let original: NSString
@@ -156,8 +171,11 @@ final class BookSearch {
         }
     }
 
-    init(source: Source) {
+    /// `key` är bokens nyckel i sökregistret. Utan den söker den alltid direkt i boken.
+    init(source: Source, index key: SearchIndex.Key? = nil, registry: SearchIndex = .shared) {
         self.source = source
+        self.indexKey = key
+        self.index = registry
     }
 
     /// Avbryter en pågående sökning och startar en ny. `update` får alla träffar hittills, och sant när sökningen är klar.
@@ -171,7 +189,13 @@ final class BookSearch {
         let token = CancelToken()
         self.token = token
         queue.async { [weak self] in
-            self?.run(folded, token: token, update: update)
+            _ = self?.search(folded, path: .automatic, token: token) { snapshot, done in
+                DispatchQueue.main.async {
+                    if !token.isCancelled {
+                        update(snapshot, done)
+                    }
+                }
+            }
         }
     }
 
@@ -180,41 +204,93 @@ final class BookSearch {
         token = nil
     }
 
+    /// Vid minnesvarning: släpper sökningens exemplar av boken och de sparade kapiteltexterna.
+    func releaseMemory() {
+        queue.async { [weak self] in
+            self?.pdfDocument = nil
+            self?.chapterTexts.removeAll()
+        }
+        index.releaseMemory()
+    }
+
+    /// Söker och väntar på alla träffar, utan att något visas (till självtestet). `usedIndex` säger om
+    /// sökningen gick i registret.
+    func hits(_ text: String, path: Path) async -> (hits: [SearchHit], usedIndex: Bool, milliseconds: Double) {
+        let folded = FoldedText.query(text)
+        guard (folded as NSString).length >= 2 else { return ([], false, 0) }
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                let started = CFAbsoluteTimeGetCurrent()
+                let hits = self.search(folded, path: path, token: nil, report: nil) ?? []
+                continuation.resume(returning: (hits, self.lastRunUsedIndex,
+                                                (CFAbsoluteTimeGetCurrent() - started) * 1000))
+            }
+        }
+    }
+
+    /// Om sökningen har kvar sitt exemplar av boken eller kapiteltexter (till självtestet).
+    var holdsBookText: Bool {
+        queue.sync { pdfDocument != nil || !chapterTexts.isEmpty }
+    }
+
     // MARK: På sökkön
 
-    private func run(_ query: String, token: CancelToken, update: @escaping ([SearchHit], Bool) -> Void) {
+    /// Söker i registret om det är klart, annars direkt i boken. `report` får träffarna hittills, och sant när
+    /// sökningen är klar, högst var fjärdedels sekund. Nil om sökningen avbröts.
+    private func search(_ query: String, path: Path, token: CancelToken?,
+                        report: (([SearchHit], Bool) -> Void)?) -> [SearchHit]? {
+        if path != .direct, let key = indexKey,
+           let sections = index.sections(key, containing: query, plain: path == .indexPlain) {
+            do {
+                let hits = try collect(query, sections: sections, token: token, report: report) { section in
+                    guard let original = self.index.original(key, section: section) else { throw IndexReadFailure() }
+                    return FoldedChapter(original: original, folded: FoldedText(original))
+                }
+                lastRunUsedIndex = true
+                chapterTexts.removeAll()
+                return hits
+            } catch {
+                AppLog.shared.write("Sökregistret saknade ett avsnitt i \(key.name), söker direkt i boken")
+            }
+        }
+        lastRunUsedIndex = false
+        let hits = collect(query, sections: Array(0..<sectionCount()), token: token, report: report) { section in
+            self.text(of: section)
+        }
+        // Sökningens eget dokument behövs inte förrän nästa sökning.
+        pdfDocument = nil
+        if path == .automatic, let key = indexKey {
+            index.prepare(key, source: source)
+        }
+        return hits
+    }
+
+    /// Letar i avsnitten i tur och ordning, högst `maxHits` träffar.
+    private func collect(_ query: String, sections: [Int], token: CancelToken?,
+                         report: (([SearchHit], Bool) -> Void)?,
+                         text: (Int) throws -> FoldedChapter?) rethrows -> [SearchHit]? {
         var hits: [SearchHit] = []
         var lastReport = CFAbsoluteTimeGetCurrent()
-        let count = sectionCount()
-        for section in 0..<count {
-            if token.isCancelled {
-                return
+        for section in sections {
+            if token?.isCancelled == true {
+                return nil
             }
-            if let text = text(of: section) {
-                hits += Self.find(query, in: text.folded, original: text.original, section: section,
+            if let chapter = try text(section) {
+                hits += Self.find(query, in: chapter.folded, original: chapter.original, section: section,
                                   limit: Self.maxHits - hits.count)
             }
             let now = CFAbsoluteTimeGetCurrent()
             if now - lastReport > 0.25 || hits.count >= Self.maxHits {
                 lastReport = now
-                let snapshot = hits
                 let done = hits.count >= Self.maxHits
-                DispatchQueue.main.async {
-                    if !token.isCancelled {
-                        update(snapshot, done)
-                    }
-                }
+                report?(hits, done)
                 if done {
-                    return
+                    return hits
                 }
             }
         }
-        let final = hits
-        DispatchQueue.main.async {
-            if !token.isCancelled {
-                update(final, true)
-            }
-        }
+        report?(hits, true)
+        return hits
     }
 
     private func sectionCount() -> Int {
@@ -248,8 +324,8 @@ final class BookSearch {
         }
     }
 
-    private static func find(_ query: String, in folded: FoldedText, original: NSString, section: Int,
-                             limit: Int) -> [SearchHit] {
+    static func find(_ query: String, in folded: FoldedText, original: NSString, section: Int,
+                     limit: Int) -> [SearchHit] {
         var hits: [SearchHit] = []
         let haystack = folded.text
         var searchRange = NSRange(location: 0, length: haystack.length)
