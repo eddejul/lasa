@@ -26,6 +26,9 @@ targets:
         PRODUCT_NAME: Lasa
         PRODUCT_BUNDLE_IDENTIFIER: se.edvin.lasa
         INFOPLIST_FILE: Config/Info.plist
+        # Appikonen (U8) ligger i App/Assets.xcassets. Visningsnamnet Sensus står i Info.plist,
+        # bundle-id och produktnamn är oförändrade så att appen ersätter den gamla.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: "NO"
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: "NO"

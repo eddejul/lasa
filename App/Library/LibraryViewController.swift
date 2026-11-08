@@ -346,7 +346,7 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
             return
         }
         let label = UILabel()
-        label.text = "Inga böcker än.\nTryck på + eller välj Öppna i Läsa från Filer."
+        label.text = "Inga böcker än.\nTryck på + eller välj Öppna i Sensus från Filer."
         label.numberOfLines = 0
         label.textAlignment = .center
         label.textColor = .secondaryLabel
