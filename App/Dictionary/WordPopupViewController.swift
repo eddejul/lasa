@@ -186,6 +186,10 @@ final class WordPopupViewController: UIViewController {
     private var pendingSave: (word: String, lemma: String, language: WordLanguage)?
     /// O7: betydelsen som valts för första uppslagsordet (id ur ordboken), eller nil.
     private var chosenSenseID: String?
+    /// D3-1: ordet som Sparat tog bort i det här kortet, med repetitionen. Ångra, eller Spara i samma kort,
+    /// lägger tillbaka det.
+    private var removedWord: SavedWordRecord?
+    private weak var undoBar: UndoBar?
     /// Betydelserna visas som en lista i kortet efter ett tryck på knappen längst ner.
     private var sensesExpanded = false
     /// iPhone: kortet är ett ark och har en stängknapp i stället för menyraden.
@@ -827,7 +831,7 @@ final class WordPopupViewController: UIViewController {
         }
         if let lookup = lookup, let entry = entry {
             let saved = isSaved(lemma: entry.lemma)
-            if context.book != nil || saved {
+            if context.book != nil || saved || removedWord != nil {
                 buttons.append(barButton(saved ? "Sparat" : "Spara", symbol: saved ? "bookmark.fill" : "bookmark",
                                          tint: saved ? palette.success : nil) { [weak self] in
                     self?.toggleSaved()
@@ -992,7 +996,12 @@ final class WordPopupViewController: UIViewController {
         guard let lookup = lookup, let entry = entry else { return }
         if isSaved(lemma: entry.lemma) {
             pendingSave = nil
-            UserWords.shared.delete(lemma: entry.lemma, language: lookup.language)
+            removeSavedWord(lemma: entry.lemma, language: lookup.language)
+        } else if let removed = removedWord, removed.lemma == entry.lemma,
+                  removed.language == lookup.language.rawValue {
+            // Spara direkt efter Sparat i samma kort: ordet kommer tillbaka med repetitionen och bokens id,
+            // precis som med Ångra (kortet från ett streck har inget bok-id att spara med).
+            restoreRemovedWord()
         } else if let book = context.book {
             UserWords.shared.save(word: lookup.word, lemma: entry.lemma, language: lookup.language,
                                   sentence: context.sentence, book: book, pageIndex: context.pageIndex ?? 0,
@@ -1003,6 +1012,35 @@ final class WordPopupViewController: UIViewController {
         }
         Haptics.shared.wordTapped()
         rebuild()
+    }
+
+    /// D3-1: Sparat tar bort ordet och dess repetition, och raden Ångra lägger tillbaka allt i fem sekunder.
+    /// Raden ligger i fönstret, ovanpå kortet, så att den finns kvar om kortet stängs.
+    private func removeSavedWord(lemma: String, language: WordLanguage) {
+        guard let removed = UserWords.shared.delete(lemma: lemma, language: language) else { return }
+        removedWord = removed
+        let host: UIView = view.window ?? view
+        undoBar = UndoBar.show("Ordet borttaget ur Sparade ord", in: host) { [weak self] in
+            guard let self = self else {
+                // Kortet är redan stängt.
+                UserWords.shared.restoreDeleted(removed)
+                return
+            }
+            self.undoBar = nil
+            self.restoreRemovedWord()
+            if self.isViewLoaded {
+                self.rebuild()
+            }
+        }
+    }
+
+    /// Lägger tillbaka ordet som Sparat tog bort, med samma rad och repetition.
+    private func restoreRemovedWord() {
+        guard let removed = removedWord else { return }
+        removedWord = nil
+        undoBar?.dismiss()
+        undoBar = nil
+        UserWords.shared.restoreDeleted(removed)
     }
 
     private func toggleSenses() {
@@ -1071,6 +1109,11 @@ final class WordPopupViewController: UIViewController {
     func showAIAnswerForTest(_ answer: WordExplanation) {
         aiState = .done(answer)
         rebuild()
+    }
+
+    /// Trycker på Sparat eller Spara, till självtestet (D3-1).
+    func toggleSavedForTest() {
+        toggleSaved()
     }
 
     /// Fäller ut betydelserna, till självtestet.

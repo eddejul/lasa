@@ -142,16 +142,16 @@ final class LibraryStore {
         return Book(url: match.value, id: id, path: match.key)
     }
 
+    /// Tar bort filen. Läspositionen står kvar (granskning 3, D3-5), liksom tiden och sidan i registret, så att
+    /// samma fil som läggs in igen öppnas där man var och Fortsätt läsa stämmer. Så gör Windows-appen också.
     func delete(_ book: Book) throws {
         try FileManager.default.removeItem(at: book.url)
-        defaults.removeObject(forKey: positionKey(for: book))
-        defaults.removeObject(forKey: locationKey(for: book))
         ReflowableBookLoader.removeCaches(for: book)
         SearchIndex.shared.remove(book: book.id)
         if let record = BookRegistry.shared.record(id: book.id) {
             CoverStore.shared.forget(record)
         }
-        // Bokens rad och markeringar finns kvar, så att de kommer tillbaka om samma fil läggs in igen.
+        // Bokens rad, markeringar och läsposition finns kvar, så att de kommer tillbaka om samma fil läggs in igen.
         BookRegistry.shared.markMissing(id: book.id)
     }
 

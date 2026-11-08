@@ -2,6 +2,7 @@ import UIKit
 
 /// En kort rad längst ner med Ångra (granskning 2, N7): ett tryck på bokmärkesbandet tar bort sidans bokmärke,
 /// och raden ger en väg tillbaka i fem sekunder. Ligger ovanpå läsaren och rör inte sidans placering.
+/// Samma rad visas när Sparat i ordkortet tar bort ett ord (D3-1), då i fönstret ovanpå kortet.
 @MainActor
 final class UndoBar: UIView {
 
@@ -80,6 +81,12 @@ final class UndoBar: UIView {
         let undo = onUndo
         onUndo = nil
         undo?()
+        hide()
+    }
+
+    /// Tar bort raden utan att ångra, till exempel när det som togs bort redan har lagts tillbaka på annat sätt.
+    func dismiss() {
+        onUndo = nil
         hide()
     }
 

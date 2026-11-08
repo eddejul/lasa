@@ -252,6 +252,48 @@ enum Fas6SelfTest {
         } else {
             SelfTest.log("FEL: \(word) sparades inte")
         }
+
+        // D3-1: Sparat i kortet tar bort ordet och visar raden Ångra. Ångra lägger tillbaka samma rad (id, bok,
+        // betydelse, mening) och hela repetitionen, och borttagningen glöms så att synken inte tar bort ordet.
+        navigation.popToViewController(host, animated: false)
+        await pause(0.3)
+        UserWords.shared.save(word: word, lemma: entry.lemma, language: lookup.language, sentence: sentence,
+                              book: "Retorikens grunder", pageIndex: 87, bookID: "självtest-bok")
+        if let saved = UserWords.shared.savedWords().first(where: { $0.lemma == entry.lemma && $0.language == lookup.language }) {
+            UserWords.shared.record(.good, for: ReviewCard(word: saved, interval: 0, ease: 2.5, reps: 0, lapses: 0,
+                                                           isNew: true))
+        }
+        let before = UserWords.shared.savedWordRecord(lemma: entry.lemma, language: lookup.language)
+        let undoCard = card(word, sentence)
+        wrapper = await mount(undoCard)
+        undoCard.toggleSavedForTest()
+        await pause(0.4)
+        let removed = !UserWords.shared.isSaved(lemma: entry.lemma, language: lookup.language)
+            && UserWords.shared.deletionTime(lemma: entry.lemma, language: lookup.language) != nil
+        let shown = UndoBar.current != nil
+        SelfTest.saveScreen(host.view.window ?? host.view, name: "07h-ordkort-angra")
+        UndoBar.current?.performUndo()
+        await pause(0.4)
+        let after = UserWords.shared.savedWordRecord(lemma: entry.lemma, language: lookup.language)
+        var expected = before
+        expected?.updated = after?.updated ?? -1
+        let same = before?.review != nil && before?.bookID == "självtest-bok" && after != nil && after == expected
+        let forgotten = UserWords.shared.deletionTime(lemma: entry.lemma, language: lookup.language) == nil
+        let synced = UserWords.shared.wordsForSync().first { $0.lemma == entry.lemma && $0.language == lookup.language.rawValue }
+        let live = synced?.deleted == false && synced?.reps == before?.review?.reps
+        let ok = removed && shown && same && forgotten && live
+        let ids = "id \(before?.id ?? -1) och \(after?.id ?? -1)"
+        let reps = "repetitioner \(before?.review?.reps ?? -1) och \(after?.review?.reps ?? -1)"
+        let removedText = removed ? "borttaget" : "FEL, kvar"
+        let shownText = shown ? "visas" : "saknas"
+        let sameText = same ? "samma rad och repetition" : "FEL, raden skiljer"
+        let forgottenText = forgotten ? "glömd" : "FEL, kvar"
+        let liveText = live ? "levande" : "FEL, borttaget"
+        SelfTest.log("Sparat i ordkortet (D3-1): ordet \(removedText), raden Ångra \(shownText), efter Ångra "
+                     + "\(sameText) (\(ids), \(reps)), borttagningen \(forgottenText), till synken \(liveText). "
+                     + (ok ? "Rätt" : "FEL"))
+        unmount(wrapper)
+
         UserWords.shared.delete(lemma: entry.lemma, language: lookup.language)
         navigation.popToRootViewController(animated: false)
         await pause(0.3)

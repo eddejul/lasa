@@ -23,6 +23,35 @@ struct SavedWord {
     var senseID = ""
 }
 
+/// D3-1: allt som sparas om ett ord, raden i `saved_words` och i `reviews`, så att en borttagning kan
+/// ångras med samma id, bok, betydelse, mening och repetition.
+struct SavedWordRecord: Equatable {
+    struct Review: Equatable {
+        var due: Double
+        var interval: Double
+        var ease: Double
+        var reps: Int
+        var lapses: Int
+        var introduced: Double
+        var updated: Double
+    }
+
+    var id: Int
+    var word: String
+    var lemma: String
+    var language: String
+    var sentence: String
+    var book: String
+    var page: Int
+    var lookups: Int
+    var created: Double
+    var updated: Double
+    var bookID: String
+    var senseID: String
+    /// Repetitionen, eller nil om ordet aldrig har repeterats.
+    var review: Review?
+}
+
 /// Sparade ord och dolda synonympar, i en egen liten databas under Application Support.
 /// Ordboken i appen ändras aldrig, så det användaren gör ligger här. Fas 6 synkar den här datan.
 /// Används bara från huvudtråden.
@@ -100,13 +129,17 @@ final class UserWords {
             .appendingPathComponent("anvandarord.sqlite")
     }
 
-    private init() {
-        db = Self.open()
+    private convenience init() {
+        self.init(fileURL: Self.fileURL)
+    }
+
+    /// En egen databasfil, till testerna. Appen använder bara `shared`.
+    init(fileURL url: URL) {
+        db = Self.open(at: url)
         loadHiddenPairs()
     }
 
-    private static func open() -> SQLiteDatabase? {
-        let url = fileURL
+    private static func open(at url: URL) -> SQLiteDatabase? {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         do {
             let db = try SQLiteDatabase(path: url.path, readOnly: false)
@@ -114,11 +147,11 @@ final class UserWords {
             try db.executeScript("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")
             let versions = try db.migrate(migrations)
             if versions.from != versions.to {
-                AppLog.shared.write("anvandarord.sqlite: version \(versions.from) till \(versions.to)")
+                AppLog.shared.write("\(url.lastPathComponent): version \(versions.from) till \(versions.to)")
             }
             return db
         } catch {
-            AppLog.shared.write("anvandarord.sqlite gick inte att öppna: \(error)")
+            AppLog.shared.write("\(url.lastPathComponent) gick inte att öppna: \(error)")
             return nil
         }
     }
@@ -229,12 +262,107 @@ final class UserWords {
         changed()
     }
 
-    func delete(lemma: String, language: WordLanguage) {
-        write("borttagningen") { db in
+    /// Tar bort ordet och dess repetition. Svarar med allt som togs bort, så att det kan ångras (D3-1),
+    /// eller nil om ordet inte var sparat eller borttagningen inte gick.
+    @discardableResult
+    func delete(lemma: String, language: WordLanguage) -> SavedWordRecord? {
+        var removed: SavedWordRecord?
+        let done = write("borttagningen") { db in
+            removed = try Self.readRecord(db, lemma: lemma, language: language.rawValue)
             try db.execute("DELETE FROM saved_words WHERE lemma = ? AND language = ?", [lemma, language.rawValue])
             try Self.rememberDeleted(db, lemma: lemma, language: language.rawValue)
         }
         changed()
+        return done ? removed : nil
+    }
+
+    /// D3-1: lägger tillbaka ett ord som just tagits bort (Ångra): samma id, bok, betydelse, mening och hela
+    /// repetitionen, och borttagningen glöms. Har ordet sparats igen under tiden ersätts den nya raden.
+    /// Ordets ändringstid blir nu, så att synken skickar ordet som levande även om borttagningen redan
+    /// hunnit till servern. Repetitionens egen tid står kvar.
+    @discardableResult
+    func restoreDeleted(_ record: SavedWordRecord, now: Date = Date()) -> Bool {
+        let done = write("ångrandet") { db in
+            var deletedAt = 0.0
+            try db.query("SELECT deleted FROM deleted_words WHERE lemma = ? AND language = ?",
+                         [record.lemma, record.language]) { row in
+                deletedAt = row.double(0)
+            }
+            try db.execute("DELETE FROM saved_words WHERE lemma = ? AND language = ?", [record.lemma, record.language])
+            // Ett nytt ord tar nästa lediga nummer, så ett annat ord kan ha fått samma under tiden.
+            // Då får ordet ett nytt nummer (null ger nästa lediga).
+            var taken = false
+            try db.query("SELECT 1 FROM saved_words WHERE id = ?", [record.id]) { _ in
+                taken = true
+            }
+            var id: Any? = record.id
+            if taken {
+                id = nil
+            }
+            let updated = max(now.timeIntervalSince1970, deletedAt + 0.001, record.updated)
+            try db.execute("""
+                INSERT INTO saved_words (id, word, lemma, language, sentence, book, page, lookups, created, updated,
+                                         book_id, sense_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [id, record.word, record.lemma, record.language, record.sentence, record.book, record.page,
+                      record.lookups, record.created, updated, record.bookID, record.senseID])
+            try db.execute("DELETE FROM deleted_words WHERE lemma = ? AND language = ?", [record.lemma, record.language])
+            try db.execute("DELETE FROM reviews WHERE lemma = ? AND language = ?", [record.lemma, record.language])
+            if let review = record.review {
+                try db.execute("""
+                    INSERT INTO reviews (lemma, language, due, interval, ease, reps, lapses, introduced, updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, [record.lemma, record.language, review.due, review.interval, review.ease, review.reps,
+                          review.lapses, review.introduced, review.updated])
+            }
+        }
+        if done {
+            changed()
+        }
+        return done
+    }
+
+    /// Allt om ett sparat ord, eller nil om det inte är sparat (till Ångra, testerna och självtestet).
+    func savedWordRecord(lemma: String, language: WordLanguage) -> SavedWordRecord? {
+        var found: SavedWordRecord?
+        read("ordet") { db in
+            found = try Self.readRecord(db, lemma: lemma, language: language.rawValue)
+        }
+        return found
+    }
+
+    /// När ordet togs bort, eller nil om det inte är borttaget (till testerna och självtestet).
+    func deletionTime(lemma: String, language: WordLanguage) -> Double? {
+        var found: Double?
+        read("borttagningen") { db in
+            try db.query("SELECT deleted FROM deleted_words WHERE lemma = ? AND language = ?",
+                         [lemma, language.rawValue]) { row in
+                found = row.double(0)
+            }
+        }
+        return found
+    }
+
+    private static func readRecord(_ db: SQLiteDatabase, lemma: String, language: String) throws -> SavedWordRecord? {
+        var found: SavedWordRecord?
+        try db.query("""
+            SELECT id, word, lemma, language, sentence, book, page, lookups, created, updated, book_id, sense_id
+            FROM saved_words WHERE lemma = ? AND language = ?
+            """, [lemma, language]) { row in
+            found = SavedWordRecord(id: row.int(0), word: row.string(1), lemma: row.string(2), language: row.string(3),
+                                    sentence: row.string(4), book: row.string(5), page: row.int(6),
+                                    lookups: row.int(7), created: row.double(8), updated: row.double(9),
+                                    bookID: row.string(10), senseID: row.string(11), review: nil)
+        }
+        guard var record = found else { return nil }
+        try db.query("""
+            SELECT due, interval, ease, reps, lapses, introduced, updated FROM reviews WHERE lemma = ? AND language = ?
+            """, [lemma, language]) { row in
+            record.review = SavedWordRecord.Review(due: row.double(0), interval: row.double(1), ease: row.double(2),
+                                                   reps: row.int(3), lapses: row.int(4), introduced: row.double(5),
+                                                   updated: row.double(6))
+        }
+        return record
     }
 
     /// Ett borttaget ord minns med tiden, så att synken (fas 6) kan ta bort det på andra enheter.
