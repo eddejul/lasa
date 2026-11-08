@@ -24,6 +24,7 @@ from urllib.parse import unquote, urlparse
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", "src"))
 CONFIG = os.path.join(HERE, "..", "src-tauri", "tauri.conf.json")
+STATEMENTS = os.path.join(HERE, "..", "src-tauri", "statements.json")
 TYPES = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -48,6 +49,17 @@ class Backend:
             "ord": sqlite3.connect(os.path.join(data, "anvandarord.sqlite"), check_same_thread=False, isolation_level=None),
             "bibliotek": sqlite3.connect(os.path.join(data, "bibliotek.sqlite"), check_same_thread=False, isolation_level=None),
         }
+        # Samma namngivna frågor och samma start som i appen (src-tauri/statements.json, W12).
+        with open(STATEMENTS, encoding="utf-8") as file:
+            self.statements = json.load(file)
+        for name, database in self.statements["databases"].items():
+            connection = self.users[name]
+            connection.executescript("\n".join(database["schema"]))
+            for table, columns in database.get("columns", {}).items():
+                existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+                for column, definition in columns:
+                    if column not in existing:
+                        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @staticmethod
     def rows(cursor):
@@ -66,13 +78,17 @@ class Backend:
                 if not sql.lstrip().lower().startswith(("select", "with")):
                     raise ValueError("Ordboken tar bara emot frågor som läser.")
                 return self.rows(self.dictionary.execute(sql, args.get("params", [])))
-            if command == "user_query":
+            if command in ("db_read", "db_write"):
+                kind = "read" if command == "db_read" else "write"
+                if args["name"] not in self.statements[kind]:
+                    raise KeyError(f"Okänd fråga: {args['name']}")
+                db, sql = self.statements[kind][args["name"]]
+                cursor = self.users[db].execute(sql, args.get("params", []))
+                return self.rows(cursor) if kind == "read" else cursor.rowcount
+            if command == "test_sql":
+                # Bara i provservern: testerna läser och skriver i databaserna med egen SQL. Appen har inget
+                # sådant kommando (W12).
                 return self.rows(self.users[args["db"]].execute(args["sql"], args.get("params", [])))
-            if command == "user_execute":
-                return self.users[args["db"]].execute(args["sql"], args.get("params", [])).rowcount
-            if command == "user_batch":
-                self.users[args["db"]].executescript(args["sql"])
-                return None
             if command == "library_store":
                 # Som i appen: först en tillfällig fil, som byter namn när den är skriven.
                 path = self.book_path(headers.get("x-id", ""), headers.get("x-ext", ""))

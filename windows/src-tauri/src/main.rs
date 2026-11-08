@@ -3,6 +3,7 @@
 // provas i en vanlig webbläsare (se ../dev/server.py, som svarar på samma kommandon).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -26,6 +27,72 @@ struct AppState {
     library: Mutex<Connection>,
     /// Mappen med bokfilerna, en fil per bok med namnet <sha256>.<filändelse>.
     books: PathBuf,
+    /// De namngivna frågorna mot användarens databaser (statements.json).
+    statements: Statements,
+    /// Fel när tabellerna skapades vid start. Då svarar db_read och db_write med felet.
+    store_error: Option<String>,
+}
+
+// Smalare behörigheter (W12): gränssnittet kan bara ställa de namngivna frågorna i statements.json mot
+// användarens databaser, aldrig egen SQL. Filen byggs in i appen och läses också av dev/server.py.
+const STATEMENTS: &str = include_str!("../statements.json");
+
+/// Frågornas namn, med databas och SQL. read är frågor som bara läser, write ändrar.
+struct Statements {
+    read: HashMap<String, (String, String)>,
+    write: HashMap<String, (String, String)>,
+}
+
+fn named_statements(all: &Value, key: &str) -> HashMap<String, (String, String)> {
+    let mut map = HashMap::new();
+    if let Some(object) = all.get(key).and_then(Value::as_object) {
+        for (name, pair) in object {
+            if let (Some(db), Some(sql)) = (pair.get(0).and_then(Value::as_str), pair.get(1).and_then(Value::as_str)) {
+                map.insert(name.clone(), (db.to_string(), sql.to_string()));
+            }
+        }
+    }
+    map
+}
+
+/// Skapar tabellerna och lägger till kolumner som saknas, så att en databas från en äldre version fungerar.
+/// Tabell- och kolumnnamnen kommer bara från statements.json i appen, aldrig från gränssnittet.
+fn migrate(connection: &Connection, database: &Value) -> Result<(), String> {
+    let schema: Vec<&str> = database
+        .get("schema")
+        .and_then(Value::as_array)
+        .map(|lines| lines.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    connection
+        .execute_batch(&schema.join("\n"))
+        .map_err(|error| error.to_string())?;
+    if let Some(tables) = database.get("columns").and_then(Value::as_object) {
+        for (table, columns) in tables {
+            let existing: Vec<String> = {
+                let mut statement = connection
+                    .prepare(&format!("PRAGMA table_info({table})"))
+                    .map_err(|error| error.to_string())?;
+                let names = statement
+                    .query_map([], |row| row.get::<_, String>(1))
+                    .map_err(|error| error.to_string())?;
+                let collected: Vec<String> = names.filter_map(Result::ok).collect();
+                collected
+            };
+            for column in columns.as_array().into_iter().flatten() {
+                let (Some(name), Some(definition)) =
+                    (column.get(0).and_then(Value::as_str), column.get(1).and_then(Value::as_str))
+                else {
+                    continue;
+                };
+                if !existing.iter().any(|known| known == name) {
+                    connection
+                        .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn lock(mutex: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
@@ -108,36 +175,36 @@ fn dict_query(
     run_query(&lock(dictionary), &sql, &params, true)
 }
 
+/// En namngiven fråga som läser ur användarens databaser (statements.json, read).
 #[tauri::command(async)]
-fn user_query(
-    state: State<'_, AppState>,
-    db: String,
-    sql: String,
-    params: Vec<Value>,
-) -> Result<Vec<Vec<Value>>, String> {
-    let connection = lock(user_db(&state, &db)?);
-    run_query(&connection, &sql, &params, false)
+fn db_read(state: State<'_, AppState>, name: String, params: Vec<Value>) -> Result<Vec<Vec<Value>>, String> {
+    if let Some(error) = &state.store_error {
+        return Err(error.clone());
+    }
+    let (db, sql) = state
+        .statements
+        .read
+        .get(&name)
+        .ok_or_else(|| format!("Okänd fråga: {name}"))?;
+    let connection = lock(user_db(&state, db)?);
+    run_query(&connection, sql, &params, true)
 }
 
+/// En namngiven fråga som ändrar i användarens databaser (statements.json, write). Ger antalet ändrade rader.
 #[tauri::command(async)]
-fn user_execute(
-    state: State<'_, AppState>,
-    db: String,
-    sql: String,
-    params: Vec<Value>,
-) -> Result<usize, String> {
-    let connection = lock(user_db(&state, &db)?);
+fn db_write(state: State<'_, AppState>, name: String, params: Vec<Value>) -> Result<usize, String> {
+    if let Some(error) = &state.store_error {
+        return Err(error.clone());
+    }
+    let (db, sql) = state
+        .statements
+        .write
+        .get(&name)
+        .ok_or_else(|| format!("Okänd ändring: {name}"))?;
+    let connection = lock(user_db(&state, db)?);
     let values: Vec<SqlValue> = params.iter().map(to_sql).collect();
     connection
-        .execute(&sql, params_from_iter(values.iter()))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command(async)]
-fn user_batch(state: State<'_, AppState>, db: String, sql: String) -> Result<(), String> {
-    let connection = lock(user_db(&state, &db)?);
-    connection
-        .execute_batch(&sql)
+        .execute(sql, params_from_iter(values.iter()))
         .map_err(|error| error.to_string())
 }
 
@@ -389,11 +456,29 @@ fn main() {
             let words = Connection::open(data.join("anvandarord.sqlite"))?;
             let library = Connection::open(data.join("bibliotek.sqlite"))?;
             let dictionary = open_dictionary(app);
+            let all: Value = serde_json::from_str(STATEMENTS).unwrap_or(Value::Null);
+            let mut store_error = None;
+            for (name, connection) in [("ord", &words), ("bibliotek", &library)] {
+                match all.get("databases").and_then(|databases| databases.get(name)) {
+                    Some(database) => {
+                        if let Err(error) = migrate(connection, database) {
+                            store_error = Some(format!("Databasen {name} kunde inte göras i ordning: {error}"));
+                        }
+                    }
+                    None => store_error = Some("statements.json saknar databaserna.".to_string()),
+                }
+            }
+            let statements = Statements {
+                read: named_statements(&all, "read"),
+                write: named_statements(&all, "write"),
+            };
             app.manage(AppState {
                 dictionary,
                 words: Mutex::new(words),
                 library: Mutex::new(library),
                 books,
+                statements,
+                store_error,
             });
             // Om sidan av någon anledning inte säger att den laddats visas fönstret ändå efter fyra sekunder.
             if let Some(window) = app.get_webview_window("main") {
@@ -420,9 +505,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             dict_query,
-            user_query,
-            user_execute,
-            user_batch,
+            db_read,
+            db_write,
             library_store,
             library_read,
             library_delete,

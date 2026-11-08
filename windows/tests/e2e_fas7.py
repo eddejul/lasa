@@ -136,13 +136,15 @@ def themes_and_files(page, books, out):
 
 
 DATA = None
+STEP = ['']
+CONSOLE = []
 
 
 def run(url, books, out, data):
     global PAGE, DATA
     DATA = data
     os.makedirs(out, exist_ok=True)
-    console = []
+    console = CONSOLE
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome", headless=True)
         context = browser.new_context(viewport={"width": 1278, "height": 720}, device_scale_factor=1.5)
@@ -150,12 +152,14 @@ def run(url, books, out, data):
         page = context.new_page()
         PAGE = page
         page.on("console", lambda m: console.append(f"{m.type}: {m.text}") if m.type in ("error", "warning") else None)
-        page.on("pageerror", lambda e: console.append(f"pageerror: {e}"))
+        page.on("pageerror", lambda e: console.append(f"pageerror: {e} (i steget {STEP[0]}) [{(e.stack or '')[:1500]}]"))
         page.goto(url)
         page.wait_for_selector('[data-testid="tab-library"]')
 
+        STEP[0] = 'themes_and_files'
         themes_and_files(page, books, out)
         for step in STEPS:
+            STEP[0] = step.__name__
             step(page, books, out)
 
         problems = [line for line in console if not any(known in line for known in KNOWN + EXPECTED)]
@@ -308,7 +312,7 @@ def shortcuts(page, books, out):
 
 
 def db_rows(page, sql, params=None):
-    return page.evaluate("""async ([sql, params]) => (await fetch('/api/user_query', { method: 'POST',
+    return page.evaluate("""async ([sql, params]) => (await fetch('/api/test_sql', { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ db: 'bibliotek', sql, params }) })).json()""",
                          [sql, params or []])
 
@@ -500,7 +504,7 @@ def memory(page, books, out):
 
 
 def words_rows(page, sql):
-    return page.evaluate("""async (sql) => (await fetch('/api/user_query', { method: 'POST',
+    return page.evaluate("""async (sql) => (await fetch('/api/test_sql', { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ db: 'ord', sql, params: [] }) })).json()""", sql)
 
 
@@ -508,7 +512,7 @@ def review(page, books, out):
     # Tre ord till, som om de slagits upp tidigare (äldre än det första).
     page.evaluate("""async () => {
       for (const [i, word] of ['stad', 'bro', 'library'].entries()) {
-        await fetch('/api/user_execute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        await fetch('/api/test_sql', { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ db: 'ord', sql: `INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups,
             created, updated, uuid, book_id) VALUES (?, ?, ?, ?, 'Prov', 0, 1, ?, ?, ?, '')`,
             params: [word, word, word === 'library' ? 'en' : 'sv', `En mening med ${word}.`, 1700000000 + i, 1700000000 + i, `uuid-${i}`] }) });
@@ -595,7 +599,28 @@ def spreads(page, books, out):
     back_to_library(page)
 
 
-STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review, spreads]
+def narrow_commands(page, books, out):
+    # W12: egen SQL och okända namn tas inte emot (provservern svarar som appen).
+    before = len(CONSOLE)
+    statuses = page.evaluate("""async () => {
+      const post = async (command, body) => (await fetch('/api/' + command, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status;
+      return [
+        await post('user_query', { db: 'bibliotek', sql: 'SELECT * FROM settings', params: [] }),
+        await post('user_batch', { db: 'bibliotek', sql: 'DROP TABLE books' }),
+        await post('db_read', { name: 'DROP TABLE books', params: [] }),
+        await post('db_write', { name: 'settings_all', params: [] }),
+        await post('db_read', { name: 'settings_all', params: [] }),
+      ];
+    }""")
+    check(statuses[:4] == [500, 500, 500, 500] and statuses[4] == 200,
+          f'bara namngivna frågor tas emot, av rätt slag: {statuses}')
+    page.wait_for_timeout(300)
+    # Webbläsaren skriver de nekade anropen i konsolen. De är väntade.
+    CONSOLE[before:] = [line for line in CONSOLE[before:] if 'status of 500' not in line]
+
+
+STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review, spreads, narrow_commands]
 
 
 def main():

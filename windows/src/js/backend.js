@@ -24,14 +24,14 @@ export const dictionaryDb = {
   all: (sql, params = []) => invoke('dict_query', { sql, params }),
 };
 
-/** En av användarens databaser: 'ord' (sparade ord) eller 'bibliotek'. */
-export function userDb(db) {
-  return {
-    all: (sql, params = []) => invoke('user_query', { db, sql, params }),
-    run: (sql, params = []) => invoke('user_execute', { db, sql, params }),
-    batch: (sql) => invoke('user_batch', { db, sql }),
-  };
-}
+/** Användarens databaser (sparade ord och biblioteket). Bara de namngivna frågorna i
+ *  src-tauri/statements.json går att ställa, aldrig egen SQL (W12). */
+export const userDb = {
+  /** Rader som listor, kolumnerna i frågans ordning. */
+  read: (name, params = []) => invoke('db_read', { name, params }),
+  /** Ger antalet ändrade rader. */
+  write: (name, params = []) => invoke('db_write', { name, params }),
+};
 
 export async function storeBookFile(id, ext, bytes) {
   if (tauri) {
