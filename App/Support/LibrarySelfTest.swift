@@ -100,12 +100,13 @@ enum LibrarySelfTest {
         // U10: ett tryck trycker ner omslaget till 97 procent, och det går tillbaka när fingret släpper.
         library.collectionViewForSelfTest.layoutIfNeeded()
         if let cell = library.collectionViewForSelfTest.visibleCells.compactMap({ $0 as? BookCell }).first {
+            // Värdet läses direkt efter trycket: ett omslag som blir klart under en paus laddar om rutnätet,
+            // och då nollställs cellen (det hände i en körning).
             cell.isHighlighted = true
-            await pause(0.3)
             let pressed = cell.cover.transform.a
             cell.isHighlighted = false
-            await pause(0.4)
             let back = cell.cover.transform.a
+            await pause(0.3)
             SelfTest.log("Tryck på omslaget (U10): skala \(String(format: "%.2f", pressed)) nere, "
                          + "\(String(format: "%.2f", back)) efteråt. \(abs(pressed - 0.97) < 0.005 && back == 1 ? "Rätt" : "FEL")")
         }
