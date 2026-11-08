@@ -64,12 +64,19 @@ struct BookPageNumbering: Equatable {
         return (first, last, spread)
     }
 
+    /// D4-2: i en tryckt bok står jämna sidor till vänster. Ett uppslag som visar sida `first` har därför
+    /// vänstersidan `first` om den är jämn, annars `first - 1`.
+    static func spreadStart(_ first: Int) -> Int {
+        first % 2 == 0 ? first : first - 1
+    }
+
     /// Bokens sidor för sidan `index` (från 0) i filen, när de är kända som tal (förskjutningen).
     func bookPages(for index: Int) -> ClosedRange<Int>? {
         guard case let .offset(first, spread) = source else { return nil }
         if spread {
-            let left = first + 2 * index
-            return left...(left + 1)
+            let left = Self.spreadStart(first) + 2 * index
+            // Sida 1 står ensam till höger, det finns ingen sida 0.
+            return left <= 0 ? 1...1 : left...(left + 1)
         }
         return (first + index)...(first + index)
     }
@@ -122,8 +129,9 @@ struct BookPageNumbering: Equatable {
         guard !typed.isEmpty, pageCount > 0 else { return nil }
         switch source {
         case let .offset(first, spread):
-            if let number = Int(typed), number >= first {
-                let index = spread ? (number - first) / 2 : number - first
+            let start = spread ? Self.spreadStart(first) : first
+            if let number = Int(typed), number >= start {
+                let index = spread ? (number - start) / 2 : number - first
                 if index < pageCount {
                     return index
                 }
@@ -159,8 +167,9 @@ struct BookPageNumbering: Equatable {
         case .pdfLabels:
             return "Nu används sidnumren som står i PDF:en."
         case let .offset(first, spread):
+            let left = Self.spreadStart(first)
             return spread
-                ? "Nu är filens första sida bokens sidor \(first) och \(first + 1), två boksidor per bild."
+                ? "Nu visar filens första bild bokens sidor \(left) och \(left + 1) (jämn sida till vänster), två boksidor per bild."
                 : "Nu är filens första sida bokens sida \(first)."
         }
     }

@@ -35,13 +35,18 @@ final class StudyTests: XCTestCase {
     func testSpreadNumbers() {
         let numbering = BookPageNumbering.resolve(first: 281, spread: true, fileName: "Kap.pdf", pageCount: 13,
                                                   hasPDFLabels: false)
-        XCTAssertEqual(numbering.printed(for: 0, pdfLabel: nil), "281 och 282")
-        XCTAssertEqual(numbering.printed(for: 2, pdfLabel: nil), "285 och 286")
-        XCTAssertEqual(numbering.index(forTyped: "286", pageCount: 13) { _ in nil }, 2)
+        // D4-2: jämn sida till vänster, så ett kapitel som börjar på s. 281 har 280 och 281 på första bilden.
+        XCTAssertEqual(numbering.printed(for: 0, pdfLabel: nil), "280 och 281")
+        XCTAssertEqual(numbering.printed(for: 2, pdfLabel: nil), "284 och 285")
+        XCTAssertEqual(numbering.index(forTyped: "281", pageCount: 13) { _ in nil }, 0)
+        XCTAssertEqual(numbering.index(forTyped: "286", pageCount: 13) { _ in nil }, 3)
         XCTAssertEqual(numbering.index(forTyped: "285", pageCount: 13) { _ in nil }, 2)
-        XCTAssertEqual(numbering.citationPage(for: 2, half: 1, pdfLabel: nil), "286")
-        XCTAssertEqual(numbering.citationPage(for: 2, half: 0, pdfLabel: nil), "285")
-        XCTAssertEqual(numbering.citationPage(for: 2, half: nil, pdfLabel: nil), "285 f.")
+        XCTAssertEqual(numbering.citationPage(for: 2, half: 1, pdfLabel: nil), "285")
+        XCTAssertEqual(numbering.citationPage(for: 2, half: 0, pdfLabel: nil), "284")
+        XCTAssertEqual(numbering.citationPage(for: 2, half: nil, pdfLabel: nil), "284 f.")
+        let even = BookPageNumbering(source: .offset(first: 62, spread: true))
+        XCTAssertEqual(even.printed(for: 0, pdfLabel: nil), "62 och 63")
+        XCTAssertNil(BookPageNumbering(source: .offset(first: 1, spread: true)).printed(for: 0, pdfLabel: nil))
     }
 
     func testPDFLabelsAndFileNumbers() {
