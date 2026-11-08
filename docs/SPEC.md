@@ -232,6 +232,11 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Utseenderutan (U2):** Aa har bakgrunderna och, för EPUB och text, storlek, typsnitt, marginal, radavstånd, justering och Återställ. Raden hålls till ungefär 66 tecken, radavståndet är 1,5 och justerade stycken avstavas på bokens språk. PDF har bakgrunderna och Zooma sidan.
 * **Databasrättningar ur granskningen:** säkerhetskopiorna rensas per dag och aldrig kopian före uppdateringen eller den som återställts, synken väntar till nästa start efter en återställning, och böcker från före bokregistret känns igen på storlek och ändringstid.
 
+### 6.10 Våg 5 (8 november 2026)
+
+* **Ordkortet (U4):** ordet en gång, stort, med ordklass och SV eller EN. Svaret direkt under, synonymerna som knappar som slår upp ordet i samma ruta, meningen ur boken med ordet understruket och boken och sidan under. Förklara i meningen svarar i samma kort. Längst ner SO och SAOL, Sparat, Fel synonym och betydelserna. Ark i halv höjd på iPhone. Ingen uppläsning.
+* **Välj betydelse (O7):** ett tryck på en betydelse sparar den med ordet. Kortet visar den överst och repetitionen bara den. AI-knappen kan föreslå en betydelse, men man väljer själv.
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.

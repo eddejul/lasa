@@ -64,6 +64,12 @@ final class AboutDictionaryViewController: UITableViewController {
         hidden = UserWords.shared.hiddenPairs.sorted { ($0.lemma, $0.synonym) < ($1.lemma, $1.synonym) }
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Ordkortet döljer menyraden. Den här sidan har den, med tillbakapil.
+        navigationController?.setNavigationBarHidden(false, animated: animated)
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let size = CGSize(width: 360, height: 560)

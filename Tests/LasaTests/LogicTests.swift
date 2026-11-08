@@ -209,3 +209,44 @@ final class AppExpiryTests: XCTestCase {
         XCTAssertNil(AppExpiry.parse(Data("ingen plist".utf8)))
     }
 }
+
+/// Ordkortet (U4) och den valda betydelsen (O7).
+final class WordCardTests: XCTestCase {
+
+    private func sense(_ id: String, _ definition: String?, _ synonyms: [String]) -> WordSense {
+        WordSense(id: id, definition: definition,
+                  synonyms: synonyms.map { Synonym(word: $0, score: 4, frequency: 4) })
+    }
+
+    private var entries: [WordEntry] {
+        [WordEntry(lemma: "lätt", pos: "av", posName: "adjektiv",
+                   senses: [sense("lätt..1", "som väger lite", ["lättviktig"]),
+                            sense("lätt..2", nil, ["enkel", "okomplicerad", "simpel", "busenkel", "elementär"])],
+                   translations: [], translationVia: nil),
+         WordEntry(lemma: "lätt", pos: "ab", posName: "adverb",
+                   senses: [sense("lätt..3", "utan svårighet", [])],
+                   translations: [], translationVia: nil)]
+    }
+
+    func testChosenSenseIsFoundInAnyEntry() {
+        XCTAssertEqual(WordText.sense(withID: "lätt..2", in: entries)?.sense.id, "lätt..2")
+        XCTAssertEqual(WordText.sense(withID: "lätt..3", in: entries)?.entry.pos, "ab")
+    }
+
+    func testNoChoiceGivesNil() {
+        XCTAssertNil(WordText.sense(withID: "", in: entries))
+        XCTAssertNil(WordText.sense(withID: "finns..9", in: entries))
+    }
+
+    func testGlossIsDefinitionOrFourSynonyms() {
+        XCTAssertEqual(WordText.gloss(entries[0].senses[0]), "som väger lite")
+        XCTAssertEqual(WordText.gloss(entries[0].senses[1]), "enkel, okomplicerad, simpel, busenkel")
+    }
+
+    func testSourceLine() {
+        XCTAssertEqual(WordText.source(book: "Retorikens grunder", pageIndex: 87), "Retorikens grunder, s. 88")
+        XCTAssertEqual(WordText.source(book: "Bok", pageIndex: nil), "Bok")
+        XCTAssertNil(WordText.source(book: nil, pageIndex: 3))
+        XCTAssertNil(WordText.source(book: "", pageIndex: 3))
+    }
+}
