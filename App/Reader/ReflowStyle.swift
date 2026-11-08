@@ -11,8 +11,8 @@ enum ReflowStyle {
         let padding = layout.padding
         let vertical = padding.top + padding.bottom
         let typography = layout.typography
-        // U2: sidmarginalen växer när sidan är bred, så att raden blir högst ungefär 66 tecken (34 em med
-        // Normal). Kolumn plus mellanrum är alltid 100vw, så att bläddringen i skriptet stämmer.
+        // U2: sidmarginalen växer när sidan är bred, så att raden blir högst ungefär 66 tecken (29,5 em
+        // med Normal). Kolumn plus mellanrum är alltid 100vw, så att bläddringen i skriptet stämmer.
         let side = "max(\(px(max(padding.left, padding.right)))," +
             " calc((100vw - \(String(format: "%.1f", typography.margin.measure))em) / 2))"
         var css = """

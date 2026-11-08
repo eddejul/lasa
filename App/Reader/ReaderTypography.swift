@@ -91,12 +91,13 @@ struct ReaderTypography: Equatable {
             }
         }
 
-        /// Längsta raden i em, med ungefär ett halvt em per tecken.
+        /// Längsta raden i em. Ett tecken är i snitt ungefär 0,44 em i serifftypsnitt (mätt i simulatorn:
+        /// 34 em gav 76 tecken i Georgia), så 29,5 em ger ungefär 66 tecken.
         var measure: Double {
             switch self {
-            case .narrow: return 38
-            case .normal: return 34
-            case .wide: return 30
+            case .narrow: return 33.5
+            case .normal: return 29.5
+            case .wide: return 26
             }
         }
     }
