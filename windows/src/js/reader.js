@@ -1,7 +1,7 @@
 // Läsarens ram: verktygsraden, sidan, reglaget och sidnumret nere, tangenter och mushjul.
 // Själva sidorna ritas av PdfReader (PDF) eller ReflowReader (EPUB och text).
 
-import { inTauri, readBookFile } from './backend.js';
+import { bookFileSize, inTauri, readBookFile, readBookRange } from './backend.js';
 import {
   BookAnnotations, closeMarkMenu, editNote, isMarkMenuOpen, lastColor, renderMarksPanel, showHighlightMenu, showSelectionMenu,
 } from './annotations.js';
@@ -473,13 +473,34 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   // Följ systemet: när Windows byter mellan ljust och mörkt följer EPUB-sidorna med.
   setThemeListener((theme) => reader.setSettings?.({ theme }));
 
+  /** En stor PDF (över 16 MB) läses i bitar, en mindre läses hel. Går bitarna inte att läsa provas hela filen. */
+  async function openPdfBook() {
+    const limit = Number.isFinite(settings.pdfRangeMin) ? settings.pdfRangeMin : 16 * 1024 * 1024;
+    let length = 0;
+    try {
+      length = await bookFileSize(book.id, book.ext);
+    } catch {
+      length = 0;
+    }
+    if (length > limit) {
+      try {
+        await reader.open({ length, read: (start, end) => readBookRange(book.id, book.ext, start, end) }, book.position);
+        return;
+      } catch (error) {
+        if (['PasswordException', 'InvalidPDFException', 'FormatError'].includes(error?.name)) throw error;
+        console.warn('PDF:en kunde inte läsas i bitar, läser hela filen', error);
+      }
+    }
+    await reader.open(await readBookFile(book.id, book.ext), book.position);
+  }
+
   await markOpened(book.id);
   await annotations.load();
   try {
-    // Bokfilen läses först nu, så att läsaren och Öppnar boken syns direkt.
-    const bytes = await readBookFile(book.id, book.ext);
-    if (book.format === 'pdf') await reader.open(bytes, book.position);
+    // Bokfilen läses först nu, så att läsaren och Öppnar boken syns direkt. En stor PDF läses i bitar.
+    if (book.format === 'pdf') await openPdfBook();
     else {
+      const bytes = await readBookFile(book.id, book.ext);
       await reader.open(bytes, book.position, { ext: book.ext, title: book.title,
         settings: { ...settings, theme: resolvedTheme(), spread: settings.reflowSpread ?? 'auto' } });
     }

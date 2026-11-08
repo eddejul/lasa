@@ -99,6 +99,13 @@ class Backend:
             if command == "library_read":
                 with open(self.book_path(args["id"], args["ext"]), "rb") as file:
                     return file.read()
+            if command == "library_size":
+                return os.path.getsize(self.book_path(args["id"], args["ext"]))
+            if command == "library_read_range":
+                with open(self.book_path(args["id"], args["ext"]), "rb") as file:
+                    file.seek(int(args["start"]))
+                    self.ranges = getattr(self, "ranges", 0) + 1
+                    return file.read(max(0, min(int(args["end"]) - int(args["start"]), 64 * 1024 * 1024)))
             if command == "library_delete":
                 path = self.book_path(args["id"], args["ext"])
                 if os.path.exists(path):

@@ -687,7 +687,41 @@ def ai_button(page, books, out):
     page.wait_for_selector('[data-testid="book"]')
 
 
-STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review, spreads, narrow_commands, ai_button]
+def pdf_in_pieces(page, books, out):
+    # Stora PDF:er läses i bitar. Testboken är liten, så gränsen sätts till 0 för provet.
+    page.evaluate("""fetch('/api/test_sql', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ db: 'bibliotek', sql: "INSERT OR REPLACE INTO settings (key, value) VALUES ('pdfRangeMin', '0')", params: [] }) })""")
+    page.reload()
+    page.wait_for_selector('[data-testid="book"]')
+    requests = []
+    page.on("request", lambda request: requests.append(request.url))
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    page.wait_for_function("document.querySelectorAll('.pdf-spread .textLayer span').length > 5")
+    pieces = [url for url in requests if url.endswith('/api/library_read_range')]
+    whole = [url for url in requests if url.endswith('/api/library_read')]
+    check(pieces and not whole, f'PDF:en läses i bitar, inte hel: {len(pieces)} bitar, {len(whole)} hela')
+    page.keyboard.press('End')
+    check(wait_for(lambda: 'Sida 9' in page.locator('.page-label').inner_text() or '9 av 9' in page.locator('.page-label').inner_text()),
+          f'sista sidan går att visa: {page.locator(".page-label").inner_text()}')
+    page.keyboard.press('Control+f')
+    page.fill('[data-testid="search-input"]', 'library')
+    check(wait_for(lambda: 'Söker' not in page.locator('[data-testid="search-status"]').inner_text()
+                   and page.locator('[data-testid="search-hit-row"]').count() >= 1, 15), 'sökningen fungerar med bitarna')
+    page.keyboard.press('Escape')
+    page.keyboard.press('Home')
+    page.keyboard.press('ArrowRight')
+    page.wait_for_function("document.querySelectorAll('.pdf-spread .textLayer span').length > 5")
+    point = word_edges(page, 'Undersökningen')
+    page.mouse.dblclick((point["left"]["x"] + point["right"]["x"]) / 2, point["left"]["y"])
+    check(wait_for(lambda: page.locator('.popup [data-testid="header"]').count() == 1), 'ordfunktionen fungerar med bitarna')
+    page.keyboard.press('Escape')
+    back_to_library(page)
+    page.evaluate("""fetch('/api/test_sql', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ db: 'bibliotek', sql: "DELETE FROM settings WHERE key = 'pdfRangeMin'", params: [] }) })""")
+
+
+STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review, spreads, narrow_commands, ai_button, pdf_in_pieces]
 
 
 def main():

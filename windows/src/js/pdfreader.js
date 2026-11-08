@@ -6,7 +6,7 @@
 // fönstret, och man rullar nedåt). Automatiskt väljer Sidbredd när en hel sida skulle bli för liten
 // för att läsa, som på en bärbar dator med 150 procents skalning. Zoom gör sidan större än så.
 
-import { closePdf, openPdf, pdfjs } from './pdfjs.js';
+import { closePdf, openPdf, openPdfRange, pdfjs } from './pdfjs.js';
 import { MAX_HITS, breathe, excerpt, findAll, foldQuery } from './search.js';
 import { el } from './ui.js';
 import { isWordCharacter, wordInPageText } from './wordfind.js';
@@ -75,8 +75,9 @@ export class PdfReader {
     });
   }
 
-  async open(bytes, position) {
-    this.pdf = await openPdf(bytes);
+  /** source: bokens byte, eller { length, read(start, end) } för att läsa en stor PDF i bitar. */
+  async open(source, position) {
+    this.pdf = source instanceof Uint8Array ? await openPdf(source) : await openPdfRange(source.length, source.read);
     this.count = this.pdf.numPages;
     try {
       this.labels = await this.pdf.getPageLabels();

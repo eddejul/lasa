@@ -56,6 +56,24 @@ export async function readBookFile(id, ext) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+/** Storleken på en bokfil i byte. */
+export async function bookFileSize(id, ext) {
+  return invoke('library_size', { id, ext });
+}
+
+/** En bit av en bokfil, från start till (men inte med) end. */
+export async function readBookRange(id, ext, start, end) {
+  if (tauri) {
+    const data = await tauri.invoke('library_read_range', { id, ext, start, end });
+    return new Uint8Array(data);
+  }
+  const response = await fetch('/api/library_read_range', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ext, start, end }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 export async function deleteBookFile(id, ext) {
   return invoke('library_delete', { id, ext });
 }

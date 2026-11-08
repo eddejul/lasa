@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -278,6 +278,26 @@ fn library_read(state: State<'_, AppState>, id: String, ext: String) -> Result<R
     Ok(Response::new(bytes))
 }
 
+/// Storleken på en bokfil i byte, för läsning i bitar.
+#[tauri::command(async)]
+fn library_size(state: State<'_, AppState>, id: String, ext: String) -> Result<u64, String> {
+    let path = book_path(&state, &id, &ext)?;
+    fs::metadata(&path).map(|metadata| metadata.len()).map_err(|error| error.to_string())
+}
+
+/// En bit av en bokfil, från start till (men inte med) end, som råa byte. Stora PDF:er läses så, bit för
+/// bit när pdf.js behöver dem (W4), i stället för att hela filen ligger i minnet. Högst 64 MB per bit.
+#[tauri::command(async)]
+fn library_read_range(state: State<'_, AppState>, id: String, ext: String, start: u64, end: u64) -> Result<Response, String> {
+    let path = book_path(&state, &id, &ext)?;
+    let mut file = fs::File::open(&path).map_err(|error| error.to_string())?;
+    let length = end.saturating_sub(start).min(64 * 1024 * 1024);
+    file.seek(SeekFrom::Start(start)).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::with_capacity(length as usize);
+    file.take(length).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+    Ok(Response::new(bytes))
+}
+
 #[tauri::command(async)]
 fn library_delete(state: State<'_, AppState>, id: String, ext: String) -> Result<(), String> {
     let path = book_path(&state, &id, &ext)?;
@@ -510,6 +530,8 @@ fn main() {
             db_write,
             library_store,
             library_read,
+            library_size,
+            library_read_range,
             library_delete,
             secret_get,
             secret_set,
