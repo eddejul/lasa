@@ -56,6 +56,49 @@ enum SelfTest {
         log("Bild sparad: \(name)")
     }
 
+    /// Andelen punkter (0 till 100) i vyns mittband, utan menyraden och nederkanten, som skiljer sig tydligt
+    /// från papperets färg. Under cirka 0,5 är sidan blank. Edvin 8 nov: sidan blev blank efter Aa.
+    @MainActor
+    static func inkPercent(in view: UIView, paper: UIColor) -> Double {
+        let bounds = view.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return -1 }
+        let width = 96
+        let height = max(Int((Double(width) * Double(bounds.height / bounds.width)).rounded()), 1)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let small = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { _ in
+            _ = view.drawHierarchy(in: CGRect(x: 0, y: 0, width: width, height: height), afterScreenUpdates: true)
+        }
+        guard let cg = small.cgImage else { return -1 }
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        paper.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        let paperRGB = [Int(red * 255), Int(green * 255), Int(blue * 255)]
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let counted: Int = pixels.withUnsafeMutableBytes { buffer -> Int in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return -1 }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            var ink = 0
+            // Mittbandet: 15 till 85 procent av höjden, där menyraden och nederkanten inte ligger.
+            for row in Int(Double(height) * 0.15)..<Int(Double(height) * 0.85) {
+                for column in 0..<width {
+                    let index = (row * width + column) * 4
+                    let difference = abs(Int(bytes[index]) - paperRGB[0]) + abs(Int(bytes[index + 1]) - paperRGB[1])
+                        + abs(Int(bytes[index + 2]) - paperRGB[2])
+                    if difference > 40 {
+                        ink += 1
+                    }
+                }
+            }
+            return ink
+        }
+        guard counted >= 0 else { return -1 }
+        let band = max(Int(Double(height) * 0.85) - Int(Double(height) * 0.15), 1) * width
+        return Double(counted) * 100 / Double(band)
+    }
+
     static func finish() {
         log("KLART")
         try? Data().write(to: directory.appendingPathComponent(stem + ".klar"))

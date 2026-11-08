@@ -2091,11 +2091,30 @@ extension PDFCurlReaderViewController {
         await pause(0.9)
         if let navigation = presentedViewController as? UINavigationController {
             SelfTest.saveScreen(navigation.view, name: "11-utseende")
+            // Edvin 8 nov: sidan blev blank efter Aa. Bakgrunderna byts med rutan öppen, en i taget och
+            // tätt efter varandra, och bläcket på sidan räknas efter varje byte.
+            if let panel = navigation.viewControllers.first as? AppearanceViewController {
+                let steps: [(String, [ReaderTheme])] = [("Mörkt", [.dark]), ("Vitt", [.white]), ("Sepia", [.sepia]),
+                                                        ("Tätt efter varandra", [.dark, .paper, .white, .dark, .paper])]
+                for (name, themes) in steps {
+                    for option in themes {
+                        panel.perform(.theme(option))
+                        await pause(0.12)
+                    }
+                    await pause(0.6)
+                    let shown = await waitForImages()
+                    let ink = SelfTest.inkPercent(in: view, paper: theme.paperColor)
+                    SelfTest.log("Aa med rutan öppen, \(name): \(shown ? "sidan klar" : "FEL, sidan kom inte"), "
+                                 + "bläck \(String(format: "%.1f", ink)) %\(ink < 0.5 ? " FEL, BLANK" : "")")
+                }
+            }
         } else {
             SelfTest.log("FEL: utseenderutan öppnades inte")
         }
         dismiss(animated: false)
         await pause(0.3)
+        setTheme(savedTheme)
+        await pause(0.4)
 
         await selfTestFoldWork()
         await selfTestResumeCard()
