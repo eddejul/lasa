@@ -9,19 +9,24 @@ enum ReflowStyle {
 
     static func css(layout: ReflowLayout, theme: ReaderTheme) -> String {
         let padding = layout.padding
-        let horizontal = padding.left + padding.right
         let vertical = padding.top + padding.bottom
+        let typography = layout.typography
+        // U2: sidmarginalen växer när sidan är bred, så att raden blir högst ungefär 66 tecken (34 em med
+        // Normal). Kolumn plus mellanrum är alltid 100vw, så att bläddringen i skriptet stämmer.
+        let side = "max(\(px(max(padding.left, padding.right)))," +
+            " calc((100vw - \(String(format: "%.1f", typography.margin.measure))em) / 2))"
         var css = """
         html {
           margin: 0 !important;
-          padding: \(px(padding.top)) \(px(padding.right)) \(px(padding.bottom)) \(px(padding.left)) !important;
+          padding: \(px(padding.top)) \(side) \(px(padding.bottom)) \(side) !important;
           width: 100vw !important; min-width: 100vw !important; max-width: 100vw !important;
           height: 100vh !important; min-height: 100vh !important; max-height: 100vh !important;
           box-sizing: border-box !important;
-          -webkit-column-width: calc(100vw - \(px(horizontal))) !important;
-          column-width: calc(100vw - \(px(horizontal))) !important;
-          -webkit-column-gap: \(px(horizontal)) !important;
-          column-gap: \(px(horizontal)) !important;
+          -webkit-column-width: calc(100vw - 2 * \(side)) !important;
+          column-width: calc(100vw - 2 * \(side)) !important;
+          -webkit-column-gap: calc(2 * \(side)) !important;
+          column-gap: calc(2 * \(side)) !important;
+          line-height: \(String(format: "%.2f", typography.lineSpacing.lineHeight)) !important;
           column-fill: auto !important;
           -webkit-text-size-adjust: none !important;
           font-size: __ROOT__ !important;
@@ -75,6 +80,18 @@ enum ReflowStyle {
         case .dark:
             css += colorOverrides(paper: "#1c1c1c", text: "#d2d2d2", link: "#8ab4f8",
                                   extra: "img, svg, video { opacity: 0.88; }\n")
+        }
+
+        // Radavståndet i brödtexten, och justering med avstavning på bokens språk (-webkit- krävs i iOS 15).
+        // Stycken som boken själv centrerar eller högerställer lämnas.
+        let lineHeight = String(format: "%.2f", typography.lineSpacing.lineHeight)
+        css += "p, li, blockquote, dd, dt, td { line-height: \(lineHeight) !important; }\n"
+        if typography.justify {
+            css += "p:not([align]):not([style*=\"center\"]):not([style*=\"right\"]), li { text-align: justify "
+                + "!important; -webkit-hyphens: auto !important; hyphens: auto !important; }\n"
+        } else {
+            css += "p:not([align]):not([style*=\"center\"]):not([style*=\"right\"]), li { text-align: start "
+                + "!important; -webkit-hyphens: manual !important; hyphens: manual !important; }\n"
         }
 
         if let family = layout.typography.font.cssFamily {
@@ -142,6 +159,17 @@ enum ReflowStyle {
         }
         var baseRoot = parseFloat(style.getAttribute('data-base')) || 16;
         style.textContent = css.split('__ROOT__').join((baseRoot * scale).toFixed(2) + 'px');
+        // U2: avstavning kräver språket på html. Saknas det och boken bara har xml:lang, används det.
+        // Utan språk blir det ingen avstavning, och texten justeras ändå.
+        if (!root.getAttribute('lang')) {
+          var XML = 'http://www.w3.org/XML/1998/namespace';
+          var body = document.body;
+          var lang = root.getAttributeNS(XML, 'lang') ||
+            (body && (body.getAttribute('lang') || body.getAttributeNS(XML, 'lang')));
+          if (lang) {
+            root.setAttribute('lang', lang);
+          }
+        }
       }
 
       function frame() {

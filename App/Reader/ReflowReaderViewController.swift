@@ -64,7 +64,7 @@ final class ReflowReaderViewController: UIViewController {
                                    style: .plain,
                                    target: self,
                                    action: #selector(showTypography))
-        text.accessibilityLabel = "Typsnitt och storlek"
+        text.accessibilityLabel = "Utseende och text"
         return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: text, theme: theme,
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark)),
@@ -324,7 +324,8 @@ final class ReflowReaderViewController: UIViewController {
     /// Sidans storlek och textens marginaler. I ett uppslag är en sida halva bredden.
     private func makeLayout(size: CGSize, insets: UIEdgeInsets, mode: Mode) -> ReflowLayout {
         let pageWidth = mode == .spread ? (size.width / 2).rounded(.down) : size.width
-        let side = min(max((pageWidth * 0.075).rounded(), 20), 64) + max(insets.left, insets.right)
+        let factor = typography.margin.factor
+        let side = min(max((pageWidth * 0.075 * factor).rounded(), 16), 90) + max(insets.left, insets.right)
         let padding = UIEdgeInsets(top: insets.top + 30, left: side, bottom: insets.bottom + 36, right: side)
         return ReflowLayout(pageSize: CGSize(width: pageWidth, height: size.height),
                             padding: padding,
@@ -783,19 +784,16 @@ final class ReflowReaderViewController: UIViewController {
 
     // MARK: Typsnitt och storlek
 
+    /// Aa: utseenderutan med bakgrund, storlek, typsnitt, marginal, radavstånd och justering (U2).
+    /// Mätvärdena som rutan Text visade förut står i loggen när boken stängs.
     @objc private func showTypography() {
         guard presentedViewController == nil else { return }
-        let controller = TypographyViewController(typography: typography)
-        controller.onChange = { [weak self] value in
+        let controller = AppearanceViewController(theme: theme, typography: typography)
+        controller.onTypography = { [weak self] value in
             self?.setTypography(value)
         }
-        controller.diagnostics = { [weak self] in
-            guard let self = self, let renderer = self.renderer else { return nil }
-            var text = renderer.statsSummary
-            if let first = renderer.firstSnapshotAt {
-                text += " Boken öppnades på \(Int(((first - self.openedAt) * 1000).rounded())) ms."
-            }
-            return text
+        controller.onTheme = { [weak self] option in
+            self?.setTheme(option)
         }
         let navigation = UINavigationController(rootViewController: controller)
         navigation.modalPresentationStyle = .popover
@@ -1380,6 +1378,8 @@ extension ReflowReaderViewController {
         _ = await waitUntilShown()
         SelfTest.saveScreen(view, name: "10c-papper")
 
+        await selfTestAppearance()
+
         setTheme(savedTheme)
         setTypography(savedTypography)
         await pause(0.6)
@@ -1857,6 +1857,65 @@ extension ReflowReaderViewController {
             return page.view.convert(page.ribbonZone, to: view).contains(point)
         }
     }
+
+    /// Självtestet (U2): utseenderutan i alla fyra bakgrunder, och radlängden, radavståndet och avstavningen
+    /// i kapitlet som syns. Rutans egen vy sparas, eftersom popovers i iOS 26 ritas som glas.
+    fileprivate func selfTestAppearance() async {
+        for option in ReaderTheme.allCases {
+            setTheme(option)
+            await pause(0.3)
+            showTypography()
+            await pause(0.9)
+            if let navigation = presentedViewController as? UINavigationController {
+                SelfTest.saveScreen(navigation.view, name: "14-utseende-\(option.rawValue)")
+            } else {
+                SelfTest.log("FEL: utseenderutan öppnades inte")
+            }
+            dismiss(animated: false)
+            await pause(0.3)
+        }
+        guard let renderer = renderer else { return }
+        for margin in ReaderTypography.Margin.allCases {
+            var value = typography
+            value.margin = margin
+            setTypography(value)
+            await pause(0.8)
+            _ = await waitUntilShown()
+            let line: String = await withCheckedContinuation { continuation in
+                renderer.evaluate(Self.lineMeasureScript, arguments: [:], in: currentChapter) { value in
+                    continuation.resume(returning: value as? String ?? "inget svar")
+                }
+            }
+            SelfTest.log("Radlängd (U2), marginal \(margin.title): \(line). Nyckel \(value.key)")
+            if margin == .normal {
+                SelfTest.saveScreen(view, name: "15-radlangd-normal")
+            }
+        }
+    }
+
+    /// Mäter raden i kapitlet: sidmarginal, textbredd, ungefär antal tecken per rad (medelbredden för tecknen
+    /// i ett långt stycke), radavstånd, justering, avstavning och språk.
+    private static let lineMeasureScript = #"""
+    var root = document.documentElement;
+    var cs = getComputedStyle(root);
+    var side = parseFloat(cs.paddingLeft) || 0;
+    var width = window.innerWidth - 2 * side;
+    var all = document.querySelectorAll('p');
+    var p = null;
+    for (var i = 0; i < all.length; i++) {
+      if ((all[i].textContent || '').length > 120) { p = all[i]; break; }
+    }
+    if (!p) { return 'sidmarginal ' + Math.round(side) + ' px, inget långt stycke'; }
+    var ps = getComputedStyle(p);
+    var context = document.createElement('canvas').getContext('2d');
+    context.font = ps.fontStyle + ' ' + ps.fontWeight + ' ' + ps.fontSize + ' ' + ps.fontFamily;
+    var text = (p.textContent || '').replace(/\s+/g, ' ').slice(0, 400);
+    var per = context.measureText(text).width / Math.max(text.length, 1);
+    return 'sidmarginal ' + Math.round(side) + ' px, textbredd ' + Math.round(width) + ' px, ungefär ' +
+      Math.round(width / per) + ' tecken per rad, textstorlek ' + ps.fontSize + ', radavstånd ' + ps.lineHeight +
+      ', justering ' + ps.textAlign + ', avstavning ' + (ps.webkitHyphens || ps.hyphens || 'okänd') +
+      ', språk ' + (root.getAttribute('lang') || 'inget');
+    """#
 
     /// Självtestet (U3): menyradens zoner och bandets tryckyta i hörnet.
     fileprivate func selfTestChromeLayout() {

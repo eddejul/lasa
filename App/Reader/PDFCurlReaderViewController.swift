@@ -29,7 +29,12 @@ final class PDFCurlReaderViewController: UIViewController {
     private var currentIndex: Int
     /// Menyraden, gemensam med EPUB-läsaren (G12).
     private lazy var chrome: ReaderChrome = {
-        return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: nil, theme: theme,
+        let appearance = UIBarButtonItem(image: UIImage(systemName: "textformat.size"),
+                                         style: .plain,
+                                         target: self,
+                                         action: #selector(showAppearance))
+        appearance.accessibilityLabel = "Utseende"
+        return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: appearance, theme: theme,
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
                                            goToPage: #selector(showGoToPage), zoom: #selector(zoomCurrentPage)),
@@ -607,6 +612,22 @@ final class PDFCurlReaderViewController: UIViewController {
     }
 
     // MARK: Zoom
+
+    /// Aa: bakgrunderna och Zooma sidan (U2).
+    @objc private func showAppearance() {
+        guard presentedViewController == nil else { return }
+        let controller = AppearanceViewController(theme: theme, typography: nil)
+        controller.onTheme = { [weak self] option in
+            self?.setTheme(option)
+        }
+        controller.onZoom = { [weak self] in
+            self?.zoomCurrentPage()
+        }
+        let navigation = UINavigationController(rootViewController: controller)
+        navigation.modalPresentationStyle = .popover
+        navigation.popoverPresentationController?.barButtonItem = chrome.readerItem
+        present(navigation, animated: true)
+    }
 
     @objc private func zoomCurrentPage() {
         openZoom(at: visibleIndices.first ?? currentIndex)
@@ -1705,6 +1726,17 @@ extension PDFCurlReaderViewController {
         _ = await waitForImages()
         SelfTest.saveScreen(view, name: "10b-vitt")
         setTheme(savedTheme)
+        await pause(0.4)
+        // U2: Aa i PDF har bara bakgrunderna och Zooma sidan. Rutans egen vy sparas (glas i iOS 26).
+        showAppearance()
+        await pause(0.9)
+        if let navigation = presentedViewController as? UINavigationController {
+            SelfTest.saveScreen(navigation.view, name: "11-utseende")
+        } else {
+            SelfTest.log("FEL: utseenderutan öppnades inte")
+        }
+        dismiss(animated: false)
+        await pause(0.3)
 
         await selfTestFoldWork()
 

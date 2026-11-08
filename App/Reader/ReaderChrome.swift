@@ -167,11 +167,6 @@ final class ReaderChrome {
                 self?.send(zoom)
             })
         }
-        if readerItem != nil {
-            // EPUB och text: bakgrunderna här tills Aa samlar allt utseende (U2).
-            children.append(UIMenu(title: "Bakgrund", image: UIImage(systemName: "circle.lefthalf.fill"),
-                                   children: themeActions()))
-        }
         return UIMenu(title: "", children: children)
     }
 
