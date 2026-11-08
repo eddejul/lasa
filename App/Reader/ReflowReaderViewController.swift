@@ -1841,13 +1841,13 @@ extension ReflowReaderViewController {
 
     /// Bokmärker sidan man läser, eller tar bort bokmärket om sidan redan har ett.
     @objc fileprivate func toggleBookmark() {
-        toggleBookmark(pages: visiblePages.filter { !$0.isBlank })
+        toggleBookmarks(onPages: visiblePages.filter { !$0.isBlank })
     }
 
     /// Bandet i sidans hörn (U3): ett tryck där bokmärker just den sidan.
     @objc fileprivate func handleRibbonTap(_ tap: UITapGestureRecognizer) {
         guard let page = ribbonPage(at: tap.location(in: view)) else { return }
-        toggleBookmark(pages: [page])
+        toggleBookmarks(onPages: [page])
         SelfTest.log("Bandet i hörnet: sidan \(bookmarksOnPage(page).isEmpty ? "har inte" : "har") bokmärke")
     }
 
@@ -1931,7 +1931,7 @@ extension ReflowReaderViewController {
                      + "mitten av sidan: \(middle ? "FEL, ja" : "nej")")
     }
 
-    fileprivate func toggleBookmark(pages shown: [ReflowPageViewController]) {
+    fileprivate func toggleBookmarks(onPages shown: [ReflowPageViewController]) {
         let existing = shown.flatMap { bookmarksOnPage($0) }
         if existing.isEmpty {
             guard let page = shown.first, let number = page.page else { return }

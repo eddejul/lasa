@@ -1277,13 +1277,13 @@ extension PDFCurlReaderViewController {
 
     /// Bokmärker sidan man läser, eller tar bort bokmärket om sidan redan har ett.
     @objc fileprivate func toggleBookmark() {
-        toggleBookmark(indices: visibleIndices.isEmpty ? [currentIndex] : visibleIndices)
+        toggleBookmarks(onIndices: visibleIndices.isEmpty ? [currentIndex] : visibleIndices)
     }
 
     /// Bandet i sidans hörn (U3): ett tryck där bokmärker just den sidan.
     @objc fileprivate func handleRibbonTap(_ tap: UITapGestureRecognizer) {
         guard let page = ribbonPage(at: tap.location(in: view)) else { return }
-        toggleBookmark(indices: [page.pageIndex])
+        toggleBookmarks(onIndices: [page.pageIndex])
         SelfTest.log("Bandet i hörnet: sidan \(page.pageIndex + 1) \(bookmarkedPages.contains(page.pageIndex) ? "har" : "har inte") bokmärke")
     }
 
@@ -1308,7 +1308,7 @@ extension PDFCurlReaderViewController {
                      + "mitten av sidan: \(middle ? "FEL, ja" : "nej")")
     }
 
-    fileprivate func toggleBookmark(indices shown: [Int]) {
+    fileprivate func toggleBookmarks(onIndices shown: [Int]) {
         let existing = bookmarks.filter { shown.contains($0.section) }
         if existing.isEmpty {
             let index = shown.first ?? currentIndex
