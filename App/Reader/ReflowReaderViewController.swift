@@ -140,9 +140,13 @@ final class ReflowReaderViewController: UIViewController {
     }
     private var bookSearch: BookSearch?
     private var lastQuery: String?
+    /// V6: när boken senast lästes, läst innan läsaren sparar en ny plats, och om kortet redan prövats.
+    private let lastReadDate: Date?
+    private var resumeChecked = false
 
     init(book: Book) {
         self.book = book
+        self.lastReadDate = LibraryStore.shared.positionDate(for: book)
         self.location = LibraryStore.shared.savedLocation(for: book) ?? ReflowLocation(chapter: 0, progression: 0)
         super.init(nibName: nil, bundle: nil)
         title = book.title
@@ -467,6 +471,10 @@ final class ReflowReaderViewController: UIViewController {
         updatePageLabel()
         updateBookmarkState()
         keepNeighbours()
+        if !resumeChecked {
+            resumeChecked = true
+            scheduleResumeCard()
+        }
         startSelfTestIfNeeded()
     }
 
@@ -1193,6 +1201,29 @@ final class ReflowReaderViewController: UIViewController {
         }
     }
 
+    // MARK: Här var du (V6)
+
+    /// Kortet visas när boken öppnas efter mer än ett dygn, strax efter att första sidan syns.
+    /// Självtestet visar kortet själv (`selfTestResumeCard`), så att det inte ligger över de andra bilderna.
+    private func scheduleResumeCard() {
+        guard !SelfTest.isActive, ReaderResumeCard.shouldShow(lastRead: lastReadDate) else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let self = self, self.presentedViewController == nil else { return }
+            self.showResumeCard(lastRead: self.lastReadDate)
+        }
+    }
+
+    /// Kapitlets rubrik och de tre senaste markeringarna i boken.
+    @discardableResult
+    private func showResumeCard(lastRead: Date?) -> ReaderResumeCard {
+        let latest = AnnotationStore.shared.highlights(book: bookKey).sorted { $0.created > $1.created }
+        let card = ReaderResumeCard(chapter: chapterName(currentChapter), lastRead: lastRead,
+                                    highlights: Array(latest.prefix(3)))
+        card.show(in: view)
+        return card
+    }
+
     // MARK: Tillbaka och historik (V4)
 
     private func setUpBackStack() {
@@ -1460,6 +1491,7 @@ extension ReflowReaderViewController {
 
         await selfTestWord(name: "03-ord")
         await selfTestAnnotations()
+        await selfTestResumeCard()
 
         let isFull = SelfTest.bookName?.lowercased().hasSuffix(".epub") == true
         if isFull, content.toc.count > 2 {
@@ -1544,6 +1576,19 @@ extension ReflowReaderViewController {
 
     /// G2: ett kapitel som inte går att mäta visar Kapitlet kunde inte visas och Försök igen, en krasch i
     /// webbvyn räknas som ett fel, och en minnesvarning stänger de dolda webbvyerna utom den man läser.
+    /// V6: kortet Här var du med kapitlet och de tre senaste markeringarna, och ett tryck stänger det.
+    private func selfTestResumeCard() async {
+        SelfTest.log("Här var du (V6): boken lästes senast \(lastReadDate.map { "\($0)" } ?? "aldrig"), kortet skulle "
+                     + (ReaderResumeCard.shouldShow(lastRead: lastReadDate) ? "visas" : "inte visas"))
+        let card = showResumeCard(lastRead: Date().addingTimeInterval(-3 * 86_400))
+        await pause(0.6)
+        SelfTest.log("Kortet: \(card.summary)")
+        SelfTest.saveScreen(view, name: "03j-har-var-du")
+        card.close()
+        await pause(0.5)
+        SelfTest.log("Efter ett tryck: kortet \(card.superview == nil ? "stängt" : "FEL, ligger kvar")")
+    }
+
     /// V5: fotnoten visas i en ruta vid siffran, och trycket på siffran går före bläddringen.
     private func selfTestNote(_ link: ReflowLink) async {
         guard let page = visiblePages.first(where: { $0.links.contains { $0.url == link.url } }) else {

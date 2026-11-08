@@ -128,6 +128,8 @@ final class PDFCurlReaderViewController: UIViewController {
     private lazy var bookSearch = BookSearch(source: .pdf(book.url), index: searchKey)
     private var lastQuery: String?
     private var selfTestStarted = false
+    /// V6: när boken senast lästes, läst innan läsaren sparar en ny plats.
+    private let lastReadDate: Date?
 
     init?(book: Book) {
         guard let document = PDFDocument(url: book.url),
@@ -138,6 +140,7 @@ final class PDFCurlReaderViewController: UIViewController {
             return nil
         }
         self.book = book
+        self.lastReadDate = LibraryStore.shared.positionDate(for: book)
         self.document = document
         self.renderer = renderer
         let saved = LibraryStore.shared.savedPageIndex(for: book)
@@ -189,6 +192,7 @@ final class PDFCurlReaderViewController: UIViewController {
         if !loggedFirstPage {
             AppLog.shared.write("Öppnade \(book.url.lastPathComponent) (PDF, \(document.pageCount) sidor)")
             logFirstPage()
+            scheduleResumeCard()
             // Sökregistret byggs i bakgrunden om det saknas, när de första sidorna hunnit ritas.
             SearchIndex.shared.prepare(searchKey, source: .pdf(book.url), delay: 4)
         }
@@ -639,6 +643,29 @@ final class PDFCurlReaderViewController: UIViewController {
 
     @objc private func sliderReleased() {
         hop(to: Int(bottomBar.slider.value.rounded()))
+    }
+
+    // MARK: Här var du (V6)
+
+    /// Kortet visas när boken öppnas efter mer än ett dygn, strax efter att första sidan syns.
+    /// Självtestet visar kortet själv (`selfTestResumeCard`), så att det inte ligger över de andra bilderna.
+    private func scheduleResumeCard() {
+        guard !SelfTest.isActive, ReaderResumeCard.shouldShow(lastRead: lastReadDate) else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let self = self, self.presentedViewController == nil else { return }
+            self.showResumeCard(lastRead: self.lastReadDate)
+        }
+    }
+
+    /// Kapitlets rubrik (eller sidan, i en PDF utan innehåll) och de tre senaste markeringarna i boken.
+    @discardableResult
+    private func showResumeCard(lastRead: Date?) -> ReaderResumeCard {
+        let latest = AnnotationStore.shared.highlights(book: bookKey).sorted { $0.created > $1.created }
+        let card = ReaderResumeCard(chapter: chapterTitle(for: currentIndex) ?? pageName(currentIndex), lastRead: lastRead,
+                                    highlights: Array(latest.prefix(3)))
+        card.show(in: view)
+        return card
     }
 
     // MARK: Fotnoter och länkar (V5)
@@ -2034,6 +2061,7 @@ extension PDFCurlReaderViewController {
         await pause(0.3)
 
         await selfTestFoldWork()
+        await selfTestResumeCard()
 
         let after = AnnotationStore.shared.totalCounts()
         SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
@@ -2099,6 +2127,20 @@ extension PDFCurlReaderViewController {
         _ = await waitForImages()
         SelfTest.log("Tillbaka från miniatyren: sidan \(currentIndex + 1) (ska vara \(start + 1))")
         await selfTestNote()
+    }
+
+    /// V6: kortet Här var du med kapitlet och de tre senaste markeringarna, och ett tryck stänger det.
+    fileprivate func selfTestResumeCard() async {
+        SelfTest.log("Här var du (V6): boken lästes senast \(lastReadDate.map { "\($0)" } ?? "aldrig"), kortet skulle "
+                     + (ReaderResumeCard.shouldShow(lastRead: lastReadDate) ? "visas" : "inte visas")
+                     + ", efter två dygn \(ReaderResumeCard.shouldShow(lastRead: Date().addingTimeInterval(-2 * 86_400)) ? "visas det" : "FEL, visas det inte")")
+        let card = showResumeCard(lastRead: Date().addingTimeInterval(-3 * 86_400))
+        await pause(0.6)
+        SelfTest.log("Kortet: \(card.summary)")
+        SelfTest.saveScreen(view, name: "12-har-var-du")
+        card.close()
+        await pause(0.5)
+        SelfTest.log("Efter ett tryck: kortet \(card.superview == nil ? "stängt" : "FEL, ligger kvar")")
     }
 
     /// V5: fotnotssiffran på sida 3 i testboken har en intern länk till noten nederst på sida 8.

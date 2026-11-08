@@ -70,3 +70,21 @@ final class PageInfoTests: XCTestCase {
         XCTAssertEqual(PageInfo.effectiveScope(hasChapters: false), .book)
     }
 }
+
+/// V6: Här var du visas efter mer än ett dygn, aldrig för en bok som inte öppnats.
+final class ResumeCardTests: XCTestCase {
+
+    func testShownAfterMoreThanADay() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertTrue(ReaderResumeCard.shouldShow(lastRead: now.addingTimeInterval(-25 * 3600), now: now))
+        XCTAssertFalse(ReaderResumeCard.shouldShow(lastRead: now.addingTimeInterval(-23 * 3600), now: now))
+        XCTAssertFalse(ReaderResumeCard.shouldShow(lastRead: nil, now: now))
+    }
+
+    func testAgoInSwedish() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertEqual(ReaderResumeCard.ago(now.addingTimeInterval(-30 * 3600), now: now), "i går")
+        XCTAssertEqual(ReaderResumeCard.ago(now.addingTimeInterval(-3 * 86_400), now: now), "för 3 dagar sedan")
+        XCTAssertEqual(ReaderResumeCard.ago(now.addingTimeInterval(-21 * 86_400), now: now), "för 3 veckor sedan")
+    }
+}
