@@ -10,7 +10,7 @@ import UIKit
 final class PDFCurlReaderViewController: UIViewController {
 
     /// Hur länge fingret ska ligga still på ett ord innan det slås upp.
-    static let wordPressDuration: TimeInterval = 0.35
+    static let wordPressDuration = WordPressGesture.duration
 
     private enum Mode: Equatable {
         case single, spread
@@ -49,7 +49,8 @@ final class PDFCurlReaderViewController: UIViewController {
     private var zoomTap: UITapGestureRecognizer?
     private var wordPress: UILongPressGestureRecognizer?
     private var pressedWord: PressedWord?
-    private weak var wordBubble: PaddedLabel?
+    /// Bubblan ovanför fingret när ett ord hålls (G12, gemensam med den andra läsaren).
+    private lazy var wordBubble = WordBubble(host: view)
 
     private var contentsItem: UIBarButtonItem? {
         chrome.contentsItem
@@ -416,9 +417,7 @@ final class PDFCurlReaderViewController: UIViewController {
         chrome.require(toFail: zoom)
         view.addGestureRecognizer(chrome)
 
-        let press = UILongPressGestureRecognizer(target: self, action: #selector(handleWordPress(_:)))
-        press.minimumPressDuration = Self.wordPressDuration
-        press.delegate = self
+        let press = WordPressGesture.makeRecognizer(target: self, action: #selector(handleWordPress(_:)), delegate: self)
         view.addGestureRecognizer(press)
 
         zoomTap = zoom
@@ -581,8 +580,8 @@ final class PDFCurlReaderViewController: UIViewController {
 
     // MARK: Ordboken
 
-    /// Hur långt från fingret ett ord får ligga och ändå väljas, i punkter.
-    static let fingerTolerance: CGFloat = 22
+    /// Hur långt från fingret ett ord får ligga och ändå väljas, i punkter (G12, samma i båda läsarna).
+    static let fingerTolerance = WordPressGesture.fingerTolerance
 
     /// Ordet under fingret medan man håller.
     private struct PressedWord {
@@ -614,12 +613,12 @@ final class PDFCurlReaderViewController: UIViewController {
         case .changed:
             updatePressedWord(at: point)
         case .ended:
-            hideWordBubble()
+            wordBubble.hide()
             if let pressed = pressedWord {
                 lookUp(pressed)
             }
         default:
-            hideWordBubble()
+            wordBubble.hide()
             clearPressedWord()
         }
     }
@@ -649,7 +648,7 @@ final class PDFCurlReaderViewController: UIViewController {
             let barelyMoved = lastWordProbe.map { hypot($0.x - pagePoint.x, $0.y - pagePoint.y) < 1.5 } ?? false
             if stillOnWord || barelyMoved {
                 pressedWord = PressedWord(found: current.found, page: page, rects: current.rects, finger: local)
-                moveWordBubble(to: point)
+                wordBubble.move(to: point)
                 skippedWordProbes += 1
                 return true
             }
@@ -659,13 +658,13 @@ final class PDFCurlReaderViewController: UIViewController {
         let tolerance = Self.fingerTolerance * PDFPageGeometry.pageUnitsPerPoint(imageFrame: imageFrame, page: pdfPage)
         guard let found = PDFWordFinder.word(on: pdfPage, at: pagePoint, tolerance: tolerance) else {
             if pressedWord != nil {
-                moveWordBubble(to: point)
+                wordBubble.move(to: point)
             }
             return false
         }
         if let current = pressedWord, current.page === page, current.found.location == found.location {
             pressedWord = PressedWord(found: current.found, page: page, rects: current.rects, finger: local)
-            moveWordBubble(to: point)
+            wordBubble.move(to: point)
             return true
         }
         let rects = found.pageRects.map { PDFPageGeometry.viewRect(for: $0, imageFrame: imageFrame, page: pdfPage) }
@@ -673,7 +672,7 @@ final class PDFCurlReaderViewController: UIViewController {
         page.showHighlight(rects)
         pressedWord = PressedWord(found: found, page: page, rects: rects, finger: local)
         Haptics.shared.wordTapped()
-        showWordBubble(found.candidates.first ?? "", at: point)
+        wordBubble.show(found.candidates.first ?? "", at: point)
         return true
     }
 
@@ -729,55 +728,10 @@ final class PDFCurlReaderViewController: UIViewController {
         pressedWord = nil
     }
 
-    // MARK: Bubblan ovanför fingret
-
-    /// Fingret skymmer ordet, så ordet visas också i en bubbla ovanför fingret medan man håller.
-    private func showWordBubble(_ word: String, at point: CGPoint) {
-        let bubble: PaddedLabel
-        if let existing = wordBubble {
-            bubble = existing
-        } else {
-            bubble = PaddedLabel()
-            bubble.insets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-            bubble.font = .preferredFont(forTextStyle: .headline)
-            bubble.textColor = .white
-            bubble.backgroundColor = UIColor(white: 0.12, alpha: 0.9)
-            bubble.layer.cornerRadius = 10
-            bubble.layer.masksToBounds = true
-            bubble.isUserInteractionEnabled = false
-            view.addSubview(bubble)
-            wordBubble = bubble
-        }
-        bubble.text = word
-        bubble.sizeToFit()
-        moveWordBubble(to: point)
-    }
-
-    private func moveWordBubble(to point: CGPoint) {
-        guard let bubble = wordBubble else { return }
-        let size = bubble.bounds.size
-        let margin: CGFloat = 8
-        var center = CGPoint(x: point.x, y: point.y - 64)
-        if center.y - size.height / 2 < view.safeAreaInsets.top + margin {
-            center.y = point.y + 64
-        }
-        center.x = min(max(center.x, size.width / 2 + margin), view.bounds.width - size.width / 2 - margin)
-        bubble.center = center
-    }
-
-    private func hideWordBubble() {
-        wordBubble?.removeFromSuperview()
-        wordBubble = nil
-    }
-
     /// Avbryter pappersvikningens och menyns tryck som redan har börjat.
     private func cancelPageGestures() {
-        var recognizers = pageController?.gestureRecognizers ?? []
-        recognizers += [chromeTap, zoomTap].compactMap { $0 }
-        for recognizer in recognizers where recognizer.isEnabled {
-            recognizer.isEnabled = false
-            recognizer.isEnabled = true
-        }
+        let others: [UIGestureRecognizer?] = [chromeTap, zoomTap]
+        WordPressGesture.cancel((pageController?.gestureRecognizers ?? []) + others.compactMap { $0 })
     }
 
     /// Ett kort meddelande nere på sidan som försvinner av sig självt.
@@ -1684,7 +1638,7 @@ extension PDFCurlReaderViewController {
         }
         SelfTest.log("Ordet under fingret: \(pressedWord?.found.candidates.first ?? "inget"), \(wordProbes) uppslag "
                      + "och \(skippedWordProbes) överhoppade på 12 rörelser" + (wordProbes > 2 ? " FEL" : ""))
-        hideWordBubble()
+        wordBubble.hide()
         clearPressedWord()
     }
 }

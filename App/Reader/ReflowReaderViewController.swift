@@ -13,7 +13,7 @@ import UIKit
 final class ReflowReaderViewController: UIViewController {
 
     /// Hur länge fingret ska ligga still på ett ord innan det slås upp, samma som i PDF-läsaren.
-    static let wordPressDuration: TimeInterval = 0.35
+    static let wordPressDuration = WordPressGesture.duration
 
     private enum Mode: Equatable {
         case single, spread
@@ -82,7 +82,8 @@ final class ReflowReaderViewController: UIViewController {
     private var wordQueryRunning = false
     private var queuedWordPoint: CGPoint?
     private var pressEnded = false
-    private weak var wordBubble: PaddedLabel?
+    /// Bubblan ovanför fingret när ett ord hålls (G12, gemensam med den andra läsaren).
+    private lazy var wordBubble = WordBubble(host: view)
 
     private var contentsItem: UIBarButtonItem? {
         chrome.contentsItem
@@ -627,9 +628,7 @@ final class ReflowReaderViewController: UIViewController {
         chrome.delegate = self
         view.addGestureRecognizer(chrome)
 
-        let press = UILongPressGestureRecognizer(target: self, action: #selector(handleWordPress(_:)))
-        press.minimumPressDuration = Self.wordPressDuration
-        press.delegate = self
+        let press = WordPressGesture.makeRecognizer(target: self, action: #selector(handleWordPress(_:)), delegate: self)
         view.addGestureRecognizer(press)
 
         linkTap = link
@@ -812,8 +811,8 @@ final class ReflowReaderViewController: UIViewController {
 
     // MARK: Ordboken
 
-    /// Hur långt från fingret ett ord får ligga och ändå väljas, i punkter. Samma som i PDF-läsaren.
-    static let fingerTolerance: CGFloat = 22
+    /// Hur långt från fingret ett ord får ligga och ändå väljas, i punkter (G12, samma i båda läsarna).
+    static let fingerTolerance = WordPressGesture.fingerTolerance
 
     /// Ordet under fingret medan man håller.
     private struct PressedWord {
@@ -839,19 +838,19 @@ final class ReflowReaderViewController: UIViewController {
             guard presentedViewController == nil else { return }
             requestPressedWord(at: point)
             if pressedWord != nil {
-                moveWordBubble(to: point)
+                wordBubble.move(to: point)
             }
         case .ended:
             guard presentedViewController == nil else { return }
             pressEnded = true
-            hideWordBubble()
+            wordBubble.hide()
             if !wordQueryRunning {
                 finishPress()
             }
         default:
             pressEnded = false
             queuedWordPoint = nil
-            hideWordBubble()
+            wordBubble.hide()
             clearPressedWord()
         }
     }
@@ -908,7 +907,7 @@ final class ReflowReaderViewController: UIViewController {
         pressedWord = PressedWord(found: found, page: page, finger: finger)
         Haptics.shared.wordTapped()
         if !pressEnded {
-            showWordBubble(found.word, at: screenPoint)
+            wordBubble.show(found.word, at: screenPoint)
         }
     }
 
@@ -922,45 +921,6 @@ final class ReflowReaderViewController: UIViewController {
     private func clearPressedWord() {
         pressedWord?.page.clearHighlight()
         pressedWord = nil
-    }
-
-    /// Fingret skymmer ordet, så ordet visas också i en bubbla ovanför fingret medan man håller.
-    private func showWordBubble(_ word: String, at point: CGPoint) {
-        let bubble: PaddedLabel
-        if let existing = wordBubble {
-            bubble = existing
-        } else {
-            bubble = PaddedLabel()
-            bubble.insets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-            bubble.font = .preferredFont(forTextStyle: .headline)
-            bubble.textColor = .white
-            bubble.backgroundColor = UIColor(white: 0.12, alpha: 0.9)
-            bubble.layer.cornerRadius = 10
-            bubble.layer.masksToBounds = true
-            bubble.isUserInteractionEnabled = false
-            view.addSubview(bubble)
-            wordBubble = bubble
-        }
-        bubble.text = word
-        bubble.sizeToFit()
-        moveWordBubble(to: point)
-    }
-
-    private func moveWordBubble(to point: CGPoint) {
-        guard let bubble = wordBubble else { return }
-        let size = bubble.bounds.size
-        let margin: CGFloat = 8
-        var center = CGPoint(x: point.x, y: point.y - 64)
-        if center.y - size.height / 2 < view.safeAreaInsets.top + margin {
-            center.y = point.y + 64
-        }
-        center.x = min(max(center.x, size.width / 2 + margin), view.bounds.width - size.width / 2 - margin)
-        bubble.center = center
-    }
-
-    private func hideWordBubble() {
-        wordBubble?.removeFromSuperview()
-        wordBubble = nil
     }
 
     /// Slår upp ordet och visar ordrutan vid ordet. Det enda stället där EPUB-läsaren använder ordboken.
@@ -1028,12 +988,8 @@ final class ReflowReaderViewController: UIViewController {
 
     /// Avbryter pappersvikningens, menyns och länkarnas tryck som redan har börjat.
     private func cancelPageGestures() {
-        var recognizers = pageController?.gestureRecognizers ?? []
-        recognizers += [chromeTap, linkTap].compactMap { $0 }
-        for recognizer in recognizers where recognizer.isEnabled {
-            recognizer.isEnabled = false
-            recognizer.isEnabled = true
-        }
+        let others: [UIGestureRecognizer?] = [chromeTap, linkTap]
+        WordPressGesture.cancel((pageController?.gestureRecognizers ?? []) + others.compactMap { $0 })
     }
 
     // MARK: Länkar
@@ -1508,10 +1464,10 @@ extension ReflowReaderViewController {
                 requestPressedWord(at: screen)
                 await pause(0.6)
                 SelfTest.log("Hållgesten: \(pressedWord?.found.word ?? "FEL, inget ord markerat"), "
-                             + "bubblan visar \(wordBubble?.text ?? "ingenting")")
+                             + "bubblan visar \(wordBubble.text ?? "ingenting")")
                 SelfTest.saveScreen(view, name: name + "-haller")
                 pressEnded = true
-                hideWordBubble()
+                wordBubble.hide()
                 finishPress()
                 await pause(1.5)
                 SelfTest.saveScreen(view.window ?? view, name: name)
