@@ -1717,6 +1717,11 @@ extension PDFCurlReaderViewController {
         wordProbes = 0
         skippedWordProbes = 0
         lastWordProbe = nil
+        let screen = view.convert(CGPoint(x: shown.midX, y: shown.midY), from: page.view)
+        let local = page.view.convert(screen, from: view)
+        let pagePoint = page.imageFrame.flatMap { PDFPageGeometry.pagePoint(for: local, imageFrame: $0, page: pdfPage) }
+        SelfTest.log("Fingerprovet: sida \(page.pageIndex + 1), bladet under fingret \(pageView(at: screen).map { "\($0.pageIndex + 1)" } ?? "inget"), "
+                     + "bildruta \(page.imageFrame.map { "\($0)" } ?? "ingen"), punkt \(pagePoint.map { "\($0)" } ?? "ingen")")
         for step in 0..<12 {
             let local = CGPoint(x: shown.midX + CGFloat(step % 4) - 1.5, y: shown.midY + CGFloat(step % 3) * 0.5)
             updatePressedWord(at: view.convert(local, from: page.view))
