@@ -220,6 +220,13 @@ final class WordPopupViewController: UITableViewController {
         }
         onReady?()
         onReady = nil
+        // Spara i nästa varv, efter att rutan börjat visas. Rutan hålls kvar tills dess, så att ordet
+        // sparas även om den stängs innan den syns helt. Med WAL väntar sparningen inte på disken.
+        if pendingSave != nil {
+            DispatchQueue.main.async {
+                self.savePendingWord()
+            }
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
