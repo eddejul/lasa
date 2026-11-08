@@ -162,6 +162,35 @@ final class StudyTests: XCTestCase {
         XCTAssertTrue(ReadingWeek.ranges([], step: step).isEmpty)
     }
 
+    // MARK: K5
+
+    func testAnkiFiles() {
+        XCTAssertEqual(AnkiFormat.cloze("Retoriken bygger på det sannolika."),
+                       "Retoriken bygger på det {{c1::sannolika}}.")
+        XCTAssertEqual(AnkiFormat.field("a<b>\tc\nd & e"), "a&lt;b&gt; c<br>d &amp; e")
+        XCTAssertEqual(AnkiFormat.tag("Klassisk retorik"), "Klassisk_retorik")
+        let highlight = Highlight(id: "abc", book: "b", section: 2, start: 0, length: 4, text: "Ethos är talarens karaktär",
+                                  color: .blue, note: "Begrepp", created: Date(), updated: Date())
+        let entry = NotebookEntry(highlight: highlight, bookID: "b", bookTitle: "Klassisk retorik", chapter: "", page: "63")
+        let file = AnkiFormat.highlightsFile([entry], colorNames: [.blue: "Begrepp"])
+        let lines = file.split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.first, "#separator:tab")
+        XCTAssertTrue(lines.contains("#guid column:1"))
+        XCTAssertTrue(lines.contains("#tags column:4"))
+        let row = lines.last?.components(separatedBy: "\t") ?? []
+        XCTAssertEqual(row.count, 4)
+        XCTAssertEqual(row.first, "sensus-m-abc")
+        XCTAssertEqual(row[safe: 1], "Ethos är talarens {{c1::karaktär}}")
+        XCTAssertEqual(row[safe: 2], "Begrepp<br><br><i>Klassisk retorik, s. 63</i>")
+        XCTAssertEqual(row[safe: 3], "Sensus Klassisk_retorik Begrepp")
+        // Samma markering ger samma id i nästa export, så att Anki uppdaterar kortet.
+        XCTAssertEqual(AnkiFormat.highlightsFile([entry], colorNames: [:]).components(separatedBy: "\t").first?
+                        .components(separatedBy: "\n").last, "sensus-m-abc")
+        let word = AnkiFormat.wordLine(id: "sensus-o-sv-etos", word: "etos", language: "svenska", answer: "Karaktär",
+                                       sentence: "Talarens etos.", book: "Bok")
+        XCTAssertEqual(word, "sensus-o-sv-etos\tetos\tKaraktär<br><br><i>Talarens etos.</i>\tSensus ord svenska Bok")
+    }
+
     // MARK: Trappan
 
     /// Edvins data: en databas i den form main har i dag (steg 5) går genom de nya stegen utan att något

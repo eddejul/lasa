@@ -228,6 +228,18 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
                 }
             },
         ]
+        children.append(UIMenu(title: "Exportera till Anki", image: UIImage(systemName: "square.and.arrow.up"), children: [
+            UIAction(title: "Markeringarna som syns (lucktext)") { [weak self] _ in
+                guard let self = self else { return }
+                AnkiExport.share(highlights: NotebookLogic.filter(self.entries, self.filter), includeWords: false,
+                                 from: self, sourceItem: self.navigationItem.rightBarButtonItem)
+            },
+            UIAction(title: "Sparade ord") { [weak self] _ in
+                guard let self = self else { return }
+                AnkiExport.share(highlights: [], includeWords: true, from: self,
+                                 sourceItem: self.navigationItem.rightBarButtonItem)
+            },
+        ]))
         if case .all = scope {
             let courseActions = [UIAction(title: "Alla kurser", state: filter.books == nil ? .on : .off) { [weak self] _ in
                 self?.filter.books = nil
