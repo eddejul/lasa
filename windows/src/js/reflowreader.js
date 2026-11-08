@@ -146,6 +146,7 @@ export class ReflowReader {
       ? new File([bytes], 'bok.epub', { type: 'application/epub+zip' })
       : makeTextBook(bytes, { title, ext });
     await this.view.open(book);
+    this.guardRender(this.view.renderer);
     this.mapSections();
     this.view.addEventListener('draw-annotation', (event) => this.drawAnnotation(event.detail));
     this.view.addEventListener('create-overlay', (event) => this.paintMarks(event.detail.index));
@@ -166,6 +167,23 @@ export class ReflowReader {
     } else {
       await this.view.init({ lastLocation: position?.cfi ?? null });
     }
+  }
+
+  /** foliate-js ritar ibland om sidorna (en ResizeObserver i paginator.js) i ögonblicket när ett kapitels
+   *  dokument byts, innan dokumentet har fått sitt html-element, och kastar då ett TypeError. Kapitlet
+   *  ritas ändå när det har laddats, så just det felet hoppas över. Filerna i vendor ändras inte. */
+  guardRender(renderer) {
+    if (!renderer || renderer.lasaGuarded) return;
+    const render = renderer.render.bind(renderer);
+    renderer.render = (...args) => {
+      try {
+        return render(...args);
+      } catch (error) {
+        if (error instanceof TypeError && /'style' of 'el'|reading 'style'/.test(error.message)) return undefined;
+        throw error;
+      }
+    };
+    renderer.lasaGuarded = true;
   }
 
   /** Kapitlens nummer för synken: bara poster i läsordningen (spine) som är (X)HTML-dokument räknas,
