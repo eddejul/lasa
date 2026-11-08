@@ -102,6 +102,11 @@ enum Fas6SelfTest {
         }
         navigation.popToRootViewController(animated: false)
 
+        // Biblioteket (B1 och framåt): titlar, omslag, hållmenyn och bilder.
+        if let list = library as? LibraryViewController {
+            await LibrarySelfTest.run(library: list)
+        }
+
         testLog()
         SelfTest.finish()
     }
@@ -370,7 +375,7 @@ enum Fas6SelfTest {
             ReaderTheme.current = option
             Theme.apply()
             if let list = libraryList {
-                Theme.style(list.tableView)
+                list.applyTheme()
                 list.reload()
             }
             await pause(0.6)

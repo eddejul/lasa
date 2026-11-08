@@ -136,6 +136,9 @@ final class LibraryStore {
         defaults.removeObject(forKey: locationKey(for: book))
         ReflowableBookLoader.removeCaches(for: book)
         SearchIndex.shared.remove(book: book.id)
+        if let record = BookRegistry.shared.record(id: book.id) {
+            CoverStore.shared.forget(record)
+        }
         // Bokens rad och markeringar finns kvar, så att de kommer tillbaka om samma fil läggs in igen.
         BookRegistry.shared.markMissing(id: book.id)
     }
@@ -189,6 +192,12 @@ final class LibraryStore {
             defaults.set("\(section)|\(progression)", forKey: locationKey(for: book))
         }
         defaults.set(date.timeIntervalSince1970, forKey: positionDateKey(for: book))
+    }
+
+    /// Var man är och hur långt man läst, till biblioteket (B1, B2). Sparas i bokregistret.
+    func saveStatus(_ status: ReadingStatus, for book: Book) {
+        guard BookRegistry.shared.isAvailable else { return }
+        BookRegistry.shared.setStatus(id: book.id, status)
     }
 
     private func markPositionChanged(for book: Book) {

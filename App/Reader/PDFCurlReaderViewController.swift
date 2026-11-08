@@ -470,6 +470,17 @@ final class PDFCurlReaderViewController: UIViewController {
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(currentIndex)
         }
+        reportReadingStatus(indices)
+    }
+
+    /// Var man är, till biblioteket (B1, B2): andel läst, kapitlet, sidan och sidantalet.
+    private func reportReadingStatus(_ indices: [Int]) {
+        let count = renderer.pageCount
+        guard count > 0 else { return }
+        let index = min(max(indices.max() ?? currentIndex, 0), count - 1)
+        LibraryStore.shared.saveStatus(ReadingStatus(progress: Double(index + 1) / Double(count),
+                                                     chapter: chapterTitle(for: index) ?? "",
+                                                     page: index + 1, pages: count), for: book)
     }
 
     /// PDF:ens bokmärken (innehållet) med sidorna, i sidordning. Läses en gång, på huvudtråden.

@@ -1,0 +1,192 @@
+import UIKit
+
+/// Självtestet för biblioteket (B1 och framåt), körs i fas 6 när testböckerna redan öppnats en gång:
+/// databasen från våg 3 genom trappan, titlar, författare och omslag, hållmenyn, Byt namn, Välj omslag,
+/// Markera som läst och bilder av biblioteket i stående, liggande, iPhone-storlek och tomt.
+@MainActor
+enum LibrarySelfTest {
+
+    private static func pause(_ seconds: Double) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    static func run(library: LibraryViewController) async {
+        guard let navigation = library.navigationController else { return }
+        navigation.popToRootViewController(animated: false)
+        testWave3Database()
+
+        // Titlar, författare och omslag läses i bakgrunden. Vänta tills alla är klara (högst 20 s).
+        library.reload()
+        var waited = 0.0
+        while library.coverSummary.loading > 0 && waited < 20 {
+            await pause(0.5)
+            waited += 0.5
+        }
+        library.reload()
+        await pause(0.6)
+        let summary = library.coverSummary
+        SelfTest.log("Biblioteket (B1): \(library.allItems.count) böcker, \(summary.images) omslag med bild, "
+                     + "\(summary.drawn) ritade, \(summary.loading) laddas fortfarande efter \(waited) s "
+                     + "(\(CoverStore.shared.rendered) lästa ur filen, \(CoverStore.shared.loaded) från disken)"
+                     + (summary.loading > 0 ? " FEL" : ""))
+        for item in library.allItems {
+            let record = BookRegistry.shared.record(id: item.book.id)
+            SelfTest.log("  \(item.book.path): titel \(item.title), författare \(item.author.isEmpty ? "ingen" : item.author), "
+                         + "läst \(Int((item.progress * 100).rounded())) %, \(LibraryLogic.statusLine(item)), "
+                         + "omslag \(record?.cover ?? "ingen rad")")
+        }
+        let pdf = library.allItems.first { $0.book.path == "test.pdf" }
+        let epub = library.allItems.first { $0.book.path == "test.epub" }
+        let roman = library.allItems.first { $0.book.path == "roman.epub" }
+        let ok = pdf?.title == "Provbok med textlager" && pdf?.author == "Sensus Testsson"
+            && epub?.title == "Testbok för Läsa" && epub?.author == "Sensus Testsson"
+            && roman?.title == "Ljuset över hamnen" && roman?.author == "Anna Exempel, Erik Prov"
+        SelfTest.log("Titlar och författare ur filerna (PDF, EPUB 3, EPUB 2): \(ok ? "Rätt" : "FEL")")
+        let romanCover = roman.flatMap { BookRegistry.shared.record(id: $0.book.id)?.cover } ?? ""
+        let epubCover = epub.flatMap { BookRegistry.shared.record(id: $0.book.id)?.cover } ?? ""
+        SelfTest.log("Omslag: PNG-omslaget i roman.epub \(romanCover.hasSuffix(".jpg") ? "ritat" : "FEL, \(romanCover)"), "
+                     + "SVG-omslaget i test.epub \(epubCover == CoverStore.noImage ? "ritas av biblioteket (rätt)" : "FEL, \(epubCover)")")
+        if let continueItem = library.continueItem {
+            SelfTest.log("Fortsätt läsa (B2): \(continueItem.title), \(continueItem.chapter.isEmpty ? "inget kapitel" : continueItem.chapter), "
+                         + LibraryLogic.statusLine(continueItem))
+        } else {
+            SelfTest.log("Fortsätt läsa (B2): ingen bok")
+        }
+
+        // Hållmenyn.
+        if let pdf = pdf {
+            let titles = library.menu(for: pdf).children.map(\.title)
+            SelfTest.log("Hållmenyn på test.pdf: \(titles.joined(separator: ", "))")
+        }
+
+        // Byt namn och tillbaka.
+        if let pdf = pdf {
+            BookRegistry.shared.rename(id: pdf.book.id, title: "Egen titel", author: "Egen författare")
+            library.reload()
+            let renamed = library.allItems.first { $0.book.id == pdf.book.id }
+            BookRegistry.shared.rename(id: pdf.book.id, title: "", author: "")
+            library.reload()
+            let back = library.allItems.first { $0.book.id == pdf.book.id }
+            SelfTest.log("Byt namn: \(renamed?.title ?? "") av \(renamed?.author ?? ""), tillbaka: \(back?.title ?? ""). "
+                         + (renamed?.title == "Egen titel" && back?.title == "Provbok med textlager" ? "Rätt" : "FEL"))
+        }
+
+        // Välj omslag: sidan 3 i den fotade PDF:en, sparad som sidnummer i registret.
+        if let photo = library.allItems.first(where: { $0.book.path == "foto.pdf" }) {
+            BookRegistry.shared.setCoverPage(id: photo.book.id, page: 2)
+            library.reload()
+            var tries = 0
+            while (BookRegistry.shared.record(id: photo.book.id)?.cover ?? "").hasSuffix("-2.jpg") == false && tries < 30 {
+                await pause(0.3)
+                tries += 1
+            }
+            let record = BookRegistry.shared.record(id: photo.book.id)
+            SelfTest.log("Välj omslag: sidan \((record?.coverPage ?? -9) + 1) sparad, omslaget \(record?.cover ?? "") "
+                         + ((record?.cover ?? "").hasSuffix("-2.jpg") ? "Rätt" : "FEL"))
+        }
+
+        // Markera som läst, och filtret Utlästa.
+        if let epub = epub {
+            BookRegistry.shared.setFinished(id: epub.book.id, true)
+            library.reload()
+            let finished = LibraryLogic.filter(library.allItems, .finished).map(\.book.path)
+            BookRegistry.shared.setFinished(id: epub.book.id, false)
+            library.reload()
+            SelfTest.log("Markera som läst: Utlästa visar \(finished.joined(separator: ", ")). "
+                         + (finished.contains("test.epub") ? "Rätt" : "FEL"))
+        }
+
+        // Bilder: stående, liggande, iPhone-storlek och tomt bibliotek.
+        let container = navigation.view!
+        let original = container.frame
+        library.reload()
+        await pause(0.8)
+        SelfTest.saveScreen(container, name: "20-bibliotek-staende")
+        library.collectionViewForSelfTest.setContentOffset(CGPoint(x: 0, y: 420), animated: false)
+        await pause(0.5)
+        SelfTest.saveScreen(container, name: "20a-bibliotek-staende-nere")
+        library.collectionViewForSelfTest.setContentOffset(.zero, animated: false)
+
+        container.frame = CGRect(x: 0, y: 0, width: original.width, height: (original.width * 0.72).rounded())
+        container.layoutIfNeeded()
+        library.reload()
+        await pause(1.0)
+        SelfTest.saveScreen(container, name: "20b-bibliotek-liggande")
+
+        container.frame = CGRect(x: 0, y: 0, width: 390, height: min(844, original.height))
+        container.layoutIfNeeded()
+        library.reload()
+        await pause(1.0)
+        SelfTest.saveScreen(container, name: "20c-bibliotek-iphone")
+
+        container.frame = original
+        container.layoutIfNeeded()
+        library.showsEmptyForSelfTest = true
+        library.reload()
+        await pause(0.8)
+        SelfTest.saveScreen(container, name: "20d-bibliotek-tomt")
+        library.showsEmptyForSelfTest = false
+        library.reload()
+        await pause(0.4)
+    }
+
+    /// Edvins riktiga data: en databas i den form våg 3 lämnade (version 3) med en bok, markeringar med rutor,
+    /// ett bokmärke och klart-markeringen går genom trappan. Inget får försvinna, och en rad som sparas om
+    /// efteråt behåller titel och omslag (ingen `INSERT OR REPLACE`).
+    static func testWave3Database() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("vag3-prov.sqlite")
+        try? FileManager.default.removeItem(at: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let db = try SQLiteDatabase(path: url.path, readOnly: false)
+            try db.migrate(Array(AnnotationStore.migrations.prefix(3)))
+            let record = BookRecord(id: "bok-1", sha256: "abc", file: "RETA30/Retorik.pdf", title: "Retorik", size: 1234,
+                                    modified: 99, added: 1_700_000_000, missing: false)
+            try BookRegistry.insert(record, into: db)
+            try db.execute("""
+                INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted, rects)
+                VALUES ('m1', 'bok-1', 4, 10, 5, 'ethos', 'yellow', 'en anteckning', 1, 2, 0, '[[1,2,3,4]]'),
+                       ('m2', 'bok-1', 7, 0, 3, 'logos', 'blue', '', 1, 2, 1, '')
+                """)
+            try db.execute("""
+                INSERT INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
+                VALUES ('b1', 'bok-1', 9, 0, 'Sidan 10', 1, 2, 0)
+                """)
+            try db.execute("INSERT INTO meta (key, value) VALUES ('legacy_book_keys_moved', '1')")
+            func snapshot() throws -> String {
+                var rows: [String] = []
+                try db.query("SELECT id, book, section, start, length, text, color, note, created, updated, deleted, rects "
+                              + "FROM highlights ORDER BY id") { row in
+                    rows.append((0..<12).map { row.string(Int32($0)) }.joined(separator: "|"))
+                }
+                try db.query("SELECT id, book, section, progression, label, deleted FROM bookmarks") { row in
+                    rows.append((0..<6).map { row.string(Int32($0)) }.joined(separator: "|"))
+                }
+                try db.query("SELECT id, sha256, file, title, size, modified, added, missing FROM books") { row in
+                    rows.append((0..<8).map { row.string(Int32($0)) }.joined(separator: "|"))
+                }
+                try db.query("SELECT key, value FROM meta") { row in
+                    rows.append(row.string(0) + "=" + row.string(1))
+                }
+                return rows.joined(separator: "\n")
+            }
+            let before = try snapshot()
+            let versions = try db.migrate(AnnotationStore.migrations)
+            let after = try snapshot()
+            try db.execute("UPDATE books SET book_title = 'Retorikens grunder', cover = 'omslag.jpg' WHERE id = 'bok-1'")
+            var saved = record
+            saved.file = "Retorik.pdf"
+            try BookRegistry.insert(saved, into: db)
+            var kept = ""
+            try db.query("SELECT book_title, cover, file FROM books WHERE id = 'bok-1'") { row in
+                kept = "\(row.string(0)), \(row.string(1)), \(row.string(2))"
+            }
+            let ok = before == after && kept == "Retorikens grunder, omslag.jpg, Retorik.pdf"
+            SelfTest.log("Databasen från våg 3 (version \(versions.from) till \(versions.to)): "
+                         + "\(before == after ? "allt kvar" : "FEL, något ändrades") (\(before.split(separator: "\n").count) rader), "
+                         + "efter omsparning: \(kept). \(ok ? "Rätt" : "FEL")")
+        } catch {
+            SelfTest.log("FEL: provet av databasen från våg 3: \(error)")
+        }
+    }
+}

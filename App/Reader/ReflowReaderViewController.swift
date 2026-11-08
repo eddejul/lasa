@@ -682,6 +682,23 @@ final class ReflowReaderViewController: UIViewController {
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(content.fraction(at: currentLocation()))
         }
+        reportReadingStatus(content: content, renderer: renderer)
+    }
+
+    /// Var man är, till biblioteket (B1, B2): andel läst, kapitlet, och sidan och sidantalet när hela boken
+    /// är mätt, annars sidor kvar i kapitlet.
+    private func reportReadingStatus(content: ReflowableBook, renderer: ReflowRenderer) {
+        var status = ReadingStatus(progress: content.fraction(at: currentLocation()),
+                                   chapter: content.title(ofChapter: currentChapter) ?? "")
+        let slot = visiblePages.compactMap { $0.page }.max() ?? currentSlot
+        if let count = currentCount, count > 0 {
+            status.chapterLeft = max(count - slot - 1, 0)
+        }
+        if let all = renderer.allPageCounts() {
+            status.page = all.prefix(currentChapter).reduce(0, +) + slot + 1
+            status.pages = all.reduce(0, +)
+        }
+        LibraryStore.shared.saveStatus(status, for: book)
     }
 
     /// "52 av 300" när hela boken är mätt, annars sidan i kapitlet och hur långt in i boken man är.

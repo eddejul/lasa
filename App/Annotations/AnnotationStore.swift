@@ -164,6 +164,23 @@ final class AnnotationStore {
         """
             ALTER TABLE highlights ADD COLUMN rects TEXT NOT NULL DEFAULT '';
             """,
+        // Steg 4 (B1, B2): bokens titel och författare ur filen, läsarens egna, omslaget (filnamnet i cachen,
+        // och sidan läsaren valt i en PDF), andel läst, Markera som läst och var man är.
+        """
+            ALTER TABLE books ADD COLUMN book_title TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN author TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN custom_title TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN custom_author TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN cover TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN cover_page INTEGER NOT NULL DEFAULT -1;
+            ALTER TABLE books ADD COLUMN meta_key TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN progress REAL NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN finished INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN chapter TEXT NOT NULL DEFAULT '';
+            ALTER TABLE books ADD COLUMN page INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN pages INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN chapter_left INTEGER NOT NULL DEFAULT -1;
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.
