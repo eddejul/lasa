@@ -175,6 +175,8 @@ final class ReflowReaderViewController: UIViewController {
                                                name: SavedWordMarks.didChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(updateTimelineMarks),
                                                name: AnnotationStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateReadRanges),
+                                               name: ReadingLog.didChange, object: nil)
         SavedWordMarks.shared.refresh()
 
         // Webbvyerna ligger längst ner, under ett papper, så att de aldrig syns.
@@ -211,6 +213,7 @@ final class ReflowReaderViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         guard isMovingFromParent else { return }
+        ReadingLog.shared.pause()
         if let renderer = renderer {
             var line = "Stängde \(book.url.lastPathComponent): \(renderer.statsSummary)"
             if let first = renderer.firstSnapshotAt {
@@ -290,6 +293,7 @@ final class ReflowReaderViewController: UIViewController {
             pendingJump = PendingJump(chapter: location.chapter, progression: location.progression, fragment: nil)
             bottomBar.slider.isEnabled = true
             updateTimelineMarks()
+            updateReadRanges()
             updateLayoutIfNeeded(force: true)
         }
     }
@@ -743,6 +747,25 @@ final class ReflowReaderViewController: UIViewController {
             bottomBar.slider.value = Float(content.fraction(at: currentLocation()))
         }
         reportReadingStatus(content: content, renderer: renderer)
+        logReading(content: content)
+    }
+
+    /// K10: sidorna som syns, till läsloggen (bara i minnet, databasen skrivs högst en gång i minuten).
+    /// Nyckeln är kapitlet och sidan i kapitlet med dagens utseende.
+    private func logReading(content: ReflowableBook) {
+        let position = content.fraction(at: currentLocation())
+        let pages = visiblePages.filter { !$0.isBlank }.compactMap { page in
+            page.page.map { ReadingLog.Page(key: "\(page.chapter):\($0)", position: position) }
+        }
+        ReadingLog.shared.pageShown(book: bookKey, pages: pages)
+    }
+
+    /// K10: det man läst i boken, mörkare på tidslinjen. En sidas längd på skalan när boken är mätt.
+    @objc private func updateReadRanges() {
+        guard content != nil else { return }
+        let total = renderer?.allPageCounts()?.reduce(0, +) ?? 0
+        let step = total > 0 ? 1 / Double(total) : 0.005
+        bottomBar.slider.readRanges = ReadingLog.shared.readRanges(book: bookKey, step: step)
     }
 
     /// Var man är, till biblioteket (B1, B2): andel läst, kapitlet, och sidan och sidantalet när hela boken

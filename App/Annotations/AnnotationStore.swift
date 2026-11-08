@@ -213,6 +213,19 @@ final class AnnotationStore {
                 updated REAL NOT NULL DEFAULT 0
             );
             """,
+        // Steg 7 (K10): läsloggen, en rad per dag, bok och läst sida med tiden på sidan och platsen i boken
+        // (0 till 1, tidslinjens skala). Dagen i lokal tid. Ingen synk.
+        """
+            CREATE TABLE IF NOT EXISTS reading_log (
+                day TEXT NOT NULL,
+                book TEXT NOT NULL,
+                page TEXT NOT NULL,
+                position REAL NOT NULL DEFAULT 0,
+                seconds REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (day, book, page)
+            );
+            CREATE INDEX IF NOT EXISTS reading_log_book ON reading_log (book);
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.

@@ -7,7 +7,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     UICollectionViewDelegate, UISearchResultsUpdating, UITabBarDelegate, UINavigationControllerDelegate {
 
     private enum Section: Int, CaseIterable {
-        case banner, activity, continueReading, more, books
+        case banner, activity, week, continueReading, more, books
     }
 
     private var collectionView: UICollectionView!
@@ -79,6 +79,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         collectionView.register(ContinueCell.self, forCellWithReuseIdentifier: ContinueCell.id)
         collectionView.register(MessageCell.self, forCellWithReuseIdentifier: MessageCell.id)
         collectionView.register(MoreCell.self, forCellWithReuseIdentifier: MoreCell.id)
+        collectionView.register(ReadingWeekCell.self, forCellWithReuseIdentifier: ReadingWeekCell.id)
         collectionView.register(BooksHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
                                 withReuseIdentifier: BooksHeaderView.id)
         view.addSubview(collectionView)
@@ -105,6 +106,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         NotificationCenter.default.addObserver(self, selector: #selector(memoryWarning),
                                                name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(coursesChanged), name: CourseStore.didChange,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(readingLogChanged), name: ReadingLog.didChange,
                                                object: nil)
         applyTheme()
         reload()
@@ -247,6 +250,37 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         collectionView.reloadData()
         updateEmptyState()
         collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.adjustedContentInset.top), animated: false)
+    }
+
+    /// K10: läsveckan har ändrats (läsaren har sparat läsloggen).
+    @objc private func readingLogChanged() {
+        guard isViewLoaded, collectionView.numberOfSections > Section.week.rawValue else { return }
+        UIView.performWithoutAnimation {
+            collectionView.reloadSections(IndexSet(integer: Section.week.rawValue))
+        }
+    }
+
+    /// K10: kortet Läsvecka visas i Alla böcker utan sökning, när det finns böcker.
+    private var showsReadingWeek: Bool {
+        scope == .all && searchText.isEmpty && !allItems.isEmpty
+    }
+
+    /// K10: välj dagsmålet. Inget mål är förvalt, och inga notiser.
+    private func chooseReadingGoal(from cell: UIView) {
+        let current = ReadingLog.shared.goalMinutes
+        let sheet = UIAlertController(title: "Dagsmål", message: "Visas som en ring runt dagens stapel. Inga påminnelser.",
+                                      preferredStyle: .actionSheet)
+        for minutes in [0, 15, 30, 45, 60, 90] {
+            let title = minutes == 0 ? "Inget dagsmål" : "\(minutes) min om dagen"
+            sheet.addAction(UIAlertAction(title: minutes == current ? "\(title) (valt)" : title, style: .default) { [weak self] _ in
+                ReadingLog.shared.goalMinutes = minutes
+                self?.readingLogChanged()
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        sheet.popoverPresentationController?.sourceView = cell
+        sheet.popoverPresentationController?.sourceRect = cell.bounds
+        present(sheet, animated: true)
     }
 
     @objc private func coursesChanged() {
@@ -858,6 +892,14 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
                 subitems: [NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1),
                                                                                       heightDimension: .absolute(1)))]))
             switch section {
+            case .week:
+                guard count > 0 else { return empty }
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1),
+                                                  heightDimension: .absolute(ReadingWeekCell.height))
+                let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
+                let result = NSCollectionLayoutSection(group: group)
+                result.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: margin, bottom: 8, trailing: margin)
+                return result
             case .banner, .activity:
                 guard count > 0 else { return empty }
                 let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(56))
@@ -918,6 +960,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         switch Section(rawValue: section) {
         case .banner: return expiryText == nil ? 0 : 1
         case .activity: return activityLines.isEmpty ? 0 : 1
+        case .week: return showsReadingWeek ? 1 : 0
         case .continueReading: return continueItem == nil || scope != .all || !searchText.isEmpty ? 0 : 1
         case .more: return showsMoreCard && scope == .all && searchText.isEmpty && !allItems.isEmpty ? 1 : 0
         case .books: return items.count
@@ -938,6 +981,18 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: MessageCell.id, for: indexPath) as! MessageCell
             shownActivityCount = 1
             configureActivity(cell)
+            return cell
+        case .week:
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ReadingWeekCell.id,
+                                                          for: indexPath) as! ReadingWeekCell
+            let today = Date()
+            let start = ReadingWeek(today: today, log: [:]).keys.first ?? ReadingWeek.dayKey(today)
+            cell.configure(week: ReadingWeek(today: today, log: ReadingLog.shared.days(from: start)),
+                           goalMinutes: ReadingLog.shared.goalMinutes, palette: palette)
+            cell.onGoal = { [weak self, weak cell] in
+                guard let cell = cell else { return }
+                self?.chooseReadingGoal(from: cell)
+            }
             return cell
         case .continueReading:
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ContinueCell.id,

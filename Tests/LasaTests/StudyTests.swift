@@ -127,6 +127,41 @@ final class StudyTests: XCTestCase {
         XCTAssertEqual(NotebookLogic.groups(entries, allBooks: true).map(\.title), ["Bok b: Kap 1", "Bok b: Kap 2", "Bok c"])
     }
 
+    // MARK: K10
+
+    func testReadingWeekStartsOnMondayAndCountsDays() {
+        var calendar = ReadingWeek.calendar
+        calendar.timeZone = TimeZone(identifier: "Europe/Stockholm")!
+        // Söndag 8 november 2026 kl. 23.30 i svensk tid.
+        let sunday = DateComponents(calendar: calendar, timeZone: calendar.timeZone, year: 2026, month: 11, day: 8,
+                                    hour: 23, minute: 30).date!
+        XCTAssertEqual(ReadingWeek.dayKey(sunday, calendar: calendar), "2026-11-08")
+        let log = ["2026-11-02": ReadingWeek.Day(seconds: 3600, pages: 20),
+                   "2026-11-04": ReadingWeek.Day(seconds: 1200, pages: 9),
+                   "2026-11-08": ReadingWeek.Day(seconds: 30, pages: 1),
+                   "2026-11-09": ReadingWeek.Day(seconds: 999, pages: 99)]
+        let week = ReadingWeek(today: sunday, log: log, calendar: calendar)
+        XCTAssertEqual(week.keys.first, "2026-11-02")
+        XCTAssertEqual(week.keys.last, "2026-11-08")
+        XCTAssertEqual(week.todayIndex, 6)
+        XCTAssertEqual(week.totalPages, 30)
+        XCTAssertEqual(week.daysRead, 3)
+        XCTAssertEqual(week.summary, "1 h 20 min, 30 sidor, läst 3 av 7 dagar")
+        XCTAssertFalse(week.summary.contains("kvar"))
+        XCTAssertEqual(ReadingWeek.duration(200 * 60), "3 h 20 min")
+        XCTAssertEqual(ReadingWeek.duration(59), "0 min")
+    }
+
+    func testReadRangesMergeNearbyPages() {
+        let step = 1.0 / 99
+        let ranges = ReadingWeek.ranges([0, step, 2 * step, 10 * step, 11 * step], step: step)
+        XCTAssertEqual(ranges.count, 2)
+        XCTAssertEqual(ranges[0].lowerBound, 0, accuracy: 0.0001)
+        XCTAssertEqual(ranges[0].upperBound, 3 * step, accuracy: 0.0001)
+        XCTAssertEqual(ranges[1].lowerBound, 10 * step, accuracy: 0.0001)
+        XCTAssertTrue(ReadingWeek.ranges([], step: step).isEmpty)
+    }
+
     // MARK: Trappan
 
     /// Edvins data: en databas i den form main har i dag (steg 5) går genom de nya stegen utan att något
@@ -164,6 +199,16 @@ final class StudyTests: XCTestCase {
         var info = ""
         try db.query("SELECT page_first, year FROM book_info WHERE book = 'bok'") { info = "\($0.int(0))|\($0.string(1))" }
         XCTAssertEqual(info, "63|2016")
+        // Steg 7 (K10): samma sida samma dag blir en rad med tiden adderad.
+        for seconds in [30.0, 12.0] {
+            try db.execute("""
+                INSERT INTO reading_log (day, book, page, position, seconds) VALUES ('2026-11-08', 'bok', '3', 0.1, ?)
+                ON CONFLICT(day, book, page) DO UPDATE SET seconds = seconds + excluded.seconds
+                """, [seconds])
+        }
+        var log = ""
+        try db.query("SELECT COUNT(*), SUM(seconds) FROM reading_log") { log = "\($0.int(0))|\($0.double(1))" }
+        XCTAssertEqual(log, "1|42.0")
         // Trappan körd en gång till gör ingenting.
         let again = try db.migrate(AnnotationStore.migrations)
         XCTAssertEqual(again.from, again.to)

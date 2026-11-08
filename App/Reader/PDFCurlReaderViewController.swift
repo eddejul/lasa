@@ -173,6 +173,8 @@ final class PDFCurlReaderViewController: UIViewController {
                                                name: SavedWordMarks.didChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(updateTimelineMarks),
                                                name: AnnotationStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateReadRanges),
+                                               name: ReadingLog.didChange, object: nil)
         SavedWordMarks.shared.refresh()
         setUpNavigationBar()
         setUpBottomBar()
@@ -206,6 +208,7 @@ final class PDFCurlReaderViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         guard isMovingFromParent else { return }
+        ReadingLog.shared.pause()
         AppLog.shared.write("Stängde \(book.url.lastPathComponent): \(renderer.statsSummary) Appen använder "
                             + String(format: "%.0f MB.", MemoryUsage.megabytes))
         SyncEngine.shared.syncSoon()
@@ -491,6 +494,7 @@ final class PDFCurlReaderViewController: UIViewController {
         }
         updatePageLabel()
         updateTimelineMarks()
+        updateReadRanges()
     }
 
     /// V2: kapitelgränserna ur PDF:ens innehåll, markeringarna och bokmärkena på tidslinjen. Ritas om bara när
@@ -574,6 +578,21 @@ final class PDFCurlReaderViewController: UIViewController {
             bottomBar.slider.value = Float(currentIndex)
         }
         reportReadingStatus(indices)
+        logReading(indices)
+    }
+
+    /// K10: sidorna som syns, till läsloggen (bara i minnet, databasen skrivs högst en gång i minuten).
+    private func logReading(_ indices: [Int]) {
+        let last = Double(max(renderer.pageCount - 1, 1))
+        ReadingLog.shared.pageShown(book: bookKey, pages: indices.map {
+            ReadingLog.Page(key: String($0), position: Double($0) / last)
+        })
+    }
+
+    /// K10: det man läst i boken, mörkare på tidslinjen.
+    @objc private func updateReadRanges() {
+        let last = Double(max(renderer.pageCount - 1, 1))
+        bottomBar.slider.readRanges = ReadingLog.shared.readRanges(book: bookKey, step: 1 / last)
     }
 
     /// Var man är, till biblioteket (B1, B2): andel läst, kapitlet, sidan och sidantalet.

@@ -44,9 +44,10 @@ final class ReaderTimeline: UIControl {
     var bookmarks: [Double] = [] {
         didSet { if bookmarks != oldValue { track.setNeedsDisplay() } }
     }
-    /// K10 (läsloggen, en senare våg): de lästa delarna av boken ska ritas mörkare här och i en större bild
-    /// i Innehåll. Läsloggen finns inte än, så listan är alltid tom och ritas inte.
-    var readRanges: [ClosedRange<Double>] = []
+    /// K10: de lästa delarna av boken ur läsloggen (`ReadingLog`), ritade mörkare på linjen.
+    var readRanges: [ClosedRange<Double>] = [] {
+        didSet { if readRanges != oldValue { track.setNeedsDisplay() } }
+    }
 
     /// Texten i bubblan ovanför fingret medan man drar, satt av läsaren i `.valueChanged`.
     var bubbleText: String? {
@@ -307,6 +308,16 @@ final class ReaderTimeline: UIControl {
         context.setFillColor(view.lineColor.cgColor)
         context.addPath(UIBezierPath(roundedRect: line, cornerRadius: 1.5).cgPath)
         context.fillPath()
+
+        // K10: det man läst, mörkare på linjen.
+        context.setFillColor(view.tickColor.cgColor)
+        for range in readRanges {
+            let start = xPosition(for: range.lowerBound)
+            let end = max(xPosition(for: range.upperBound), start + 2)
+            context.addPath(UIBezierPath(roundedRect: CGRect(x: start, y: mid - 1.5, width: end - start, height: 3),
+                                         cornerRadius: 1.5).cgPath)
+            context.fillPath()
+        }
 
         // Kapitelgränserna, högst ett streck per två punkter.
         context.setFillColor(view.tickColor.cgColor)
