@@ -18,6 +18,28 @@ final class StudyTests: XCTestCase {
         XCTAssertNil(BookPageNumbering.suggestion(fileName: "Lindqvist kap 15-19.pdf", pageCount: 10))
         XCTAssertNil(BookPageNumbering.suggestion(fileName: "Analys1-3.pdf", pageCount: 3))
         XCTAssertNil(BookPageNumbering.suggestion(fileName: "Bok (s80-63).pdf", pageCount: 3))
+        XCTAssertEqual(one?.matches, true)
+        XCTAssertEqual(spread?.matches, true)
+        // D4-4: sidantalet stämmer inte (sidor överhoppade, fotade två gånger): bara ett förslag.
+        for count in [16, 36, 5, 11] {
+            let wrong = BookPageNumbering.suggestion(fileName: "Kap (s63-80).pdf", pageCount: count)
+            XCTAssertEqual(wrong?.matches, false, "\(count) sidor")
+            XCTAssertEqual(BookPageNumbering.resolve(first: 0, spread: false, fileName: "Kap (s63-80).pdf", pageCount: count,
+                                                     hasPDFLabels: false).source, .file)
+        }
+        // Tio uppslag för s. 63 till 80 (62 och 63 till 80 och 81) stämmer.
+        XCTAssertEqual(BookPageNumbering.spreadCount(first: 63, last: 80), 10)
+        XCTAssertEqual(BookPageNumbering.suggestion(fileName: "Kap (s63-80).pdf", pageCount: 10)?.matches, true)
+        XCTAssertEqual(BookPageNumbering.suggestion(fileName: "Kap (s63-80).pdf", pageCount: 10)?.spread, true)
+        // D4-6: det automatiska valet som sparas.
+        XCTAssertEqual(BookPageNumbering.automaticSetting(fileName: "Kap (s63-80).pdf", pageCount: 18, hasPDFLabels: false)?.first, 63)
+        XCTAssertNil(BookPageNumbering.automaticSetting(fileName: "Kap (s63-80).pdf", pageCount: 16, hasPDFLabels: false))
+        XCTAssertEqual(BookPageNumbering.automaticSetting(fileName: "Bok.pdf", pageCount: 16, hasPDFLabels: true)?.first,
+                       BookPageNumbering.labelNumbers)
+        XCTAssertNil(BookPageNumbering.automaticSetting(fileName: "HIETANEN 2015.pdf", pageCount: 25, hasPDFLabels: false))
+        // Sparat val gäller fast filnamnet ändras.
+        XCTAssertEqual(BookPageNumbering.resolve(first: 63, spread: false, fileName: "Kap (s62-79).pdf", pageCount: 18,
+                                                 hasPDFLabels: false).source, .offset(first: 63, spread: false))
     }
 
     func testOffsetNumbers() {

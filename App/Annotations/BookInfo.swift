@@ -28,8 +28,9 @@ struct BookPageNumbering: Equatable {
     static let fileNumbers = -1
     static let labelNumbers = -2
 
-    /// Väljer källa ur det sparade sättet. Inte valt än: förslaget ur filnamnet, annars PDF:ens sidetiketter,
-    /// annars filens nummer utan att de räknas som bokens.
+    /// Väljer källa ur det sparade sättet. Inte valt än: förslaget ur filnamnet när sidantalet stämmer
+    /// (D4-4), annars PDF:ens sidetiketter, annars filens nummer utan att de räknas som bokens. Läsaren sparar
+    /// det automatiska valet första gången boken öppnas (`automaticSetting`, D4-6).
     static func resolve(first setting: Int, spread: Bool, fileName: String, pageCount: Int,
                         hasPDFLabels: Bool) -> BookPageNumbering {
         if setting > 0 {
@@ -41,15 +42,32 @@ struct BookPageNumbering: Equatable {
         if setting == labelNumbers {
             return BookPageNumbering(source: hasPDFLabels ? .pdfLabels : .file)
         }
-        if let suggestion = suggestion(fileName: fileName, pageCount: pageCount) {
+        if let suggestion = suggestion(fileName: fileName, pageCount: pageCount), suggestion.matches {
             return BookPageNumbering(source: .offset(first: suggestion.first, spread: suggestion.spread))
         }
         return BookPageNumbering(source: hasPDFLabels ? .pdfLabels : .file)
     }
 
+    /// D4-6: det som sparas i `book_info` första gången boken öppnas, så att ett nytt filnamn inte räknar om
+    /// sidnumren tyst. Nil: inget säkert val, bokens sidnummer får ställas in.
+    static func automaticSetting(fileName: String, pageCount: Int, hasPDFLabels: Bool) -> (first: Int, spread: Bool)? {
+        if let suggestion = suggestion(fileName: fileName, pageCount: pageCount), suggestion.matches {
+            return (suggestion.first, suggestion.spread)
+        }
+        return hasPDFLabels ? (labelNumbers, false) : nil
+    }
+
+    /// Antalet bilder som ett uppslag från `first` till `last` kräver, med jämn sida till vänster (D4-2).
+    static func spreadCount(first: Int, last: Int) -> Int {
+        let start = spreadStart(first)
+        let end = last % 2 == 1 ? last : last + 1
+        return (end - start + 1) / 2
+    }
+
     /// Förslaget ur filnamnet: ett sidintervall inom parentes, som "Lindqvist kap 3 (s63-80).pdf" eller
-    /// "(s. 281–305)". Är intervallet ungefär dubbelt så långt som filens sidantal är varje sida ett uppslag.
-    static func suggestion(fileName: String, pageCount: Int) -> (first: Int, last: Int, spread: Bool)? {
+    /// "(s. 281–305)". `matches` när filens sidantal är exakt intervallets (eller antalet uppslag, D4-4): bara
+    /// då används förslaget utan att läsaren bekräftar det.
+    static func suggestion(fileName: String, pageCount: Int) -> (first: Int, last: Int, spread: Bool, matches: Bool)? {
         let name = fileName as NSString
         let pattern = #"\(\s*[sS]\.?\s*(\d{1,4})\s*[-–—]\s*(\d{1,4})\s*\)"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
@@ -60,8 +78,10 @@ struct BookPageNumbering: Equatable {
             return nil
         }
         let range = last - first + 1
-        let spread = pageCount > 0 && abs(range - 2 * pageCount) < abs(range - pageCount)
-        return (first, last, spread)
+        let single = pageCount == range
+        let spreads = pageCount == spreadCount(first: first, last: last)
+        let spread = !single && (spreads || (pageCount > 0 && abs(range - 2 * pageCount) < abs(range - pageCount)))
+        return (first, last, spread, single || spreads)
     }
 
     /// D4-2: i en tryckt bok står jämna sidor till vänster. Ett uppslag som visar sida `first` har därför

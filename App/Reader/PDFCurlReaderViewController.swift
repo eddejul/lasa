@@ -684,7 +684,17 @@ final class PDFCurlReaderViewController: UIViewController {
     fileprivate lazy var pageNumbering: BookPageNumbering = makePageNumbering()
 
     private func makePageNumbering() -> BookPageNumbering {
-        let info = BookInfoStore.shared.info(book: bookKey)
+        var info = BookInfoStore.shared.info(book: bookKey)
+        // D4-6: första gången boken öppnas sparas det automatiska valet, så att ett nytt filnamn eller en ny
+        // version av filen inte räknar om sidnumren utan att läsaren ändrar dem själv.
+        if info.pageFirst == BookPageNumbering.notChosen,
+           let automatic = BookPageNumbering.automaticSetting(fileName: book.url.lastPathComponent,
+                                                              pageCount: document.pageCount, hasPDFLabels: hasPDFLabels) {
+            info.pageFirst = automatic.first
+            info.pageSpread = automatic.spread
+            BookInfoStore.shared.save(info, book: bookKey)
+            AppLog.shared.write("K2: bokens sidnummer valda automatiskt och sparade (\(automatic.first), uppslag \(automatic.spread))")
+        }
         return BookPageNumbering.resolve(first: info.pageFirst, spread: info.pageSpread,
                                          fileName: book.url.lastPathComponent, pageCount: document.pageCount,
                                          hasPDFLabels: hasPDFLabels)
@@ -890,9 +900,12 @@ final class PDFCurlReaderViewController: UIViewController {
                                                       pageCount: document.pageCount)
         var message = pageNumbering.summary
         if let suggestion = suggestion {
-            message += suggestion.spread
-                ? "\n\nFörslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last), uppslag."
-                : "\n\nFörslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last)."
+            message += "\n\nFörslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last)"
+                + (suggestion.spread ? ", uppslag." : ".")
+            if !suggestion.matches {
+                message += " Filen har \(document.pageCount) sidor, och det stämmer inte med intervallet. Kontrollera mot "
+                    + "en sida innan du sparar."
+            }
         }
         if let printed = printedPageSuggestion {
             message += "\n\nFörslag ur sidornas text: filens första sida är s. \(printed.first) (tryckta sidnummer på "
@@ -949,6 +962,10 @@ final class PDFCurlReaderViewController: UIViewController {
             + "\(highlight.section + 1)."
         if let printed = printedPageSuggestion {
             text += " Sidornas text tyder på s. \(printed.first + highlight.section) i boken."
+        }
+        if let suggestion = BookPageNumbering.suggestion(fileName: book.url.lastPathComponent,
+                                                         pageCount: document.pageCount), !suggestion.matches {
+            text += " Filnamnet säger s. \(suggestion.first) till \(suggestion.last), men filen har \(document.pageCount) sidor."
         }
         return text
     }
