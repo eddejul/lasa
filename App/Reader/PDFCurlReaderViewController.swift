@@ -703,10 +703,10 @@ final class PDFCurlReaderViewController: UIViewController {
     /// K3: bokens sidnummer för en markering. I ett uppslag avgör markeringens plats på bilden vilken sida.
     fileprivate func citationPage(for highlight: Highlight) -> String? {
         var half: Int?
-        if case let .offset(_, spread) = pageNumbering.source, spread,
-           let rect = highlight.rects.first, let page = document.page(at: highlight.section) {
-            let bounds = page.bounds(for: .cropBox)
-            half = rect.midX > bounds.midX ? 1 : 0
+        if case let .offset(_, spread) = pageNumbering.source, spread, let page = document.page(at: highlight.section) {
+            // D4-7: alla markeringens rutor, i sidans visade koordinater. Över mitten eller på båda: "N f.".
+            half = BookPageNumbering.spreadHalf(rects: highlight.rects, bounds: page.bounds(for: .cropBox),
+                                                rotation: page.rotation)
         }
         return pageNumbering.citationPage(for: highlight.section, half: half,
                                           pdfLabel: pdfLabel(for: highlight.section))

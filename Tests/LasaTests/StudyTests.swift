@@ -71,6 +71,23 @@ final class StudyTests: XCTestCase {
         XCTAssertNil(BookPageNumbering(source: .offset(first: 1, spread: true)).printed(for: 0, pdfLabel: nil))
     }
 
+    /// D4-7: halvan i ett uppslag räknas på alla rutor och i sidans visade koordinater.
+    func testSpreadHalf() {
+        let page = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let left = CGRect(x: 10, y: 10, width: 50, height: 10)
+        let right = CGRect(x: 120, y: 10, width: 50, height: 10)
+        XCTAssertEqual(BookPageNumbering.spreadHalf(rects: [left], bounds: page, rotation: 0), 0)
+        XCTAssertEqual(BookPageNumbering.spreadHalf(rects: [right], bounds: page, rotation: 0), 1)
+        XCTAssertNil(BookPageNumbering.spreadHalf(rects: [left, right], bounds: page, rotation: 0))
+        XCTAssertNil(BookPageNumbering.spreadHalf(rects: [CGRect(x: 90, y: 10, width: 20, height: 10)], bounds: page,
+                                                  rotation: 0))
+        XCTAssertNil(BookPageNumbering.spreadHalf(rects: [], bounds: page, rotation: 0))
+        XCTAssertEqual(BookPageNumbering.spreadHalf(rects: [right], bounds: page, rotation: 180), 0)
+        let top = CGRect(x: 10, y: 60, width: 50, height: 10)
+        XCTAssertEqual(BookPageNumbering.spreadHalf(rects: [top], bounds: page, rotation: 90), 1)
+        XCTAssertEqual(BookPageNumbering.spreadHalf(rects: [top], bounds: page, rotation: 270), 0)
+    }
+
     func testPDFLabelsAndFileNumbers() {
         let labels = BookPageNumbering.resolve(first: 0, spread: false, fileName: "Bok.pdf", pageCount: 5,
                                                hasPDFLabels: true)

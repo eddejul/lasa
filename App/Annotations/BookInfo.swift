@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Bokens egna sidnummer i en PDF (K2): ett ställe som ger bokens sidnummer för en sida i filen.
@@ -88,6 +89,31 @@ struct BookPageNumbering: Equatable {
     /// vänstersidan `first` om den är jämn, annars `first - 1`.
     static func spreadStart(_ first: Int) -> Int {
         first % 2 == 0 ? first : first - 1
+    }
+
+    /// D4-7: vilken halva av ett uppslag en markering ligger på (0 vänster, 1 höger), räknat i sidans visade
+    /// koordinater. Rutorna sparas i PDF-sidans egna koordinater, så sidans rotation vänds först. Nil när rutorna
+    /// ligger på båda halvorna eller över mitten: då blir citatets sida "N f.".
+    static func spreadHalf(rects: [CGRect], bounds: CGRect, rotation: Int) -> Int? {
+        guard !rects.isEmpty else { return nil }
+        let turned = ((rotation % 360) + 360) % 360
+        var halves = Set<Int>()
+        for rect in rects {
+            let vertical = turned == 90 || turned == 270
+            let low = vertical ? rect.minY : rect.minX
+            let high = vertical ? rect.maxY : rect.maxX
+            let mid = vertical ? bounds.midY : bounds.midX
+            if low < mid, high > mid {
+                return nil
+            }
+            // 90 grader medurs: sidans överkant (högt y) hamnar till höger. 180 och 270 vänder höger och vänster.
+            var right = low >= mid
+            if turned == 180 || turned == 270 {
+                right.toggle()
+            }
+            halves.insert(right ? 1 : 0)
+        }
+        return halves.count == 1 ? halves.first : nil
     }
 
     /// Bokens sidor för sidan `index` (från 0) i filen, när de är kända som tal (förskjutningen).
