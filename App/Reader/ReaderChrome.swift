@@ -20,6 +20,8 @@ final class ReaderChrome {
         var goToPage: Selector? = nil
         /// Zooma sidan (PDF).
         var zoom: Selector? = nil
+        /// V3: miniatyrerna (PDF).
+        var thumbnails: Selector? = nil
     }
 
     let contentsItem: UIBarButtonItem
@@ -165,6 +167,12 @@ final class ReaderChrome {
             children.append(UIAction(title: "Gå till sida", image: UIImage(systemName: "arrow.right.doc.on.clipboard")) {
                 [weak self] _ in
                 self?.send(goToPage)
+            })
+        }
+        if let thumbnails = actions.thumbnails {
+            children.append(UIAction(title: "Miniatyrer", image: UIImage(systemName: "square.grid.3x3")) {
+                [weak self] _ in
+                self?.send(thumbnails)
             })
         }
         if let zoom = actions.zoom {

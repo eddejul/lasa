@@ -37,7 +37,8 @@ final class PDFCurlReaderViewController: UIViewController {
         return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: appearance, theme: theme,
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
-                                           goToPage: #selector(showGoToPage), zoom: #selector(zoomCurrentPage)),
+                                           goToPage: #selector(showGoToPage), zoom: #selector(zoomCurrentPage),
+                                           thumbnails: #selector(showThumbnails)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -466,6 +467,10 @@ final class PDFCurlReaderViewController: UIViewController {
         slider.addTarget(self, action: #selector(sliderMoved), for: .valueChanged)
         slider.addTarget(self, action: #selector(sliderReleased), for: [.touchUpInside, .touchUpOutside])
         slider.accessibilityStep = 1
+        // V3: håll på tidslinjen för miniatyrerna.
+        slider.onLongPress = { [weak self] in
+            self?.showThumbnails()
+        }
 
         bottomBar.pageButton.addTarget(self, action: #selector(showGoToPage), for: .touchUpInside)
         bottomBar.infoButton.addTarget(self, action: #selector(toggleRemaining), for: .touchUpInside)
@@ -624,6 +629,29 @@ final class PDFCurlReaderViewController: UIViewController {
 
     @objc private func sliderReleased() {
         hop(to: Int(bottomBar.slider.value.rounded()))
+    }
+
+    // MARK: Miniatyrer (V3)
+
+    /// Rutnätet med små sidbilder. Ett tryck på en sida hoppar dit, och Tillbaka till sidan man var på ligger kvar
+    /// tills man går tillbaka eller trycker på krysset (Stanna här).
+    @objc private func showThumbnails() {
+        guard presentedViewController == nil else { return }
+        let first = document.page(at: 0)
+        let box = first?.bounds(for: .mediaBox) ?? CGRect(x: 0, y: 0, width: 1, height: 1.414)
+        let rotated = (first?.rotation ?? 0) % 180 != 0
+        let aspect = rotated ? box.width / max(box.height, 1) : box.height / max(box.width, 1)
+        let grid = PDFThumbnailsViewController(renderer: renderer, pageCount: renderer.pageCount,
+                                               currentIndex: currentIndex, aspect: aspect) { [weak self] index in
+            self?.placeLabel(index) ?? "s. \(index + 1)"
+        }
+        grid.onSelect = { [weak self] index in
+            self?.dismiss(animated: true)
+            self?.hop(to: index, sticky: true)
+        }
+        let navigation = UINavigationController(rootViewController: grid)
+        navigation.modalPresentationStyle = .fullScreen
+        present(navigation, animated: true)
     }
 
     // MARK: Innehåll och Gå till sida
@@ -1959,6 +1987,43 @@ extension PDFCurlReaderViewController {
         backStack.goBack()
         _ = await waitForImages()
         SelfTest.log("Två steg tillbaka: sidan \(currentIndex + 1) (ska vara \(before + 1))")
+        await selfTestThumbnails()
+    }
+
+    /// V3: miniatyrerna ritas bara för synliga celler, ett tryck hoppar och Tillbaka ligger kvar när man bläddrar.
+    fileprivate func selfTestThumbnails() async {
+        let start = currentIndex
+        let memoryBefore = MemoryUsage.megabytes
+        showThumbnails()
+        guard let navigation = presentedViewController as? UINavigationController,
+              let grid = navigation.viewControllers.first as? PDFThumbnailsViewController else {
+            SelfTest.log("FEL: miniatyrerna öppnades inte")
+            return
+        }
+        for _ in 0..<100 where grid.fullAfterMilliseconds == nil {
+            await pause(0.1)
+        }
+        let state = grid.visibleState
+        SelfTest.log("Miniatyrer (V3): \(state.visible) celler syns, \(state.withImage) med bild, \(grid.drawn) ritade av \(renderer.pageCount) sidor, "
+                     + "alla synliga efter \(grid.fullAfterMilliseconds.map { "\($0) ms" } ?? "FEL, blev inte klart"), minnet "
+                     + String(format: "%.0f till %.0f MB", memoryBefore, MemoryUsage.megabytes))
+        SelfTest.saveScreen(navigation.view, name: "06c-miniatyrer")
+        let target = renderer.pageCount - 2
+        grid.onSelect?(target)
+        await pause(0.8)
+        _ = await waitForImages()
+        SelfTest.log("Efter tryck på en miniatyr: sidan \(currentIndex + 1) (ska vara \(target + 1)), Tillbaka visar "
+                     + "\(backStack.isShowing ? backStack.control.title ?? "inget" : "FEL, ingen knapp")")
+        for _ in 0..<3 {
+            turnPage(forward: false)
+            await pause(0.9)
+            backStack.pageTurned()
+        }
+        SelfTest.log("Efter tre vikningar: Tillbaka \(backStack.isShowing ? "ligger kvar" : "FEL, försvann")")
+        SelfTest.saveScreen(view, name: "06d-tillbaka-miniatyr")
+        backStack.goBack()
+        _ = await waitForImages()
+        SelfTest.log("Tillbaka från miniatyren: sidan \(currentIndex + 1) (ska vara \(start + 1))")
     }
 
     /// G6: markeringarnas rutor är sparade, saknade rutor räknas på renderingskön, sidor med markeringar

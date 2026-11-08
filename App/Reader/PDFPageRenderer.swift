@@ -239,6 +239,28 @@ final class PDFPageRenderer {
         queue.addOperation(operation)
     }
 
+    /// V3: en liten sidbild till miniatyrerna, ritad på renderingskön med lägsta prioritet och med renderarens
+    /// eget dokument. Sparas inte bland läsarens fem sidbilder. `width` i punkter. Operationen svaras, så att en
+    /// miniatyr som rullats ur bild kan avbrytas innan den ritas. `completion` kommer på huvudtråden.
+    @discardableResult
+    func thumbnail(for index: Int, width: CGFloat, scale: CGFloat,
+                   completion: @escaping (UIImage?) -> Void) -> Operation {
+        let worker = self.worker
+        let theme = self.theme
+        let operation = BlockOperation()
+        operation.addExecutionBlock { [weak operation] in
+            guard let operation = operation, !operation.isCancelled else { return }
+            let image = worker.render(index: index, size: CGSize(width: width, height: width * 2), scale: scale, theme: theme)
+            DispatchQueue.main.async {
+                guard !operation.isCancelled else { return }
+                completion(image)
+            }
+        }
+        operation.queuePriority = .veryLow
+        queue.addOperation(operation)
+        return operation
+    }
+
     // MARK: Internt
 
     private func isValid(_ index: Int) -> Bool {
