@@ -1,13 +1,15 @@
-# Läsa för Windows (fas 5)
+# Sensus för Windows (tidigare Läsa, fas 5 och 7)
 
-Läsa på datorn: kurslitteratur i PDF, EPUB och textfiler (txt, md), med samma ordfunktion och samma ordbok
-som på iPaden. Appen är byggd med Tauri, pdf.js (PDF) och foliate-js (EPUB och text), och den byggs i
-GitHub Actions. Ingen Rust eller annan utvecklingsmiljö behövs på datorn.
+Sensus på datorn: kurslitteratur i PDF, EPUB och textfiler (txt, md, rtf, html), med samma ordfunktion och
+samma ordbok som på iPaden. Appen hette Läsa: installationen, Start-menyn och datamappen heter fortfarande
+Läsa och `se.edvin.lasa`, så att böcker och data finns kvar.
+
+Appen är byggd med Tauri, pdf.js (PDF) och foliate-js (EPUB och text), och den byggs i GitHub Actions. Ingen Rust eller annan utvecklingsmiljö behövs på datorn.
 
 ## Installera
 
 1. Gå till repot på github.com, fliken **Actions**, och välj **Windows build** till vänster.
-2. Öppna den senaste körningen med grön bock (på grenen `fas5`, eller `main` när fas 5 är ihopslagen).
+2. Öppna den senaste körningen med grön bock (på `main`, eller grenen du vill prova).
 3. Längst ner under Artifacts: ladda ner **Lasa-windows** och packa upp zip-filen. Där finns två
    installationsfiler som gör samma sak. Använd den som slutar på `-setup.exe`.
 4. Dubbelklicka på `-setup.exe`. Läsa installeras för ditt konto, så det behövs ingen administratör.
@@ -19,15 +21,22 @@ Uppdatera: kör en nyare `-setup.exe` på samma sätt. Böcker, läspositioner o
 
 Läsa behöver Microsoft Edge WebView2, som redan finns i Windows 11. Saknas den hämtar installationen den.
 
+**Öppna med:** installationen lägger till Sensus under Öppna med för PDF och EPUB i Utforskaren (högerklick,
+Öppna med). Sensus blir inte standardprogram för filerna, det väljer du själv i Windows. Boken läggs till och
+öppnas, och är appen redan öppen kommer fönstret fram i stället för att en ny startas.
+
 ## Använda
 
-* **Lägg till böcker:** knappen Lägg till böcker, eller dra in filer var som helst i fönstret. Filen kopieras
-  in i Läsas egen mapp, och originalet rörs inte. Samma fil två gånger läggs inte till igen.
+* **Lägg till böcker:** knappen Lägg till böcker (Ctrl och O), eller dra in filer var som helst i fönstret.
+  Filen kopieras in i appens egen mapp, och originalet rörs inte. Samma fil två gånger läggs inte till igen.
+  Medan filerna läses in visas hur långt det har kommit. Låsta (lösenord) och trasiga PDF:er läggs inte till,
+  och appen säger varför.
 * **Bläddra:** högerpil och vänsterpil, PageDown och PageUp, mellanslag (Skift och mellanslag bakåt),
   mushjulet, eller pilarna som syns i sidans kanter när musen är över sidan. Home och End går till
   början och slutet. Esc går tillbaka till biblioteket.
-* **Uppslag:** två sidor bredvid varandra när fönstret är brett nog, annars en. I PDF ligger omslaget ensamt
-  till höger och sedan sida 2 och 3, 4 och 5, som på iPaden.
+* **Uppslag:** Automatiskt (två sidor när fönstret är brett nog), En sida eller Två sidor, under Visning (PDF)
+  och Aa (EPUB och text). I PDF ligger omslaget ensamt till höger och sedan sida 2 och 3, 4 och 5, som på
+  iPaden.
 * **PDF, Visning:** Automatiskt (standard) visar hela sidan, och uppslag, om texten blir läsbar. På en
   bärbar dator med 150 procents skalning blir en hel A4-sida för liten, och då visas en sida i läsbar
   storlek som du rullar i. Nedåtpil, mellanslag och mushjulet rullar först och bläddrar när sidan är slut.
@@ -36,17 +45,25 @@ Läsa behöver Microsoft Edge WebView2, som redan finns i Windows 11. Saknas den
 * **Innehåll** visar bokens innehållsförteckning. **Gå till sida** (PDF) tar bokens egna sidnummer, som
   xii eller 45, och annars sidans plats i filen. Klicka på sidnumret nere till höger för samma sak.
   Reglaget nere hoppar i boken.
-* **Tema:** vitt, sepia eller mörkt, för alla böcker. Mörkt vänder ljusheten på PDF-sidor men behåller
-  färgerna, så att bilder inte blir negativ.
+* **Tema:** vitt, sepia, mörkt eller Följ systemet (ljust eller mörkt som Windows), för alla böcker. T byter
+  tema. Mörkt vänder ljusheten på PDF-sidor men behåller färgerna, så att bilder inte blir negativ.
 * **Aa** (EPUB och text): typsnitt och textstorlek.
 * Läspositionen sparas per bok och finns kvar när du öppnar boken igen.
+* **Sök i boken** (knappen Sök eller Ctrl och F): träfflista med utdrag, klick visar träffen. Samma sökning som
+  på iPaden: stora och små bokstäver räknas lika, och ett ord avstavat över en radbrytning hittas.
+* **Markeringar:** dra över texten med musen och välj en av fyra färger, eller Anteckning. Klicka på en
+  markering för att byta färg, skriva en anteckning, kopiera eller ta bort. **Bokmärke** (eller B) på sidan.
+  Panelen **Markeringar** listar bokmärken och markeringar. Synkas inte än (se Kända brister).
+* **Tangentbordet:** ? visar alla genvägar. F11 helskärm, Ctrl och G gå till sida (i EPUB en plats eller
+  procent). Webbläsarens egna tangenter (F5, Ctrl och R, Ctrl och P) gör ingenting.
 
 ### Ordfunktionen
 
 **Dubbelklicka på ett ord**, eller **högerklicka** på det. Beslutet: dubbelklick är det vanliga sättet att
 peka ut ett ord i alla Windows-program (det markerar ordet), så det känns naturligt. Högerklick gör samma
 sak för den som hellre använder det, eftersom en läsare inte behöver någon egen högerklicksmeny. Ett
-vanligt klick gör ingenting, så det går fortfarande att markera text och kopiera den med Ctrl och C.
+vanligt klick gör ingenting. Att dra över text visar färgerna för en markering, och Ctrl och C kopierar
+fortfarande den markerade texten.
 
 Rutan har samma innehåll och ordning som på iPaden:
 
@@ -59,6 +76,11 @@ Rutan har samma innehåll och ordning som på iPaden:
 * **Visa i SO och SAOL** öppnar svenska.se i webbläsaren. Svenska Akademiens data kopieras aldrig in.
 * Visa som engelska eller svenska, när ordet finns i båda språken.
 * Ordet sparas i **Sparade ord** med meningen det stod i, boken och sidan.
+* **Förklara i meningen** (AI-knappen): finns när en nyckel till Google Gemini är inskriven under
+  Inställningar, Förklaring med AI. Samma regler som på iPaden: modellen väljer bara bland ordbokens
+  betydelser och ord. Nyckeln sparas i Windows Autentiseringshanteraren.
+* **Repetera** i Sparade ord: ordet och meningen, Visa svaret (mellanslag) och fyra betyg (1 till 4), med
+  exakt samma schema som på iPaden (`src/js/review.js`). Repetitionen synkas.
 
 Språket: finns ordet bara i ett språk blir det det språket. Finns det i båda (som "glass" eller "far")
 räknar Windows-appen vanliga småord i meningen, eftersom Apples språkigenkänning bara finns på iPaden.
@@ -90,9 +112,9 @@ som börjar med `sync-` och slutar med `se.edvin.lasa`). Logga ut tar bort inlog
 * PDF synkar sidan. EPUB synkar kapitlet och hur långt in i kapitlet du är, så på andra enheten hamnar du
   på samma ställe i kapitlet men inte alltid exakt samma rad. Textfiler (txt, md) synkar inte positionen,
   eftersom iPaden delar dem i kapitel på sitt eget sätt.
-* Ett ord som tas bort i Sparade ord tas bort på iPaden också. Repetitionen från iPaden följer med orden
-  oförändrad (Windows-appen repeterar inte).
-* Markeringar och bokmärken synkas inte till datorn än, och iPadens rader rörs inte.
+* Ett ord som tas bort i Sparade ord tas bort på iPaden också. Repetitionen synkas åt båda hållen.
+* Markeringar och bokmärken synkas inte än, och iPadens rader rörs inte. Synken byts mot filer i iCloud
+  Drive (F1), och då kommer markeringarna med.
 
 ## Var allt sparas
 
@@ -101,7 +123,8 @@ I mappen `%APPDATA%\se.edvin.lasa`:
 * `Böcker\` med bokfilerna. Varje fil heter efter sitt id, som är SHA-256 av filens innehåll (64 tecken).
   Samma id används på iPaden i fas 6, så att böckerna kan kännas igen mellan enheterna.
 * `bibliotek.sqlite`: biblioteket, läspositioner (med ändringstid för synken) och inställningar, även
-  synkens adress och e-post.
+  synkens adress och e-post. Tabellerna `highlights` och `bookmarks` har samma kolumner som iPadens
+  `markeringar.sqlite` (book är bokens id): section, start, length (UTF-16) och text, som i docs/SYNK.md.
 * `anvandarord.sqlite`: sparade ord och dolda synonympar. Tabellen `saved_words` har samma kolumner som på
   iPaden, plus `uuid` och `book_id`, `deleted` för borttagna ord och iPadens repetition.
 
@@ -109,8 +132,11 @@ Ordboken (`lasa-ordbok.sqlite`) ligger bland programfilerna och ändras aldrig.
 
 ## Kända brister
 
-* Markeringar, anteckningar, bokmärken, sök i boken, repetition, uppläsning och AI-knappen finns inte på
-  datorn än. Synken tar bara läspositioner och sparade ord.
+* Markeringar och bokmärken synkas inte. Uppläsning finns inte på datorn. Synken tar läspositioner och
+  sparade ord med repetitionen.
+* En PDF läses fortfarande in hel när den öppnas (inte i bitar). Minnet hålls nere med högst 4 ritade sidor
+  (6 i uppslag) och högst 8 miljoner bildpunkter per sida.
+* PDF går inte att rulla som en lång remsa, bara bläddra (och rulla inom en sida som är större än fönstret).
 * Synken är provad mot en låtsas-Supabase, inte mot ett riktigt Supabase-projekt.
 * Skannade PDF:er utan textlager: sidorna visas, men ord går inte att slå upp. Appen säger till.
 * Språkgissningen och den engelska ordklassen är enklare än iPadens, som använder Apples språkverktyg.
@@ -133,8 +159,10 @@ windows/
     js/popup.js       ordrutan
     js/sync.js        synken med iPaden (som App/Sync/SyncEngine.swift), js/settings.js inställningarna
     vendor/           pdf.js och foliate-js med licenser, se vendor/VENDOR.md
-  src-tauri/          Rust-delen: ordboken (dict_query), användarens databaser, bokfilerna, synkens
-                      hemligheter i Autentiseringshanteraren (secret_get, secret_set)
+  src-tauri/          Rust-delen: ordboken (dict_query), användarens databaser med namngivna frågor
+                      (db_read, db_write, frågorna i statements.json), bokfilerna, hemligheterna i
+                      Autentiseringshanteraren (secret_get, secret_set), Öppna med (pending_take,
+                      pending_read) och installationens krokar (nsis-hooks.nsh)
   dev/server.py       kör gränssnittet i en vanlig webbläsare utan Tauri
   tests/              paritetstest, enhetstester och provkörning i Chrome
   tools/              vendor.mjs (kopierar pdf.js), make_icons.py (ikonen)
@@ -150,10 +178,16 @@ lookup.js och lookup.py över hela testlistan mot samma databas och jämför sva
 http://127.0.0.1:8955/. Servern svarar på samma kommandon som Rust-delen och skickar samma
 Content-Security-Policy som appen.
 
+**Databasen:** gränssnittet kan inte skicka egen SQL mot användarens databaser. Varje fråga har ett namn i
+`src-tauri/statements.json` (read eller write), som byggs in i appen och läses av `dev/server.py`. Ny fråga:
+lägg den där och anropa `read('namn', [...])` eller `write(...)` i `src/js/store.js`. Nya kolumner läggs under
+`columns` och läggs till när appen startar. Provservern har dessutom `test_sql` för testerna, appen har det inte.
+
 **Tester:**
 
 * `node --no-warnings windows/tests/parity.mjs <lasa-ordbok.sqlite>`: lookup.js mot lookup.py.
-* `node --test windows/tests/wordfind.test.mjs`: avstavning, meningar, språk och normalisering.
+* `node --test windows/tests/*.test.mjs`: avstavning, meningar och språk, RTF, repetitionens schema mot
+  `UserWords.swift`, AI-knappens regler och de namngivna databasfrågorna. Körs i bygget.
 * `python windows/tests/make_testbooks.py <mapp>` och sedan
   `python windows/tests/e2e.py --books <mapp> --out <mapp för bilder>`: lägger till böcker, bläddrar,
   slår upp ord, provar teman, zoom, Sparade ord, läspositionen efter omladdning och att skript i EPUB
@@ -163,6 +197,11 @@ Content-Security-Policy som appen.
   vad som hamnar i appen och på servern, att en andra synk skickar och hämtar noll rader, att borttaget blir
   `deleted = true`, att en öppen bok inte hoppar och att markeringar aldrig rörs. Provservern låter sidan
   anropa 127.0.0.1 (bara den, appen får bara anropa `https://*.supabase.co`).
+* `python windows/tests/e2e_fas7.py --books <mapp> --out <mapp> --data <serverns datamapp>` (mot
+  `dev/server.py` med tom datamapp): tema och Följ systemet, förlopp och fel vid import, rtf och html,
+  synkadressen, sök, genvägarna, markeringar och bokmärken i PDF och EPUB, minnestaket, repetitionen,
+  uppslagen, de namngivna frågorna och AI-knappen (Gemini besvaras av testet).
+* `dev/server.py --open <fil> ...` gör som Öppna med: filerna läggs till och den första öppnas.
 
 **Bygget:** workflow `Windows build` (`.github/workflows/windows-build.yml`) körs vid push till `main`
 och `fas*` när något under `windows/`, `tools/dictionary/` eller själva workflowfilen ändras. Ordboken
