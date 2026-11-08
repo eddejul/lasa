@@ -1704,7 +1704,11 @@ extension PDFCurlReaderViewController {
             _ = await waitForImages()
         }
 
-        // Ordet under fingret: ett första uppslag, sedan små rörelser på samma ord.
+        // Ordet under fingret: ett första uppslag, sedan små rörelser på samma ord. Bladet måste ha hunnit
+        // läggas ut efter hoppet (bildrutan var 0 x 0 direkt efter), som det alltid har när ett finger trycker.
+        await pause(0.6)
+        view.layoutIfNeeded()
+        visiblePages.forEach { $0.view.layoutIfNeeded() }
         guard let page = visiblePages.first(where: { !$0.isBlank }),
               let pdfPage = document.page(at: page.pageIndex),
               let text = pdfPage.string.map({ $0 as NSString }) else { return }
