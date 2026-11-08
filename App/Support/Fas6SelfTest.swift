@@ -117,6 +117,8 @@ enum Fas6SelfTest {
         defer { Keychain.set(nil, for: .geminiAPIKey) }
         let host = UIViewController()
         host.view.backgroundColor = Theme.current.canvas
+        // Liten menyrad, så att den inte går in över kortet i bilderna.
+        host.navigationItem.largeTitleDisplayMode = .never
         navigation.pushViewController(host, animated: false)
         await pause(0.3)
 
@@ -134,7 +136,7 @@ enum Fas6SelfTest {
             let wrapper = WordPopupNavigationController(rootViewController: card)
             wrapper.setNavigationBarHidden(true, animated: false)
             host.addChild(wrapper)
-            wrapper.view.frame = CGRect(x: 24, y: 100, width: width, height: height ?? 640)
+            wrapper.view.frame = CGRect(x: 24, y: 140, width: width, height: height ?? 640)
             wrapper.view.layer.cornerRadius = 20
             wrapper.view.clipsToBounds = true
             host.view.addSubview(wrapper.view)

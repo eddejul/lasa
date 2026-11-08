@@ -384,7 +384,10 @@ final class WordPopupViewController: UIViewController {
         let fitting = stack.systemLayoutSizeFitting(CGSize(width: inner, height: UIView.layoutFittingCompressedSize.height),
                                                     withHorizontalFittingPriority: .required,
                                                     verticalFittingPriority: .fittingSizeLevel)
-        let height = min(max(ceil(fitting.height) + Self.inset + 8, 120), 640)
+        // Rullvyn lägger till säkerhetsmarginalerna (till exempel popoverns pil), så de räknas med i höjden,
+        // annars klipps raden längst ner.
+        let safe = view.safeAreaInsets.top + view.safeAreaInsets.bottom
+        let height = min(max(ceil(fitting.height) + Self.inset + 8 + safe, 120), 640)
         let size = CGSize(width: Self.cardWidth, height: height)
         if preferredContentSize != size {
             preferredContentSize = size
