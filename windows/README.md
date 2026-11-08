@@ -134,8 +134,9 @@ Ordboken (`lasa-ordbok.sqlite`) ligger bland programfilerna och ändras aldrig.
 
 * Markeringar och bokmärken synkas inte. Uppläsning finns inte på datorn. Synken tar läspositioner och
   sparade ord med repetitionen.
-* En PDF läses fortfarande in hel när den öppnas (inte i bitar). Minnet hålls nere med högst 4 ritade sidor
-  (6 i uppslag) och högst 8 miljoner bildpunkter per sida.
+* En PDF över 16 MB läses i bitar (bara det pdf.js behöver), en mindre läses hel. Hur mycket som slipper
+  läsas beror på PDF:en: om alla sidor delar en resurslista (som PDF:er från reportlab) läses ändå nästan
+  allt. Minnet hålls nere med högst 4 ritade sidor (6 i uppslag) och högst 8 miljoner bildpunkter per sida.
 * PDF går inte att rulla som en lång remsa, bara bläddra (och rulla inom en sida som är större än fönstret).
 * Synken är provad mot en låtsas-Supabase, inte mot ett riktigt Supabase-projekt.
 * Skannade PDF:er utan textlager: sidorna visas, men ord går inte att slå upp. Appen säger till.
