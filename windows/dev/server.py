@@ -18,6 +18,7 @@ import re
 import sqlite3
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
@@ -60,6 +61,30 @@ class Backend:
                 for column, definition in columns:
                     if column not in existing:
                         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            self.run_moves(connection, database)
+
+    def run_moves(self, connection, database):
+        """Engångsflyttarna (moves, G3), som run_moves i main.rs: kopia av databasfilen först, sedan stegen i en
+        transaktion. Går flytten inte fungerar appen ändå."""
+        for move in database.get("moves", []):
+            if not connection.execute(move["pending"]).fetchone()[0]:
+                continue
+            seconds = int(time.time())
+            copy, extra = os.path.join(self.data, f"{move['backup']} {seconds}.sqlite"), 2
+            while os.path.exists(copy):
+                copy, extra = os.path.join(self.data, f"{move['backup']} {seconds} {extra}.sqlite"), extra + 1
+            try:
+                connection.execute("VACUUM INTO ?", (copy,))
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    for step in move["steps"]:
+                        connection.execute(step)
+                    connection.execute("COMMIT")
+                except Exception:
+                    connection.execute("ROLLBACK")
+                    raise
+            except sqlite3.Error as error:
+                print(f"Flytten kunde inte göras: {error}", file=sys.stderr)
 
     @staticmethod
     def rows(cursor):

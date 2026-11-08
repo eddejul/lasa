@@ -95,6 +95,45 @@ fn migrate(connection: &Connection, database: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Engångsflyttar (moves i statements.json, G3). Finns rader att flytta görs först en kopia av databasfilen
+/// i datamappen, sedan körs stegen i en transaktion. Stegen går att köra om utan skada, så en flytt som
+/// avbryts görs om nästa gång appen startar. Går flytten inte fungerar appen ändå (med de gamla id:na).
+fn run_moves(connection: &Connection, database: &Value, folder: &Path) -> Result<(), String> {
+    for item in database.get("moves").and_then(Value::as_array).into_iter().flatten() {
+        let (Some(pending), Some(backup)) = (
+            item.get("pending").and_then(Value::as_str),
+            item.get("backup").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let count: i64 = connection
+            .query_row(pending, [], |row| row.get(0))
+            .map_err(|error| error.to_string())?;
+        if count == 0 {
+            continue;
+        }
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let mut copy = folder.join(format!("{backup} {seconds}.sqlite"));
+        let mut extra = 2;
+        while copy.exists() {
+            copy = folder.join(format!("{backup} {seconds} {extra}.sqlite"));
+            extra += 1;
+        }
+        connection
+            .execute("VACUUM INTO ?1", [copy.to_string_lossy().to_string()])
+            .map_err(|error| format!("kopian före flytten: {error}"))?;
+        let transaction = connection.unchecked_transaction().map_err(|error| error.to_string())?;
+        for step in item.get("steps").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            transaction.execute_batch(step).map_err(|error| error.to_string())?;
+        }
+        transaction.commit().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn lock(mutex: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -484,6 +523,9 @@ fn main() {
                     Some(database) => {
                         if let Err(error) = migrate(connection, database) {
                             store_error = Some(format!("Databasen {name} kunde inte göras i ordning: {error}"));
+                        } else if let Err(error) = run_moves(connection, database, &data) {
+                            // Transaktionen är tillbakarullad, och appen fungerar med de gamla id:na.
+                            eprintln!("Flytten i databasen {name} kunde inte göras: {error}");
                         }
                     }
                     None => store_error = Some("statements.json saknar databaserna.".to_string()),

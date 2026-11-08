@@ -183,7 +183,7 @@ def run(url, books, out, port):
                   and "kunskap" in word["sentence"], f'ordet kunskap på servern: {word}')
 
             # Fröet i appen
-            rows = api(url, "test_sql", {"db": "bibliotek", "sql": "SELECT position, position_updated FROM books WHERE id = ?",
+            rows = api(url, "test_sql", {"db": "bibliotek", "sql": "SELECT position, position_updated FROM books WHERE sha256 = ?",
                                            "params": [epub_id]})
             seed_ms = int(datetime.datetime(2026, 11, 7, 9, 0, 0, 123000, tzinfo=datetime.timezone.utc).timestamp() * 1000)
             check(json.loads(rows[0][0]) == {"section": 2, "progression": 0.5} and round(rows[0][1] * 1000) == seed_ms,

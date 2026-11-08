@@ -12,7 +12,7 @@
 
 import { inTauri, secretGet, secretSet } from './backend.js';
 import {
-  applySyncedPosition, applySyncedWord, listBooks, setSetting, settings, wordsForSync,
+  applySyncedPosition, applySyncedWord, contentId, listBooks, setSetting, settings, wordsForSync,
 } from './store.js';
 
 const KEY_SECRET = 'sync-publishable-key';
@@ -229,7 +229,8 @@ async function syncPositions(user, report) {
     report.books += 1;
     const kind = book.format === 'pdf' ? 'pdf' : 'reflow';
     const local = book.positionUpdated ?? null;
-    const row = byBook.get(book.id);
+    // Synken känner igen böckerna på innehållet: book_id är SHA-256, inte bokens eget id (G3).
+    const row = byBook.get(contentId(book));
     const remoteDate = parseTime(row?.updated_at);
     if (row && remoteDate !== null && newer(remoteDate, local) && row.kind === kind) {
       const position = kind === 'pdf'
@@ -240,7 +241,7 @@ async function syncPositions(user, report) {
     } else if (local !== null && newer(local, remoteDate)) {
       const place = syncedPlace(book);
       if (!place) continue;
-      push.push({ user_id: user, book_id: book.id, title: book.title, kind, section: place.section,
+      push.push({ user_id: user, book_id: contentId(book), title: book.title, kind, section: place.section,
         progression: place.progression, updated_at: isoTime(local) });
     }
   }

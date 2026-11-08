@@ -11,7 +11,7 @@ import { PdfReader } from './pdfreader.js';
 import { FONTS, ReflowReader, SIZES } from './reflowreader.js';
 import { newSearchState, renderSearchPanel } from './searchpanel.js';
 import { isBrowserKey } from './shortcuts.js';
-import { markOpened, savePosition, setSetting, settings } from './store.js';
+import { contentId, markOpened, savePosition, setSetting, settings } from './store.js';
 import { syncSoon } from './sync.js';
 import { THEMES, applyTheme, resolvedTheme, setThemeListener } from './theme.js';
 import { el, promptDialog, replace, toast } from './ui.js';
@@ -304,7 +304,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
 
   const reader = book.format === 'pdf'
     ? new PdfReader(stage, { onRelocate, onWord, onMessage: (message) => toast(message),
-      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, spread: settings.pdfSpread ?? 'auto', getMarks, onSelect, onMarkClick })
+      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, spread: settings.pdfSpread ?? 'auto', flow: settings.pdfFlow ?? 'paged',
+      getMarks, onSelect, onMarkClick })
     : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks, onSelect, onMarkClick });
 
   document.addEventListener('keydown', onKey);
@@ -410,6 +411,18 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
           togglePanel(null);
           togglePanel('zoom');
         } }, el('div', {}, fit.title), el('div', { class: 'choice-note' }, fit.note)))),
+      el('h3', { class: 'panel-subhead' }, 'Bläddra eller rulla'),
+      el('div', { class: 'font-list' }, [
+        { id: 'paged', title: 'Bläddra', note: 'En sida eller ett uppslag i taget.' },
+        { id: 'scroll', title: 'Rulla', note: 'Alla sidor efter varandra, som en lång remsa. Bra för artiklar.' },
+      ].map((flow) => el('button', {
+        class: `font-choice${reader.flow === flow.id ? ' selected' : ''}`, dataset: { testid: `flow-${flow.id}` },
+        onclick: async () => {
+          await reader.setView({ flow: flow.id });
+          await setSetting('pdfFlow', flow.id);
+          togglePanel(null);
+          togglePanel('zoom');
+        } }, el('div', {}, flow.title), el('div', { class: 'choice-note' }, flow.note)))),
       el('h3', { class: 'panel-subhead' }, 'Uppslag'),
       spreadChoices(reader.spread, async (spread) => {
         await reader.setView({ spread });
@@ -478,20 +491,20 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     const limit = Number.isFinite(settings.pdfRangeMin) ? settings.pdfRangeMin : 16 * 1024 * 1024;
     let length = 0;
     try {
-      length = await bookFileSize(book.id, book.ext);
+      length = await bookFileSize(contentId(book), book.ext);
     } catch {
       length = 0;
     }
     if (length > limit) {
       try {
-        await reader.open({ length, read: (start, end) => readBookRange(book.id, book.ext, start, end) }, book.position);
+        await reader.open({ length, read: (start, end) => readBookRange(contentId(book), book.ext, start, end) }, book.position);
         return;
       } catch (error) {
         if (['PasswordException', 'InvalidPDFException', 'FormatError'].includes(error?.name)) throw error;
         console.warn('PDF:en kunde inte läsas i bitar, läser hela filen', error);
       }
     }
-    await reader.open(await readBookFile(book.id, book.ext), book.position);
+    await reader.open(await readBookFile(contentId(book), book.ext), book.position);
   }
 
   await markOpened(book.id);
@@ -500,7 +513,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     // Bokfilen läses först nu, så att läsaren och Öppnar boken syns direkt. En stor PDF läses i bitar.
     if (book.format === 'pdf') await openPdfBook();
     else {
-      const bytes = await readBookFile(book.id, book.ext);
+      const bytes = await readBookFile(contentId(book), book.ext);
       await reader.open(bytes, book.position, { ext: book.ext, title: book.title,
         settings: { ...settings, theme: resolvedTheme(), spread: settings.reflowSpread ?? 'auto' } });
     }
