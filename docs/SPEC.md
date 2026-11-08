@@ -257,6 +257,17 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Fotnoter i en ruta (V5):** ett tryck på en fotnotssiffra eller hänvisning visar noten i en ruta vid siffran, med Gå till noten. EPUB: epub:type noteref, role doc-noteref eller en länk till ett ankare vars text är en siffra eller ett tecken. PDF: bara interna länkar med kort text. Hittas noten inte hoppar boken som förut. Trycket går före ordstrecken och bläddringen.
 * **Här var du (V6):** öppnas en bok efter mer än ett dygn ligger ett kort över sidan med kapitlets rubrik och de tre senaste markeringarna. Ett tryck stänger det. Ingen fråga (Edvins beslut).
 
+### 6.13 Våg 7, plugget (8 november 2026)
+
+* **Bokens egna sidnummer (K2, PDF):** `BookPageNumbering` ger bokens sidnummer för en sida i filen, och sidraden, Gå till sida, tidslinjen, bokmärken, citat, anteckningsboken och Anki-exporten använder det. Automatiskt ur filnamnet (`(s63-80)`, uppslag när intervallet är ungefär dubbelt så långt som sidantalet), annars PDF:ens sidetiketter. Mer, Bokens sidnummer: filens första sida som bokens sida N, en eller två boksidor per sida i filen, eller filens egna nummer. Uppslag gäller hela boken.
+* **Kopiera som citat (K3):** knappen Citat i markeringsraden. Harvard, APA 7 och Oxford (fotnot) på svenska (s., u.å., m.fl.), med bokens sidnummer, och referensen. Bokinfo per bok (författare, år, titel, förlag, ort) i Mer, Bokinfo för citat. EPUB fyller i år och förlag ur OPF-filen. EPUB och text får ingen sida.
+* **Anteckningsbok (K1):** Mer, Anteckningsbok (en bok, per kapitel) och sidopanelen, Plugg (alla böcker, per bok). Citat, anteckning, färgens namn och sidnummer. Filter för färg, Med anteckning, kurs och sökning. Färgernas namn (Namnge färgerna) gäller alla böcker och blir filter och Anki-taggar.
+* **Läsvecka (K10):** läsloggen räknar tiden på sidan som syns (minst 4 s, högst 5 min i taget) och sparar högst en gång i minuten. Kortet överst i biblioteket: sju staplar, veckans lästid, sidor och läst N av 7 dagar, valfritt dagsmål som en ring. Inga svitar, inga notiser, ingen tid kvar. Lästa delar mörkare på tidslinjen (inte i Innehåll än).
+* **Export till Anki (K5):** anteckningsbokens meny. Två textfiler med Ankis rubrikrader och fasta id: markeringarna som lucktext och de sparade orden. Anteckningstypen väljs i Ankis importruta (Lucktext och Grundläggande). Ingen AnkiMobile-knapp.
+* **Anteckningar bredvid texten (K12):** Mer, Anteckningar bredvid texten. En panel vid högerkanten OVANPÅ sidan, så att sidans storlek och vikningen är orörda. En anteckning per sida (PDF) eller kapitel (EPUB). Syns i anteckningsboken.
+* **Begrepp (K8, första versionen):** knappen Begrepp i markeringsraden gör en term med definition (anteckningen eller markeringen som förslag). Mer, Begrepp listar bokens begrepp, och ett tryck söker efter termen i boken. Ingen karta.
+* Databasen: steg 6 `book_info`, 7 `reading_log`, 8 `page_notes`, 9 `concepts` i markeringar.sqlite. Färgernas namn och dagsmålet i `meta`. Allt följer med i säkerhetskopian. Ingen synk, inget i Windows-appen.
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.

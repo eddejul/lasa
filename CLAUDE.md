@@ -126,6 +126,13 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Första start (B5, `Onboarding.swift`): välkomstsidan bara när det inte finns böcker, markeringar, ord eller läspositioner. Exempelboken är Markdown i koden och skrivs till Böcker, och `OnboardingTips` bockar av stegen i läsaren. Öppningen från omslaget (U10) är `BookOpenTransition`, före och efter läsaren, aldrig i vikningen. `LibrarySelfTest` (i fas 6) provar biblioteket och fotograferar det i stående, liggande, iPhone-bredd, tomt och första start.
 * Säkerhetskopiorna (granskning 2): i dag sparas alla kopior (högst tio), tidigare dagar den nyaste av varje slag (automatisk, egen, före återställning). Synkens paus efter en återställning sparas (`sync.pausedAfterRestore`) och hävs bara i Inställningar. En platshållare eller borttagen bok på samma plats ger frågan Ny version, också vid import. Bokmärkesbandet tar bort med Ångra (`UndoBar`).
 
+## Plugget (våg 7, 8 november 2026)
+
+* Bokens sidnummer (K2) kommer bara ur `BookPageNumbering` (`App/Annotations/BookInfo.swift`). Visa aldrig PDF:ens egen sidetikett direkt, gå via läsarens `printedLabel` eller `citationPage`. Inställningen och bokinfon (K3) ligger i `book_info` (steg 6) genom `BookInfoStore`.
+* Citaten (K3) i `Citations.swift`, anteckningsboken (K1) och färgernas namn (`HighlightColorNames`, i `meta`) i `Notebook.swift`, Anki (K5) i `AnkiExport.swift`, begreppen (K8, steg 9) i `Concepts.swift`, anteckningarna bredvid texten (K12, steg 8) i `App/Reader/SideNotes.swift`. Panelen ligger ovanpå sidan, läsarnas `shouldReceive` släpper inte igenom tryck i den.
+* Läsloggen (K10, `App/Library/ReadingLog.swift`, steg 7): läsarna anropar `ReadingLog.shared.pageShown` i `updatePageLabel` och `pause` när läsaren stängs. Den skriver högst en gång i minuten, aldrig vid varje sidvändning. Dagen räknas i lokal tid. Kortet Läsvecka är avsnittet `week` i biblioteket. Ingen tid kvar.
+* Logiken testas i `Tests/LasaTests/StudyTests.swift`, även att en databas i formen före våg 7 går genom stegen 6 till 9. Självtestet (`selfTestStudy` i PDF-läsaren) fotograferar citatrutan, begreppen, panelen, anteckningsboken och tidslinjen (`12*`).
+
 ## Ordboken (fas 2)
 
 * Offline SQLite, byggd av `tools/dictionary/build.py` från Synlex, Swesaurus, SALDO, Open English WordNet och Folkets lexikon. Se licenser i specen och `tools/dictionary/README.md`.
