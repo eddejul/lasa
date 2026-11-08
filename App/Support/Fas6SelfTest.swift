@@ -164,6 +164,18 @@ enum Fas6SelfTest {
         SelfTest.saveScreen(host.view, name: "07b-ordkort-engelskt")
         unmount(wrapper)
 
+        // O10: uttal, ursprung och fler översättningar ur Wiktionary.
+        var wiktionary: [String] = []
+        let samples: [(String, WordLanguage)] = [("vacker", .swedish), ("retorik", .swedish), ("eklatant", .swedish),
+                                                 ("difficulty", .english), ("striking", .english)]
+        for (word, language) in samples {
+            guard let entry = dictionary.lookup(word, language: language)?.entries.first else { continue }
+            let extras = dictionary.extras(for: entry, language: language)
+            wiktionary.append("\(word): uttal \(extras.ipa ?? "inget"), ursprung \(extras.etymology ?? "inget"), "
+                              + "fler översättningar \(extras.moreTranslations.joined(separator: ", "))")
+        }
+        SelfTest.log("Wiktionary (O10): " + wiktionary.joined(separator: " | "))
+
         // iPhone: ark i halv höjd (iPhone 12 är 390 x 844 punkter) med stängknapp.
         let phone = card("difficulties", "The difficulties they encountered were greater than anyone had expected.")
         phone.showsCloseButton = true

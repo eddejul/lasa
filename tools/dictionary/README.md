@@ -1,5 +1,15 @@
 # Ordboken
 
+**Wiktionary (O10, 8 november 2026):** `wiktionary.py` strömmar de svenska orden ur engelska Wiktionary
+från kaikki.org (Wiktextract av Tatu Ylonen, cirka 360 MB JSON Lines) och sparar bara en filtrerad fil bland
+källorna (`sources/wiktionary-sv-filtrerad.json`). Rådata sparas aldrig, varken där eller i repot. Ordboken
+får `sv_wiktionary` (uttal och ursprung för svenska grundformer som finns i SALDO, ursprunget kortat till en
+mening och delvis översatt till svenska) och `en_sv_wiktionary` (svenska ord vars engelska förklaring är ett
+engelskt ord i Open English WordNet, bara par som Folkets lexikon saknar). Licens: CC BY-SA 4.0, och den
+bearbetade versionen delas under samma licens. Tabellerna hör inte till uppslaget (`lookup.py`, `lookup.js`
+och `WordDictionary.lookup` är oförändrade), ordkortet läser dem med `WordDictionary.extras`. Går källan inte
+att nå byggs ordboken utan dem. Testrapporten visar dem på raderna WIKTIONARY.
+
 `build.py` bygger `out/lasa-ordbok.sqlite` (cirka 50 MB) och en testrapport, `out/testrapport.txt`.
 Det kräver wordfreq: `pip install wordfreq==3.1.1`.
 Bygget körs i GitHub Actions (jobbet Ordboken i `ios-build.yml`) och databasen läggs in i appen.

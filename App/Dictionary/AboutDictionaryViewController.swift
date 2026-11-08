@@ -35,6 +35,11 @@ final class AboutDictionaryViewController: UITableViewController {
                    + "oregelbundna engelska böjningar.",
                license: "CC BY-SA 2.5. Den bearbetade versionen i Sensus delas under samma licens.",
                url: "https://folkets-lexikon.csc.kth.se/folkets/"),
+        Source(name: "Wiktionary, via kaikki.org (Wiktextract, Tatu Ylonen)",
+               use: "Uttal och ursprung för svenska ord, och fler svenska översättningar av engelska ord. "
+                   + "Ursprunget är kortat till en mening, och språknamn och vanliga ord är översatta till svenska.",
+               license: "CC BY-SA 4.0. Den bearbetade versionen i Sensus delas under samma licens.",
+               url: "https://kaikki.org/dictionary/Swedish/"),
         Source(name: "wordfreq, Robyn Speer",
                use: "Hur vanliga orden är, så att vanliga synonymer visas först. Bygger bland annat på "
                    + "Wikipedia, OpenSubtitles 2018, Google Books Ngram Viewer, ParaCrawl och SUBTLEX "

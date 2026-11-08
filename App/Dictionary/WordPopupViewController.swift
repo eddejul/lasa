@@ -414,15 +414,23 @@ final class WordPopupViewController: UIViewController {
         chipViews = []
 
         if let lookup = lookup, let entry = entry {
-            stack.addArrangedSubview(headerRow(word: entry.lemma, details: entry.posName))
+            let extras = WordDictionary.shared?.extras(for: entry, language: lookup.language) ?? WordExtras()
+            let details = [entry.posName, extras.ipa ?? ""].filter { !$0.isEmpty }.joined(separator: "  ")
+            stack.addArrangedSubview(headerRow(word: entry.lemma, details: details))
             if let note = headerNote(lookup, entry) {
                 stack.setCustomSpacing(4, after: stack.arrangedSubviews.last!)
                 stack.addArrangedSubview(makeLabel(note, font: .preferredFont(forTextStyle: .footnote),
                                                    color: palette.inkSoft))
             }
-            addAnswer(lookup, entry)
+            addAnswer(lookup, entry, extras: extras)
             if let sense = shownSense, !sense.synonyms.isEmpty {
                 addSynonyms(sense)
+            }
+            if let etymology = extras.etymology {
+                stack.addArrangedSubview(sectionLabel("Ursprung"))
+                stack.setCustomSpacing(4, after: stack.arrangedSubviews.last!)
+                stack.addArrangedSubview(makeLabel(etymology, font: .preferredFont(forTextStyle: .subheadline),
+                                                   color: palette.inkSoft))
             }
             if !entry.hasContent {
                 stack.addArrangedSubview(makeLabel("Ordboken har ingen betydelse eller synonym för ordet.",
@@ -513,11 +521,18 @@ final class WordPopupViewController: UIViewController {
     }
 
     /// Svaret i stor stil.
-    private func addAnswer(_ lookup: WordLookup, _ entry: WordEntry) {
+    private func addAnswer(_ lookup: WordLookup, _ entry: WordEntry, extras: WordExtras) {
         let palette = self.palette
         let big = UIFont.systemFont(ofSize: 20, weight: .regular)
+        let small = UIFont.preferredFont(forTextStyle: .footnote)
         if lookup.language == .english {
-            if entry.translations.isEmpty {
+            if entry.translations.isEmpty, !extras.moreTranslations.isEmpty {
+                // O10: Folkets lexikon saknar ordet, men Wiktionary har svenska ord för det.
+                stack.addArrangedSubview(makeLabel(extras.moreTranslations.joined(separator: ", "), font: big,
+                                                   color: palette.ink))
+                stack.setCustomSpacing(4, after: stack.arrangedSubviews.last!)
+                stack.addArrangedSubview(makeLabel("Ur Wiktionary", font: small, color: palette.inkSoft))
+            } else if entry.translations.isEmpty {
                 stack.addArrangedSubview(makeLabel("Ingen svensk översättning i ordboken.", font: big, color: palette.inkSoft))
             } else {
                 stack.addArrangedSubview(makeLabel(WordText.translationLine(entry), font: big, color: palette.ink))
@@ -525,6 +540,11 @@ final class WordPopupViewController: UIViewController {
                     stack.setCustomSpacing(4, after: stack.arrangedSubviews.last!)
                     stack.addArrangedSubview(makeLabel("Ordet saknas i lexikonet. Översättningen gäller \(via), som betyder samma sak.",
                                                        font: .preferredFont(forTextStyle: .footnote), color: palette.inkSoft))
+                }
+                if !extras.moreTranslations.isEmpty {
+                    stack.setCustomSpacing(4, after: stack.arrangedSubviews.last!)
+                    stack.addArrangedSubview(makeLabel("Även: " + extras.moreTranslations.joined(separator: ", ")
+                                                       + " (Wiktionary)", font: small, color: palette.inkSoft))
                 }
             }
             if let definition = shownSense?.definition {
