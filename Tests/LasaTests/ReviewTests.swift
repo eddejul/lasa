@@ -74,7 +74,7 @@ final class ReviewTests: XCTestCase {
     // MARK: Småorden
 
     func testStopWords() {
-        for word in ["att", "det", "och", "en", "ett", "i", "på", "som", "är", "Det", "ÄR", "att,"] {
+        for word in ["att", "det", "och", "en", "ett", "i", "på", "som", "är", "vara", "Det", "ÄR", "att,"] {
             XCTAssertTrue(ReviewStopWords.contains(word: word, lemma: word, language: .swedish), word)
         }
         for word in ["the", "a", "of", "to", "The", "was"] {
@@ -83,7 +83,7 @@ final class ReviewTests: XCTestCase {
         // Grundformen räcker: "dem" har grundformen "de".
         XCTAssertTrue(ReviewStopWords.contains(word: "Dem", lemma: "de", language: .swedish))
         // Vanliga innehållsord är inte med, och språket spelar roll.
-        for (word, lemma) in [("kunskap", "kunskap"), ("varor", "vara"), ("min", "min"), ("vacker", "vacker")] {
+        for (word, lemma) in [("kunskap", "kunskap"), ("mitt", "mitt"), ("min", "min"), ("vacker", "vacker")] {
             XCTAssertFalse(ReviewStopWords.contains(word: word, lemma: lemma, language: .swedish), word)
         }
         XCTAssertFalse(ReviewStopWords.contains(word: "den", lemma: "den", language: .english))

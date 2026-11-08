@@ -13,7 +13,7 @@ const DAY = 86400;
 export const STOP_WORDS = {
   sv: new Set([
     'att', 'och', 'i', 'på', 'som', 'är', 'en', 'ett', 'det', 'den', 'de', 'dem', 'av', 'för', 'med', 'till',
-    'från', 'om', 'men', 'eller', 'så', 'inte', 'också', 'har', 'hade', 'haft', 'ha', 'var', 'varit', 'blir',
+    'från', 'om', 'men', 'eller', 'så', 'inte', 'också', 'har', 'hade', 'haft', 'ha', 'var', 'vara', 'varit', 'blir',
     'bli', 'blev', 'blivit', 'kan', 'kunde', 'ska', 'skall', 'skulle', 'vill', 'ville', 'måste', 'jag', 'du',
     'han', 'hon', 'hen', 'vi', 'ni', 'sig', 'sin', 'sitt', 'sina', 'din', 'ditt', 'dina', 'hans', 'hennes',
     'deras', 'vår', 'vårt', 'våra', 'er', 'ert', 'mig', 'dig', 'honom', 'henne', 'oss', 'denna', 'detta',

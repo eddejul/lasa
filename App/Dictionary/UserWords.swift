@@ -518,14 +518,14 @@ enum ReviewSchedule {
 }
 
 /// U6: småord (funktionsord) som aldrig sparas och aldrig repeteras. De hamnar i Sparade ord när fingret råkar
-/// landa på dem, och ordboken har sällan något svar. Ord som också är vanliga innehållsord (min, mitt, vara,
-/// under, vid, era, will, may, can, just) är inte med. Samma listor finns i `windows/src/js/review.js`, och
-/// `review.test.mjs` jämför dem.
+/// landa på dem, och ordboken har sällan något svar. Ord som också är vanliga innehållsord (min, mitt, under, vid,
+/// era, will, may, can, just) är inte med. Vara är med, fast varor då inte heller sparas (grundformen vara).
+/// Samma listor finns i `windows/src/js/review.js`, och `review.test.mjs` jämför dem.
 enum ReviewStopWords {
 
     static let swedish: Set<String> = [
         "att", "och", "i", "på", "som", "är", "en", "ett", "det", "den", "de", "dem", "av", "för", "med", "till",
-        "från", "om", "men", "eller", "så", "inte", "också", "har", "hade", "haft", "ha", "var", "varit", "blir",
+        "från", "om", "men", "eller", "så", "inte", "också", "har", "hade", "haft", "ha", "var", "vara", "varit", "blir",
         "bli", "blev", "blivit", "kan", "kunde", "ska", "skall", "skulle", "vill", "ville", "måste", "jag", "du",
         "han", "hon", "hen", "vi", "ni", "sig", "sin", "sitt", "sina", "din", "ditt", "dina", "hans", "hennes",
         "deras", "vår", "vårt", "våra", "er", "ert", "mig", "dig", "honom", "henne", "oss", "denna", "detta",
@@ -625,10 +625,17 @@ extension UserWords {
     func reviewQueue(now: Date = Date(), limit: Int = 200, books: Set<String>? = nil,
                      hasAnswer: ((SavedWord) -> Bool)? = nil) -> [ReviewCard] {
         let answers = hasAnswer ?? { ReviewAnswers.exists(for: $0) }
-        let all = savedWords().filter { word in
+        let started = Date()
+        let saved = savedWords()
+        let all = saved.filter { word in
             ReviewLogic.belongs(word, to: books)
                 && !ReviewStopWords.contains(word: word.word, lemma: word.lemma, language: word.language)
                 && answers(word)
+        }
+        let elapsed = Date().timeIntervalSince(started) * 1000
+        if elapsed > 100 {
+            // Första gången efter start slås varje ord upp i ordboken. Sedan sparas svaret i minnet.
+            AppLog.shared.write("Repetitionens kö: \(saved.count) sparade ord sållade på \(Int(elapsed)) ms")
         }
         var states: [String: (due: Double, interval: Double, ease: Double, reps: Int, lapses: Int)] = [:]
         var introducedToday = 0

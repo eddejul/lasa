@@ -397,7 +397,7 @@ final class WordReviewViewController: UIViewController {
         let palette = Theme.current
         view.backgroundColor = palette.canvas
         countLabel.textColor = palette.inkSoft
-        progressTrack.backgroundColor = palette.surfaceSunk
+        progressTrack.backgroundColor = palette.rule
         progressFill.backgroundColor = palette.accent
         card.backgroundColor = palette.surface
         card.layer.borderColor = palette.rule.cgColor
