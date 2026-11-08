@@ -54,13 +54,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // Stäng zoom eller innehållsförteckning och gå tillbaka till biblioteket först.
         library.navigationController?.dismiss(animated: false)
         library.navigationController?.popToRootViewController(animated: false)
-        do {
-            let book = try LibraryStore.shared.importFile(at: url)
-            library.reload()
-            library.open(book)
-        } catch {
-            library.showMessage(title: "Kunde inte lägga till filen",
-                                message: error.localizedDescription)
-        }
+        // En fil som en annan app lämnat i Inkorgen (Documents/Inbox) är redan en kopia och flyttas.
+        // En fil som öppnas där den ligger (Filer, iCloud Drive) kopieras. Allt sker i bakgrunden (G10).
+        let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Inbox", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL.path
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        library.importAndOpen(url, move: path.hasPrefix(inbox + "/"))
     }
 }

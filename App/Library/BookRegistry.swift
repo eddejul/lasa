@@ -348,6 +348,13 @@ final class BookRegistry {
         }
     }
 
+    /// Lägger in en fil som en ny bok, även om en annan bok haft samma plats (Ersätt och börja om).
+    func registerNew(_ file: BookFile, hash: String) -> String {
+        let record = Self.makeRecord(for: file, hash: hash)
+        save([record])
+        return record.id
+    }
+
     /// Boken med en viss kontrollsumma vars fil finns, till exempel för Den här boken finns redan.
     func presentBook(withHash hash: String) -> BookRecord? {
         records().first { !$0.missing && $0.sha256 == hash }

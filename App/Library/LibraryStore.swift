@@ -116,51 +116,17 @@ final class LibraryStore {
         return allBooks().first { $0.url.resolvingSymlinksInPath().standardizedFileURL.path == target }
     }
 
-    /// Kopierar in en fil i biblioteket. Finns en fil med samma namn ersätts den.
-    @discardableResult
-    func importFile(at source: URL) throws -> Book {
-        let accessing = source.startAccessingSecurityScopedResource()
-        defer {
-            if accessing {
-                source.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        // Filen ligger redan i biblioteket, till exempel öppnad direkt från Filer-appen. Den kopieras aldrig.
-        let sourcePath = source.standardizedFileURL.resolvingSymlinksInPath().path
-        let booksPath = booksDirectory.resolvingSymlinksInPath().standardizedFileURL.path
-        if sourcePath.hasPrefix(booksPath + "/") {
-            guard let book = registeredBook(at: source) else { throw CocoaError(.fileReadUnknown) }
-            return book
-        }
-
-        let destination = booksDirectory.appendingPathComponent(source.lastPathComponent)
-        let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: destination.path) {
-            try fileManager.removeItem(at: destination)
-        }
-        try fileManager.copyItem(at: source, to: destination)
-        guard let book = registeredBook(at: destination) else { throw CocoaError(.fileReadUnknown) }
-        return book
-    }
-
-    /// Boken för en fil i Böcker. Känns den inte igen direkt räknas kontrollsumman och filen läggs in i
-    /// registret: samma innehåll som en bok som inte finns längre ger dess id tillbaka.
-    func registeredBook(at url: URL) -> Book? {
-        let scanned = scan()
+    /// Lägger in en fil som ligger i Böcker i registret, med kontrollsumman räknad (vid import, G10).
+    /// `asNew`: filen blir en ny bok även om den ersatt en annan med samma namn (Ersätt och börja om).
+    func registerFile(at url: URL, hash: String, asNew: Bool = false) -> Book? {
+        let listed = listFiles()
         let target = url.resolvingSymlinksInPath().standardizedFileURL.path
-        func same(_ other: URL) -> Bool {
-            other.resolvingSymlinksInPath().standardizedFileURL.path == target
-        }
-        if let book = scanned.books.first(where: { same($0.url) }) {
-            return book
-        }
-        guard let match = scanned.urls.first(where: { same($0.value) }),
-              let file = scanned.pending.first(where: { $0.path == match.key }),
-              let hash = BookIdentity.hash(of: match.value) else {
+        guard let match = listed.urls.first(where: {
+            $0.value.resolvingSymlinksInPath().standardizedFileURL.path == target
+        }), let file = listed.files.first(where: { $0.path == match.key }) else {
             return nil
         }
-        let id = BookRegistry.shared.register(file, hash: hash)
+        let id = asNew ? BookRegistry.shared.registerNew(file, hash: hash) : BookRegistry.shared.register(file, hash: hash)
         return Book(url: match.value, id: id, path: match.key)
     }
 

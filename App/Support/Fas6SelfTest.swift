@@ -47,6 +47,7 @@ enum Fas6SelfTest {
 
         testDatabases()
         testBookMigration()
+        await testImport(library: library)
         await testExpiryAndBackup(library: library)
 
         // AI-svaret: tolkningen av ett svar från Gemini, och att påhittade ord rensas bort.
@@ -123,7 +124,7 @@ enum Fas6SelfTest {
     /// Trappan provas i en databas i minnet, så att användarens filer inte rörs.
     private static func testDatabases() {
         SelfTest.log("Databasernas versioner: markeringar \(AnnotationStore.shared.schemaVersion), "
-                     + "sparade ord \(UserWords.shared.schemaVersion) (ska vara 2 och 2)")
+                     + "sparade ord \(UserWords.shared.schemaVersion) (ska vara \(AnnotationStore.migrations.count) och \(UserWords.migrations.count))")
         struct Stop: Error {}
         do {
             let memory = try SQLiteDatabase(path: ":memory:", readOnly: false)
@@ -226,6 +227,101 @@ enum Fas6SelfTest {
         let ids = Set(books.map(\.id))
         SelfTest.log("Bokregistret i appen: \(books.count) böcker, \(ids.count) olika id, "
                      + "i undermappar: \(books.compactMap(\.folder).joined(separator: ", "))")
+    }
+
+    /// G10: import i bakgrunden. En stor fil läggs in medan huvudtråden mäts, sedan ett upptaget namn
+    /// (Behåll båda och Ersätt och behåll markeringarna) och samma innehåll en gång till (finns redan).
+    private static func testImport(library: UIViewController) async {
+        let manager = FileManager.default
+        let folder = manager.temporaryDirectory.appendingPathComponent("importprov", isDirectory: true)
+        try? manager.removeItem(at: folder)
+        try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        func importing(_ url: URL, move: Bool) async -> [Book] {
+            await withCheckedContinuation { continuation in
+                BookImporter.shared.start([url], move: move, presenter: library) { books in
+                    continuation.resume(returning: books)
+                }
+            }
+        }
+
+        // En stor fil (40 MB text) kopieras medan en klocka på huvudtråden mäter längsta pausen.
+        let big = folder.appendingPathComponent("Storbok.txt")
+        let line = String(repeating: "En rad text i en stor bok som läggs in i bakgrunden. ", count: 20) + "\n"
+        let block = Data(String(repeating: line, count: 1000).utf8)
+        if manager.createFile(atPath: big.path, contents: nil), let handle = try? FileHandle(forWritingTo: big) {
+            for _ in 0..<(40 * 1_048_576 / block.count) {
+                handle.write(block)
+            }
+            try? handle.close()
+        }
+        final class Gauge {
+            var longest: CFTimeInterval = 0
+            var last = CACurrentMediaTime()
+            var progressSeen = ""
+        }
+        let gauge = Gauge()
+        let list = library as? LibraryViewController
+        let ticker = Task { @MainActor in
+            while !Task.isCancelled {
+                let now = CACurrentMediaTime()
+                gauge.longest = max(gauge.longest, now - gauge.last)
+                gauge.last = now
+                if gauge.progressSeen.isEmpty, let text = list?.footerText, text.contains("%") {
+                    gauge.progressSeen = text
+                }
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+        }
+        let started = CACurrentMediaTime()
+        let imported = await importing(big, move: false)
+        ticker.cancel()
+        let longest = gauge.longest
+        let progressSeen = gauge.progressSeen
+        let record = imported.first.flatMap { BookRegistry.shared.record(id: $0.id) }
+        SelfTest.log("Import av 40 MB: \(imported.first?.path ?? "FEL, ingen bok") efter "
+                     + "\(Int(((CACurrentMediaTime() - started) * 1000).rounded())) ms, längsta paus på huvudtråden "
+                     + "\(Int((longest * 1000).rounded())) ms\(longest > 0.25 ? " FEL, appen låste sig" : ""), "
+                     + "kontrollsumma \(record?.sha256.isEmpty == false ? "räknad" : "FEL, saknas"), "
+                     + "förlopp i biblioteket: \(progressSeen.isEmpty ? "syntes inte" : progressSeen)")
+        if let list = library as? LibraryViewController {
+            list.reload()
+            SelfTest.saveScreen(library.navigationController?.view ?? library.view, name: "07-import")
+        }
+
+        // Upptaget namn med nytt innehåll: Behåll båda, sedan Ersätt och behåll markeringarna.
+        let first = folder.appendingPathComponent("Importprov.md")
+        try? Data("# Importprov\n\nForsta versionen.\n".utf8).write(to: first)
+        let original = await importing(first, move: true).first
+        let movedAway = !manager.fileExists(atPath: first.path)
+        if let book = original {
+            AnnotationStore.shared.addHighlight(book: book.id, section: 0, start: 2, length: 9, text: "Importprov",
+                                                color: .yellow)
+        }
+        try? Data("# Importprov\n\nAndra versionen, lite längre.\n".utf8).write(to: first)
+        BookImporter.selfTestAnswer = .keepBoth
+        let both = await importing(first, move: true).first
+        try? Data("# Importprov\n\nTredje versionen, ännu lite längre.\n".utf8).write(to: first)
+        BookImporter.selfTestAnswer = .replaceKeepingMarks
+        let replaced = await importing(first, move: true).first
+        let marksKept = replaced.map { AnnotationStore.shared.highlights(book: $0.id).count } ?? 0
+        SelfTest.log("Upptaget namn: första \(original?.path ?? "FEL") (källan flyttades: \(movedAway ? "ja" : "NEJ")), "
+                     + "Behåll båda gav \(both?.path ?? "FEL"), Ersätt och behåll gav \(replaced?.path ?? "FEL") med "
+                     + "\(replaced?.id == original?.id ? "samma id" : "FEL, nytt id") och \(marksKept) markering kvar")
+
+        // Samma innehåll en gång till: ingen ny fil.
+        try? Data("# Importprov\n\nTredje versionen, ännu lite längre.\n".utf8).write(to: first)
+        let before = LibraryStore.shared.allBooks().count
+        let again = await importing(first, move: true).first
+        let after = LibraryStore.shared.allBooks().count
+        SelfTest.log("Samma innehåll igen: \(again?.path ?? "ingen bok") och \(after - before) nya böcker "
+                     + "\(after == before ? "(rätt)" : "FEL")")
+        BookImporter.selfTestAnswer = nil
+
+        for book in LibraryStore.shared.allBooks() where book.path.hasPrefix("Importprov") || book.path == "Storbok.txt" {
+            try? LibraryStore.shared.delete(book)
+        }
+        try? manager.removeItem(at: folder)
+        (library as? LibraryViewController)?.reload()
     }
 
     /// G1: utgångsdatumet ur profilen, raden i biblioteket, och en säkerhetskopia som sparas och återställs.

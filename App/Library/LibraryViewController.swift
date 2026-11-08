@@ -47,6 +47,9 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         words.accessibilityLabel = "Ordboken"
         navigationItem.leftBarButtonItem = words
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: Self.cellID)
+        BookImporter.shared.onChange = { [weak self] in
+            self?.updateFooter()
+        }
         reload()
     }
 
@@ -127,18 +130,56 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         updateEmptyState()
     }
 
+    private var pendingCount = 0
+
     private func updateFooter(pendingCount: Int) {
-        guard pendingCount > 0 else {
+        self.pendingCount = pendingCount
+        updateFooter()
+    }
+
+    /// Raden under listan: Lägger till Bok.pdf med förlopp (G10), och Läser in nya filer (G3).
+    private func updateFooter() {
+        guard isViewLoaded else { return }
+        let jobs = BookImporter.shared.jobs
+        guard pendingCount > 0 || !jobs.isEmpty else {
             tableView.tableFooterView = nil
             return
         }
-        let label = UILabel()
-        label.text = pendingCount == 1 ? "Läser in en ny fil" : "Läser in \(pendingCount) nya filer"
-        label.textAlignment = .center
-        label.font = .preferredFont(forTextStyle: .footnote)
-        label.textColor = .secondaryLabel
-        label.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 44)
-        tableView.tableFooterView = label
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 10
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        for job in jobs {
+            let label = UILabel()
+            label.text = "Lägger till \(job.name), \(Int((job.fraction * 100).rounded())) %"
+            label.font = .preferredFont(forTextStyle: .footnote)
+            label.textColor = .secondaryLabel
+            label.numberOfLines = 0
+            let bar = UIProgressView(progressViewStyle: .default)
+            bar.progress = Float(job.fraction)
+            stack.addArrangedSubview(label)
+            stack.addArrangedSubview(bar)
+        }
+        if pendingCount > 0 {
+            let label = UILabel()
+            label.text = pendingCount == 1 ? "Läser in en ny fil" : "Läser in \(pendingCount) nya filer"
+            label.textAlignment = .center
+            label.font = .preferredFont(forTextStyle: .footnote)
+            label.textColor = .secondaryLabel
+            stack.addArrangedSubview(label)
+        }
+        let width = tableView.bounds.width
+        let height = stack.systemLayoutSizeFitting(CGSize(width: width, height: 0),
+                                                   withHorizontalFittingPriority: .required,
+                                                   verticalFittingPriority: .fittingSizeLevel).height
+        stack.frame = CGRect(x: 0, y: 0, width: width, height: ceil(height))
+        tableView.tableFooterView = stack
+    }
+
+    /// Raden med förloppet, till självtestet.
+    var footerText: String {
+        (tableView.tableFooterView?.subviews ?? []).compactMap { ($0 as? UILabel)?.text }.joined(separator: " | ")
     }
 
     /// Ny version av boken, behåll markeringarna? En fråga i taget.
@@ -261,18 +302,21 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        var failed: [String] = []
-        for url in urls {
-            do {
-                try LibraryStore.shared.importFile(at: url)
-            } catch {
-                failed.append(url.lastPathComponent)
-            }
+        // Väljaren har redan kopierat filerna (asCopy), så de flyttas in i Böcker i bakgrunden (G10).
+        BookImporter.shared.start(urls, move: true, presenter: self) { [weak self] _ in
+            self?.reload()
         }
-        reload()
-        if !failed.isEmpty {
-            showMessage(title: "Några filer kunde inte läggas till",
-                        message: failed.joined(separator: "\n"))
+    }
+
+    /// Lägger till en fil och öppnar den, för Öppna i Läsa från Filer eller en annan app (G10).
+    func importAndOpen(_ url: URL, move: Bool) {
+        BookImporter.shared.start([url], move: move, presenter: self) { [weak self] books in
+            guard let self = self else { return }
+            self.reload()
+            if let book = books.first {
+                self.navigationController?.popToRootViewController(animated: false)
+                self.open(book)
+            }
         }
     }
 
