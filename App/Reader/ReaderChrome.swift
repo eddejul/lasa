@@ -23,15 +23,16 @@ final class ReaderChrome {
     }
 
     let contentsItem: UIBarButtonItem
-    /// Bakgrunden. I PDF är det knappen Aa, i EPUB och text ligger bakgrunderna i Mer.
+    /// Menyn Bakgrund. Används när läsaren inte har någon Aa-knapp (`readerItem`), annars ligger
+    /// bakgrunderna i utseenderutan bakom Aa (U2).
     let themeItem: UIBarButtonItem
     let searchItem: UIBarButtonItem
     let markItem: UIBarButtonItem
     /// Finns inte i menyraden (U3), men läsarna håller dess bild och tillgänglighetsvärde aktuella.
     let bookmarkItem: UIBarButtonItem
-    /// Aa i EPUB och text (typsnitt och storlek). Nil i PDF, där Aa är bakgrunden.
+    /// Aa: läsarens utseenderuta (U2). Nil ger menyn Bakgrund i stället.
     let readerItem: UIBarButtonItem?
-    /// Mer: bokmärket, Gå till sida, Zooma sidan och (i EPUB) bakgrunden.
+    /// Mer: bokmärket, Gå till sida och Zooma sidan (PDF).
     let moreItem: UIBarButtonItem
 
     private let titleLabel = UILabel()
