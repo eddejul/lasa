@@ -55,8 +55,11 @@ final class ReflowRenderer {
 
     static let maxImages = 5
     static let maxViews = 3
-    /// Ett kapitel som inte gått att ladda eller mäta så här många gånger ges upp (visas som en tom sida).
+    /// Ett kapitel som inte gått att ladda eller mäta så här många gånger i följd ges upp. Läsaren visar
+    /// då Kapitlet kunde inte visas med Försök igen (G2). Räknaren nollställs när kapitlet väl mätts.
     private static let maxFailures = 3
+    /// Efter en minnesvarning hålls bara kapitlet man läser laddat så här länge (G2).
+    private static let lowMemorySeconds: CFTimeInterval = 60
 
     let book: ReflowableBook
     /// Ett kapitel har delats i sidor, eller fått ett nytt sidantal.
@@ -86,10 +89,20 @@ final class ReflowRenderer {
     private var counts: [Int: Int] = [:]
     private var countStore: PageCountStore
     private var failuresByChapter: [Int: Int] = [:]
+    /// Kapitel som gavs upp innan de mättes. De får sidantalet 1 så att läsaren kan visa felsidan.
+    private var placeholders = Set<Int>()
+    /// Kapitlens storlek i byte, för vaktens väntetid.
+    private var chapterBytes: [Int: Int] = [:]
+    /// Till och med den här tiden hålls bara kapitlet man läser laddat, efter en minnesvarning.
+    private var lowMemoryUntil: CFTimeInterval = 0
+    /// Självtestet: så många mätningar i följd av ett kapitel som ska misslyckas.
+    private var simulatedFailures: [Int: Int] = [:]
     private var images: [ReflowPage: ReflowSnapshot] = [:]
     private var recentlyUsed: [ReflowPage] = []
     private var workingSet: [ReflowPage] = []
     private var waiting: [ReflowPage: [(ReflowSnapshot) -> Void]] = [:]
+    /// Anropas för väntande sidor i ett kapitel som gavs upp.
+    private var waitingFailures: [ReflowPage: [() -> Void]] = [:]
     private var waitingOrder: [ReflowPage] = []
     private var queries: [Query] = []
     private var center = 0
@@ -146,6 +159,9 @@ final class ReflowRenderer {
 
         if layoutChanged {
             counts.removeAll()
+            // En ny layout är ett nytt försök för kapitel som gavs upp.
+            placeholders.removeAll()
+            failuresByChapter.removeAll()
             host.frame = CGRect(origin: .zero, size: layout.pageSize)
             for view in views {
                 view.webView.frame = host.bounds
@@ -172,12 +188,54 @@ final class ReflowRenderer {
         counts[chapter]
     }
 
+    /// Sidantalet om kapitlet verkligen har mätts, inte bara getts upp med en ersättningssida.
+    func measuredPageCount(of chapter: Int) -> Int? {
+        placeholders.contains(chapter) ? nil : counts[chapter]
+    }
+
+    /// Kapitlet har inte gått att visas och väntar på Försök igen (G2).
+    func isChapterBroken(_ chapter: Int) -> Bool {
+        isBroken(chapter)
+    }
+
+    /// Försök igen med ett kapitel som gavs upp. Det får ett försök till, går det inte heller visas felet igen.
+    func retry(chapter: Int) {
+        guard isBroken(chapter) else { return }
+        failuresByChapter[chapter] = Self.maxFailures - 1
+        AppLog.shared.write("Kapitel \(chapter + 1): försöker igen")
+        pump()
+    }
+
+    /// Självtestet: nästa `count` mätningar av kapitlet misslyckas.
+    func simulateFailures(_ count: Int, inChapter chapter: Int) {
+        simulatedFailures[chapter] = count
+    }
+
+    /// Självtestet: som när iOS stänger webbvyns process för ett laddat kapitel. Sant om kapitlet var laddat.
+    @discardableResult
+    func simulateTermination(ofChapter chapter: Int) -> Bool {
+        guard let view = views.first(where: { $0.chapter == chapter && $0.state == .loaded }) else { return false }
+        view.webViewWebContentProcessDidTerminate(view.webView)
+        return true
+    }
+
+    /// Antalet fel som räknats för ett kapitel, till självtestet.
+    func failureCount(inChapter chapter: Int) -> Int {
+        failuresByChapter[chapter] ?? 0
+    }
+
+    /// Antalet laddade webbvyer, till självtestet och loggen.
+    var loadedViewCount: Int {
+        views.filter { $0.state == .loaded || $0.state == .loading }.count
+    }
+
     /// Sidantalen för alla kapitel, om alla är kända för den här layouten (mätta nu eller vid ett tidigare tillfälle).
     func allPageCounts() -> [Int]? {
         guard let key = layout?.key else { return nil }
         var result: [Int] = []
         for chapter in book.chapters.indices {
-            guard let count = counts[chapter] ?? countStore.count(chapter: chapter, key: key) else { return nil }
+            guard !placeholders.contains(chapter),
+                  let count = counts[chapter] ?? countStore.count(chapter: chapter, key: key) else { return nil }
             result.append(count)
         }
         return result
@@ -193,12 +251,22 @@ final class ReflowRenderer {
     }
 
     /// Bilden för en sida som visas. Finns den kommer den direkt, annars när den är klar. Går före förritning.
-    func requestImage(for page: ReflowPage, completion: @escaping (ReflowSnapshot) -> Void) {
+    /// Har kapitlet getts upp anropas `failure` i stället (G2), direkt eller när det händer.
+    func requestImage(for page: ReflowPage,
+                      completion: @escaping (ReflowSnapshot) -> Void,
+                      failure: (() -> Void)? = nil) {
         if let snapshot = cachedSnapshot(for: page) {
             completion(snapshot)
             return
         }
+        if isBroken(page.chapter) {
+            failure?()
+            return
+        }
         waiting[page, default: []].append(completion)
+        if let failure = failure {
+            waitingFailures[page, default: []].append(failure)
+        }
         if !waitingOrder.contains(page) {
             waitingOrder.append(page)
         }
@@ -212,19 +280,36 @@ final class ReflowRenderer {
         let wanted = Set(workingSet)
         for page in waitingOrder where !wanted.contains(page) {
             waiting[page] = nil
+            waitingFailures[page] = nil
         }
         waitingOrder.removeAll { !wanted.contains($0) }
         trim()
         pump()
     }
 
-    /// Lite minne kvar: behåll bara sidorna som syns.
+    /// Lite minne kvar: behåll bara sidorna som syns, och stäng de dolda webbvyerna utom kapitlet man läser
+    /// (G2). Under en minut därefter laddas bara det kapitlet, så att iOS inte behöver stänga webbvyerna själv.
     func releaseMemory() {
         let keep = Set(workingSet.prefix(2))
         for page in Array(images.keys) where !keep.contains(page) {
             images[page] = nil
         }
         recentlyUsed.removeAll { !keep.contains($0) }
+
+        lowMemoryUntil = CACurrentMediaTime() + Self.lowMemorySeconds
+        let closing = views.filter { $0.chapter != center && !$0.busy && $0.state != .loading }
+        for view in closing {
+            jobs[ObjectIdentifier(view)] = nil
+            jobAborts[ObjectIdentifier(view)] = nil
+            view.close()
+            view.webView.removeFromSuperview()
+        }
+        views.removeAll { view in closing.contains { $0 === view } }
+        AppLog.shared.write("Minnesvarning i läsaren: \(closing.count) dolda webbvyer stängdes, \(views.count) kvar")
+    }
+
+    private var isLowOnMemory: Bool {
+        CACurrentMediaTime() < lowMemoryUntil
     }
 
     // MARK: Frågor
@@ -273,7 +358,12 @@ final class ReflowRenderer {
     // MARK: Arbetet
 
     private var desiredChapters: [Int] {
-        [center, center + 1, center - 1].filter { $0 >= 0 && $0 < book.chapters.count }
+        let chapters = isLowOnMemory ? [center] : [center, center + 1, center - 1]
+        return chapters.filter { $0 >= 0 && $0 < book.chapters.count }
+    }
+
+    private var viewLimit: Int {
+        isLowOnMemory ? 1 : Self.maxViews
     }
 
     /// Startar det som kan startas: laddning, mätning, frågor och sidbilder. Anropas efter varje händelse.
@@ -297,6 +387,14 @@ final class ReflowRenderer {
             }
         }
 
+        // Sidor som väntar i ett kapitel som getts upp får veta det, så att läsaren kan visa felet.
+        for page in waitingOrder where isBroken(page.chapter) {
+            waiting[page] = nil
+            let callbacks = waitingFailures.removeValue(forKey: page) ?? []
+            callbacks.forEach { $0() }
+        }
+        waitingOrder.removeAll { isBroken($0.chapter) }
+
         // Ord och ankare som användaren väntar på.
         var remaining: [Query] = []
         for query in queries {
@@ -314,6 +412,7 @@ final class ReflowRenderer {
             guard let view = readyView(for: page.chapter), !view.busy, view.styleKey == styleKey else { continue }
             guard page.page >= 0, page.page < view.pageCount else {
                 waiting[page] = nil
+                waitingFailures[page] = nil
                 waitingOrder.removeAll { $0 == page }
                 continue
             }
@@ -344,7 +443,7 @@ final class ReflowRenderer {
         if let best = candidates.max(by: { distance(of: $0) < distance(of: $1) }) {
             return best
         }
-        guard views.count < Self.maxViews else { return nil }
+        guard views.count < viewLimit else { return nil }
         let view = ChapterView(frame: host.bounds)
         view.webView.backgroundColor = theme.paperColor
         view.onLoaded = { [weak self] view, success in
@@ -366,16 +465,38 @@ final class ReflowRenderer {
     private func fail(_ view: ChapterView) {
         failures += 1
         let chapter = view.chapter
+        // Ett jobb som pågår i webbvyn räknas inte som ett fel till när dess svar kommer (en krasch är ett fel).
+        jobs[ObjectIdentifier(view)] = nil
+        jobAborts.removeValue(forKey: ObjectIdentifier(view))?()
         view.markFailed()
         guard chapter >= 0 else { return }
         failuresByChapter[chapter, default: 0] += 1
         AppLog.shared.write("Kapitel \(chapter + 1) kunde inte laddas eller mätas "
-                            + "(fel \(failuresByChapter[chapter, default: 0]) i kapitlet)")
-        if isBroken(chapter), counts[chapter] == nil {
-            // Läsaren får en tom sida i stället för att vänta för evigt.
-            counts[chapter] = 1
-            onChapterMeasured?(chapter)
+                            + "(fel \(failuresByChapter[chapter, default: 0]) i följd i kapitlet)")
+        if isBroken(chapter) {
+            AppLog.shared.write("Kapitel \(chapter + 1) ges upp tills man trycker på Försök igen")
+            if counts[chapter] == nil {
+                // Läsaren får en sida som säger att kapitlet inte kunde visas, i stället för att vänta för evigt.
+                counts[chapter] = 1
+                placeholders.insert(chapter)
+                onChapterMeasured?(chapter)
+            }
         }
+    }
+
+    /// Hur länge ett jobb i ett kapitel får ta innan kapitlet laddas om: 8 sekunder, plus 4 sekunder per
+    /// 100 kB, högst 40 sekunder. Stora kapitel i Calibre-EPUB:er hinner annars inte mätas på A8X (G2).
+    private func timeout(forChapter chapter: Int) -> Double {
+        guard chapter >= 0, chapter < book.chapters.count else { return 8 }
+        let bytes: Int
+        if let known = chapterBytes[chapter] {
+            bytes = known
+        } else {
+            let values = try? book.chapters[chapter].url.resourceValues(forKeys: [.fileSizeKey])
+            bytes = values?.fileSize ?? 0
+            chapterBytes[chapter] = bytes
+        }
+        return min(8 + 4 * Double(bytes) / 100_000, 40)
     }
 
     private func dropOldQueries() {
@@ -388,23 +509,27 @@ final class ReflowRenderer {
 
     // MARK: Jobb i en webbvy
 
-    /// Ett jobb i taget per webbvy. Svarar den inte inom åtta sekunder laddas kapitlet om.
+    /// Ett jobb i taget per webbvy. Svarar den inte i tid (8 sekunder och mer för stora kapitel) laddas kapitlet om.
     private func beginJob(on view: ChapterView, onTimeout: (() -> Void)? = nil) -> Int {
         nextJob += 1
         let job = nextJob
         jobs[ObjectIdentifier(view)] = job
+        jobAborts[ObjectIdentifier(view)] = onTimeout
         view.busy = true
+        let seconds = timeout(forChapter: view.chapter)
         Task { @MainActor [weak self, weak view] in
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard let self = self, let view = view, self.jobs[ObjectIdentifier(view)] == job else { return }
             self.jobs[ObjectIdentifier(view)] = nil
             view.busy = false
             self.fail(view)
-            onTimeout?()
             self.pump()
         }
         return job
     }
+
+    /// Det som ska göras om ett jobb avbryts, till exempel att en fråga får svaret nil.
+    private var jobAborts: [ObjectIdentifier: () -> Void] = [:]
 
     private func isCurrent(_ job: Int, on view: ChapterView) -> Bool {
         jobs[ObjectIdentifier(view)] == job
@@ -413,6 +538,7 @@ final class ReflowRenderer {
     private func endJob(_ job: Int, on view: ChapterView) -> Bool {
         guard jobs[ObjectIdentifier(view)] == job else { return false }
         jobs[ObjectIdentifier(view)] = nil
+        jobAborts[ObjectIdentifier(view)] = nil
         view.busy = false
         return true
     }
@@ -440,10 +566,19 @@ final class ReflowRenderer {
                     self.pump()
                     return
                 }
+                if let left = self.simulatedFailures[chapter], left > 0 {
+                    self.simulatedFailures[chapter] = left - 1
+                    self.fail(view)
+                    self.pump()
+                    return
+                }
                 if let count = ReflowValues.pageCount(from: value) {
                     view.layoutKey = key
                     view.styleKey = style
                     view.pageCount = count
+                    // Kapitlet gick att mäta: tidigare fel glöms (G2).
+                    self.failuresByChapter[chapter] = nil
+                    self.placeholders.remove(chapter)
                     self.counts[chapter] = count
                     self.countStore.set(count, chapter: chapter, key: key)
                     self.measureTimes = Array((self.measureTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(50))
@@ -527,6 +662,7 @@ final class ReflowRenderer {
             firstSnapshotAt = CACurrentMediaTime()
         }
         let callbacks = waiting.removeValue(forKey: page) ?? []
+        waitingFailures[page] = nil
         waitingOrder.removeAll { $0 == page }
         if !callbacks.isEmpty || workingSet.contains(page) {
             images[page] = snapshot
@@ -686,6 +822,17 @@ final class ChapterView: NSObject, WKNavigationDelegate {
         styleKey = ""
         busy = false
         webView.stopLoading()
+    }
+
+    /// Stängs för gott vid en minnesvarning (G2). Webbvyns process släpps när vyn försvinner.
+    func close() {
+        onLoaded = nil
+        navigation = nil
+        state = .idle
+        chapter = -1
+        busy = false
+        webView.stopLoading()
+        webView.navigationDelegate = nil
     }
 
     /// Kör en funktionskropp i läsarens egen JavaScript-värld. Svaret är nil om något gick fel.

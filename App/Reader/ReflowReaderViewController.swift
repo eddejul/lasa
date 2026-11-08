@@ -51,6 +51,8 @@ final class ReflowReaderViewController: UIViewController {
     private var firstMeasuredAt: CFTimeInterval?
     private var isShowingPages = false
     private var pendingJump: PendingJump?
+    /// Platsen i ett kapitel som inte kunde visas, när man tryckt på Försök igen (G2).
+    private var retryLocation: ReflowLocation?
     /// En sida som ska visas när fingret har vikt klart. Bladen får inte bytas mitt i en vikning.
     private var deferredShow: (chapter: Int, page: Int)?
     private var turnToken = 0
@@ -339,7 +341,23 @@ final class ReflowReaderViewController: UIViewController {
                                             renderer: renderer,
                                             paperColor: theme.paperColor)
         page.isBookmarked = !bookmarksOnPage(page).isEmpty
+        page.onRetry = { [weak self] page in
+            self?.retryChapter(page.chapter)
+        }
         return page
+    }
+
+    /// Försök igen på ett kapitel som inte kunde visas (G2). Platsen man skulle till sparas, så att den
+    /// visas när kapitlet väl mätts.
+    private func retryChapter(_ chapter: Int) {
+        guard let renderer = renderer else { return }
+        if chapter == currentChapter {
+            retryLocation = currentLocation()
+        }
+        renderer.retry(chapter: chapter)
+        for page in visiblePages where page.chapter == chapter {
+            page.reloadImage()
+        }
     }
 
     /// Bladen som visar ett visst blad: ett i stående, två i ett uppslag.
@@ -369,7 +387,8 @@ final class ReflowReaderViewController: UIViewController {
         deferredShow = nil
         let count = renderer.pageCount(of: chapter) ?? 1
         currentChapter = chapter
-        currentCount = renderer.pageCount(of: chapter)
+        // Ett kapitel som inte kunde visas har inget riktigt sidantal, så den sparade platsen står kvar.
+        currentCount = renderer.measuredPageCount(of: chapter)
         currentSlot = min(max(page, 0), count - 1)
         if mode == .spread {
             currentSlot -= currentSlot % 2
@@ -453,7 +472,7 @@ final class ReflowReaderViewController: UIViewController {
         guard let first = visiblePages.first else { return }
         currentChapter = first.chapter
         currentSlot = first.slot
-        currentCount = renderer?.pageCount(of: first.chapter)
+        currentCount = renderer?.measuredPageCount(of: first.chapter)
         saveLocation()
         updatePageLabel()
         updateBookmarkState()
@@ -469,7 +488,9 @@ final class ReflowReaderViewController: UIViewController {
     private func currentLocation() -> ReflowLocation {
         guard isShowingPages else { return location }
         guard let count = currentCount, count > 0 else {
-            return ReflowLocation(chapter: currentChapter, progression: 0)
+            // Kapitlet är inte mätt (eller kunde inte visas): den sparade platsen i kapitlet står kvar.
+            let progression = location.chapter == currentChapter ? location.progression : 0
+            return ReflowLocation(chapter: currentChapter, progression: progression)
         }
         let page = min(currentSlot, count - 1)
         return ReflowLocation(chapter: currentChapter, progression: (Double(page) + 0.5) / Double(count))
@@ -485,8 +506,13 @@ final class ReflowReaderViewController: UIViewController {
         if firstMeasuredAt == nil {
             firstMeasuredAt = CACurrentMediaTime()
         }
-        if chapter == currentChapter, isShowingPages, pendingJump == nil,
-           let count = renderer?.pageCount(of: chapter) {
+        if let retry = retryLocation, retry.chapter == chapter, chapter == currentChapter, isShowingPages,
+           pendingJump == nil, let count = renderer?.measuredPageCount(of: chapter) {
+            // Kapitlet gick att visas efter Försök igen: till platsen man skulle till.
+            retryLocation = nil
+            show(chapter: chapter, page: Int(retry.progression * Double(count)))
+        } else if chapter == currentChapter, isShowingPages, pendingJump == nil,
+           let count = renderer?.measuredPageCount(of: chapter) {
             if let previous = currentCount, previous != count {
                 // Kapitlet fick ett annat sidantal med samma layout (till exempel när ett typsnitt laddats klart).
                 let progression = currentLocation().progression
@@ -516,6 +542,8 @@ final class ReflowReaderViewController: UIViewController {
             return
         }
         pendingJump = nil
+        // Platsen man hoppar till står kvar som sparad plats om kapitlet inte kunde visas (G2).
+        location = ReflowLocation(chapter: jump.chapter, progression: jump.progression)
         show(chapter: jump.chapter, page: Int(jump.progression * Double(count)))
     }
 
@@ -1220,6 +1248,14 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
             if let bar = markBar, touched.isDescendant(of: bar) {
                 return false
             }
+            // Knappar på bladet, som Försök igen när ett kapitel inte kunde visas (G2).
+            var ancestor: UIView? = touched
+            while let current = ancestor, current !== view {
+                if current is UIControl {
+                    return false
+                }
+                ancestor = current.superview
+            }
         }
         if gestureRecognizer === markDrag {
             return markMode
@@ -1345,6 +1381,7 @@ extension ReflowReaderViewController {
             } else {
                 SelfTest.log("FEL: inga länkar på sidan")
             }
+            await selfTestBrokenChapter()
         }
 
         // Spara Edvins inställningar och återställ dem sist, även i simulatorn.
@@ -1388,6 +1425,69 @@ extension ReflowReaderViewController {
 
         SelfTest.log(renderer.statsSummary)
         SelfTest.finish()
+    }
+
+    /// G2: ett kapitel som inte går att mäta visar Kapitlet kunde inte visas och Försök igen, en krasch i
+    /// webbvyn räknas som ett fel, och en minnesvarning stänger de dolda webbvyerna utom den man läser.
+    private func selfTestBrokenChapter() async {
+        guard let renderer = renderer, let content = content, content.chapters.count > 4 else { return }
+        let start = currentLocation()
+        let broken = content.chapters.count - 2
+        renderer.simulateFailures(3, inChapter: broken)
+        jump(to: ReflowLocation(chapter: broken, progression: 0.5))
+        var shown = false
+        for _ in 0..<150 where !shown {
+            await pause(0.1)
+            shown = visiblePages.contains { $0.showsFailure }
+        }
+        let saved = LibraryStore.shared.savedLocation(for: book)
+        SelfTest.log("Kapitelfel: \(shown ? "Kapitlet kunde inte visas syns" : "FEL, felet syns inte"), "
+                     + "\(renderer.failureCount(inChapter: broken)) fel i kapitlet, sparad plats kapitel "
+                     + "\((saved?.chapter ?? -1) + 1) andel \(saved.map { String(format: "%.2f", $0.progression) } ?? "?")"
+                     + ((saved?.chapter == broken && saved?.progression == 0.5) ? "" : " FEL, platsen skrevs över"))
+        SelfTest.saveScreen(view, name: "06b-kapitelfel")
+
+        visiblePages.first { $0.showsFailure }?.simulateRetryTap()
+        _ = await waitUntilShown()
+        await pause(0.5)
+        _ = await waitUntilShown()
+        let measured = renderer.measuredPageCount(of: broken)
+        SelfTest.log("Försök igen: \(measured.map { "kapitlet mättes, \($0) sidor" } ?? "FEL, kapitlet mättes inte"), "
+                     + "\(visiblePages.contains { $0.showsFailure } ? "FEL, felet syns fortfarande" : "felet borta"), "
+                     + "\(renderer.failureCount(inChapter: broken)) fel kvar")
+        logState("Efter Försök igen")
+        SelfTest.saveScreen(view, name: "06c-forsok-igen")
+
+        // En krasch mitt i en fråga till webbvyn räknas som ett fel, inte två.
+        let chapter = currentChapter
+        var answered = false
+        if let page = visiblePages.first(where: { !$0.isBlank }), let number = page.page {
+            renderer.word(at: CGPoint(x: 100, y: 200), on: ReflowPage(chapter: chapter, page: number)) { _ in
+                answered = true
+            }
+        }
+        let crashed = renderer.simulateTermination(ofChapter: chapter)
+        let right = renderer.failureCount(inChapter: chapter)
+        await pause(1.0)
+        _ = await waitUntilShown()
+        SelfTest.log("Krasch i webbvyn: \(crashed ? "simulerad" : "FEL, kapitlet var inte laddat"), "
+                     + "\(right) fel direkt\(right > 1 ? " FEL, räknades flera gånger" : ""), "
+                     + "\(renderer.failureCount(inChapter: chapter)) fel efter omladdningen, frågan "
+                     + (answered ? "fick svar" : "FEL, fick inget svar"))
+
+        // Minnesvarning: bara kapitlet man läser behåller sin webbvy.
+        let before = renderer.loadedViewCount
+        renderer.releaseMemory()
+        let after = renderer.loadedViewCount
+        turn(forward: true)
+        await pause(1.5)
+        _ = await waitUntilShown()
+        SelfTest.log("Minnesvarning: \(before) webbvyer före, \(after) efter\(after > 1 ? " FEL" : ""), "
+                     + "\(renderer.loadedViewCount) efter en sida till")
+        logState("Efter minnesvarningen")
+
+        jump(to: start)
+        _ = await waitUntilShown()
     }
 
     /// Vrider till liggande för att pröva uppslaget. Vrider inte simulatorn görs läsarens yta bred i stället.

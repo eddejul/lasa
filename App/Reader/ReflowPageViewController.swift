@@ -163,9 +163,13 @@ final class ReflowPageViewController: UIViewController {
             show(snapshot)
             return
         }
-        renderer.requestImage(for: address) { [weak self] snapshot in
+        renderer.requestImage(for: address, completion: { [weak self] snapshot in
             self?.show(snapshot)
-        }
+        }, failure: { [weak self] in
+            // Kapitlet gick inte att visas. Står en äldre bild kvar (efter byte av tema) får den stå kvar.
+            guard let self = self, !self.hasImage else { return }
+            self.setFailureShown(true)
+        })
     }
 
     private func show(_ snapshot: ReflowSnapshot) {
@@ -173,8 +177,65 @@ final class ReflowPageViewController: UIViewController {
         links = snapshot.links
         marks = snapshot.marks
         hasImage = true
+        setFailureShown(false)
         // En ny bild har markeringen inritad, så förhandsvisningen behövs inte längre.
         clearPreview()
+    }
+
+    // MARK: Kapitlet kunde inte visas (G2)
+
+    /// Anropas när man trycker på Försök igen. Läsaren ber renderaren försöka igen och ritar om bladet.
+    var onRetry: ((ReflowPageViewController) -> Void)?
+    private var failureView: UIStackView?
+
+    var showsFailure: Bool {
+        failureView != nil
+    }
+
+    private func setFailureShown(_ shown: Bool) {
+        guard shown != showsFailure, isViewLoaded else { return }
+        guard shown else {
+            failureView?.removeFromSuperview()
+            failureView = nil
+            return
+        }
+        let label = UILabel()
+        label.text = "Kapitlet kunde inte visas."
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        label.font = .preferredFont(forTextStyle: .callout)
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = .secondaryLabel
+
+        var configuration = UIButton.Configuration.bordered()
+        configuration.title = "Försök igen"
+        configuration.cornerStyle = .capsule
+        let button = UIButton(configuration: configuration)
+        button.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+
+        let stack = UIStackView(arrangedSubviews: [label, button])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 14
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
+        ])
+        failureView = stack
+    }
+
+    @objc private func retryTapped() {
+        setFailureShown(false)
+        onRetry?(self)
+    }
+
+    /// Självtestet: samma sak som ett tryck på Försök igen.
+    func simulateRetryTap() {
+        guard showsFailure else { return }
+        retryTapped()
     }
 
     // MARK: Markeringar (fas 4)
