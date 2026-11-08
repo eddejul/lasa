@@ -6,6 +6,7 @@
 
 import { openUrl } from './backend.js';
 import { dictionary, lookupStats } from './context.js';
+import { explain, isConfigured as aiConfigured } from './gemini.js';
 import { englishPos, guessLanguage } from './language.js';
 import { RARE_ZIPF, TOP_SYNONYMS, normalize } from './lookup.js';
 import { hidden, hidePair, isSaved, saveWord, unsaveWord } from './store.js';
@@ -106,7 +107,9 @@ export async function showWordPopup({ candidates, sentence = '', rangeInSentence
   }
   const element = el('div', { class: 'popup', role: 'dialog', 'aria-label': 'Ordet' });
   document.getElementById('popup-layer').append(element);
-  current = { element, stack: [{ type: 'word', lookup, context }], anchor, onClose };
+  // AI-knappen syns bara när en nyckel finns (Inställningar).
+  const ai = lookup ? await aiConfigured().catch(() => false) : false;
+  current = { element, stack: [{ type: 'word', lookup, context }], anchor, onClose, ai };
   document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('mousedown', onOutside, true);
   window.addEventListener('resize', closeWordPopup);
@@ -221,6 +224,9 @@ async function renderWord(page, body) {
     } else if (!entry.translations.length) {
       sections.push(section(null, [row({ text: 'Ordboken har ingen betydelse eller synonym för ordet.', muted: true })]));
     }
+    if (current?.ai) {
+      sections.push(section('Förklaring med AI', [aiRow(page)], 'Meningen och ordet skickas till Google Gemini.'));
+    }
     if (lookup.entries.length > 1) {
       sections.push(section('Även som', lookup.entries.slice(1).map((otherEntry) => row({
         text: [otherEntry.lemma, otherEntry.posName].filter((t) => t).join(', '),
@@ -266,6 +272,34 @@ async function renderWord(page, body) {
   const footer = context.book && lookup && !context.removed ? 'Ordet är sparat i Sparade ord.' : null;
   sections.push(section(null, actions, footer));
   body.append(...sections);
+}
+
+/** AI-knappen: knappen, väntan, svaret eller felet (som på iPaden). */
+function aiRow(page) {
+  const ai = page.ai ?? { state: 'idle' };
+  if (ai.state === 'loading') return row({ text: 'Frågar Gemini ...', muted: true, testid: 'ai' });
+  if (ai.state === 'done') {
+    const details = [];
+    if (ai.answer.bestWord) details.push(`Passar bäst här: ${ai.answer.bestWord}`);
+    if (ai.answer.senseText) details.push(`Betydelsen i ordboken: ${ai.answer.senseText}`);
+    return row({ text: ai.answer.explanation, secondary: details.join('\n') || null, testid: 'ai-answer' });
+  }
+  if (ai.state === 'failed') {
+    return row({ text: ai.message, danger: true, secondary: 'Klicka för att försöka igen.', onclick: () => askAI(page), testid: 'ai-error' });
+  }
+  return row({ text: 'Förklara i meningen', action: true, onclick: () => askAI(page), testid: 'ai' });
+}
+
+async function askAI(page) {
+  if (!page.lookup || page.ai?.state === 'loading' || page.ai?.state === 'done') return;
+  page.ai = { state: 'loading' };
+  render();
+  try {
+    page.ai = { state: 'done', answer: await explain(page.lookup, page.context.sentence) };
+  } catch (error) {
+    page.ai = { state: 'failed', message: String(error?.message ?? error) };
+  }
+  if (current?.stack.includes(page)) render();
 }
 
 export function svenskaSeUrl(word) {

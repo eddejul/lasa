@@ -359,9 +359,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .popup-text.big { font-size: 18px; }
 .popup-text.bold { font-weight: 700; font-size: 21px; }
 .popup-text.muted { color: var(--muted); }
-.popup-secondary { color: var(--muted); font-size: 13px; margin-top: 3px; line-height: 1.35; overflow-wrap: anywhere; }
+.popup-secondary { color: var(--muted); font-size: 13px; margin-top: 3px; line-height: 1.35; overflow-wrap: anywhere; white-space: pre-line; }
 .popup-row.action .popup-text { color: var(--accent); }
 .popup-row.danger .popup-text { color: var(--danger); }
+/* AI-svaret: förklaringen överst och detaljerna under */
+.popup-row[data-testid="ai-answer"] { flex-direction: column; align-items: flex-start; gap: 2px; }
 .chevron { color: var(--muted); font-size: 18px; }
 .popup-note { color: var(--muted); font-size: 12px; margin-left: 8px; }
 .synonym-row { padding: 0; }

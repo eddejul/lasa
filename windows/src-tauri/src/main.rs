@@ -288,10 +288,11 @@ fn library_delete(state: State<'_, AppState>, id: String, ext: String) -> Result
     }
 }
 
-/// Hemligheterna för synken ligger i Windows Autentiseringshanteraren, aldrig i en fil.
+/// Hemligheterna för synken och AI-knappen ligger i Windows Autentiseringshanteraren, aldrig i en fil.
 /// Bara de här namnen går att läsa och skriva.
 const SECRET_SERVICE: &str = "se.edvin.lasa";
-const SECRET_NAMES: [&str; 2] = ["sync-publishable-key", "sync-refresh-token"];
+// gemini-api-key: nyckeln till AI-knappen (W11).
+const SECRET_NAMES: [&str; 3] = ["sync-publishable-key", "sync-refresh-token", "gemini-api-key"];
 
 fn secret_entry(name: &str) -> Result<keyring::Entry, String> {
     if !SECRET_NAMES.contains(&name) {

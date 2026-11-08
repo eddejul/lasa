@@ -620,7 +620,74 @@ def narrow_commands(page, books, out):
     CONSOLE[before:] = [line for line in CONSOLE[before:] if 'status of 500' not in line]
 
 
-STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review, spreads, narrow_commands]
+def ai_button(page, books, out):
+    # Utan nyckel syns ingen AI-knapp.
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    page.keyboard.press('Home')
+    page.keyboard.press('ArrowRight')
+    page.wait_for_function("document.querySelectorAll('.pdf-spread .textLayer span').length > 5")
+    point = word_edges(page, 'stationen')
+    page.mouse.dblclick((point["left"]["x"] + point["right"]["x"]) / 2, point["left"]["y"])
+    page.wait_for_selector('.popup [data-testid="header"]')
+    check(page.locator('.popup [data-testid="ai"]').count() == 0, 'ingen AI-knapp utan nyckel')
+    page.keyboard.press('Escape')
+    back_to_library(page)
+
+    # Nyckeln sparas som hemlighet, modellen som inställning.
+    page.locator('[data-testid="tab-settings"]').click()
+    page.fill('[data-testid="ai-key"]', 'provnyckel-123')
+    page.locator('[data-testid="ai-save"]').click()
+    check(wait_for(lambda: 'Sparat' in page.locator('[data-testid="ai-message"]').inner_text()), 'nyckeln sparas')
+    secrets = json.load(open(os.path.join(DATA, 'hemligheter-provserver.json'), encoding='utf-8')) if DATA else {}
+    check(secrets.get('gemini-api-key') == 'provnyckel-123', 'nyckeln ligger bland hemligheterna, inte i inställningarna')
+
+    # Gemini besvaras av testet. Frågan ska ha nyckeln i rubriken och schemat i svaret.
+    requests = []
+
+    def answer(route):
+        body = json.loads(route.request.post_data or '{}')
+        requests.append({"url": route.request.url, "key": route.request.headers.get('x-goog-api-key'), "body": body})
+        enum = body.get('generationConfig', {}).get('responseJsonSchema', {}).get('properties', {}).get('sense_id', {}).get('enum', [])
+        reply = {"explanation": "Hon rörde sig snabbt till fots.", "sense_id": enum[0] if enum else "",
+                 "best_word": "galopperade"}
+        route.fulfill(status=200, content_type='application/json',
+                      body=json.dumps({"candidates": [{"content": {"parts": [{"text": json.dumps(reply, ensure_ascii=False)}]}}]}))
+
+    page.route('https://generativelanguage.googleapis.com/**', answer)
+    page.locator('[data-testid="ai-test"]').click()
+    check(wait_for(lambda: 'fungerar' in page.locator('[data-testid="ai-message"]').inner_text()), 'Prova nyckeln')
+    page.locator('[data-testid="tab-library"]').click()
+    page.wait_for_selector('[data-testid="book"]')
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    page.wait_for_function("document.querySelectorAll('.pdf-spread .textLayer span').length > 5")
+    point = word_edges(page, 'sprang')
+    page.mouse.dblclick((point["left"]["x"] + point["right"]["x"]) / 2, point["left"]["y"])
+    page.wait_for_selector('.popup [data-testid="header"]')
+    check(page.locator('.popup [data-testid="ai"]').count() == 1, 'Förklara i meningen finns med nyckel')
+    page.locator('.popup [data-testid="ai"]').click()
+    check(wait_for(lambda: page.locator('.popup [data-testid="ai-answer"]').count() == 1), 'svaret visas i rutan')
+    text = page.locator('.popup [data-testid="ai-answer"]').inner_text()
+    check('Hon rörde sig snabbt' in text and 'galopperade' not in text, f'svaret visas, men inte ett påhittat ord: {text!r}')
+    last = requests[-1] if requests else {}
+    check(last.get('key') == 'provnyckel-123' and ':generateContent' in last.get('url', '')
+          and 'gemini-3.5-flash-lite' in last.get('url', ''), f'anropet som på iPaden: {last.get("url")}')
+    prompt = last.get('body', {}).get('contents', [{}])[0].get('parts', [{}])[0].get('text', '')
+    check('Meningen: ' in prompt and 'sprang' in prompt, 'meningen och ordet skickas')
+    page.screenshot(path=os.path.join(out, "f12-ai.png"))
+    page.keyboard.press('Escape')
+    page.unroute('https://generativelanguage.googleapis.com/**')
+    back_to_library(page)
+    page.locator('[data-testid="tab-settings"]').click()
+    page.fill('[data-testid="ai-key"]', '')
+    page.locator('[data-testid="ai-save"]').click()
+    check(wait_for(lambda: 'borttagen' in page.locator('[data-testid="ai-message"]').inner_text()), 'nyckeln kan tas bort')
+    page.locator('[data-testid="tab-library"]').click()
+    page.wait_for_selector('[data-testid="book"]')
+
+
+STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review, spreads, narrow_commands, ai_button]
 
 
 def main():

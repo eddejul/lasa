@@ -1,7 +1,8 @@
 // Inställningar: synken med iPaden (fas 6). Hur projektet skapas står i docs/SYNK.md.
 
-import { secretGet } from './backend.js';
-import { settings } from './store.js';
+import { secretGet, secretSet } from './backend.js';
+import { DEFAULT_MODEL, GEMINI_SECRET, testKey } from './gemini.js';
+import { setSetting, settings } from './store.js';
 import { isSignedIn, reportText, signIn, signOut, syncNow, syncState } from './sync.js';
 import { el, replace } from './ui.js';
 
@@ -69,7 +70,52 @@ export async function renderSettings(container) {
   };
   renderStatus();
 
+  // Förklaring med AI (W11): nyckeln i Autentiseringshanteraren, modellen som inställning.
+  const geminiKey = (await secretGet(GEMINI_SECRET)) ?? '';
+  const aiKey = el('input', { type: 'password', class: 'text-input', value: geminiKey, placeholder: 'AIza...', spellcheck: 'false',
+    autocomplete: 'off', dataset: { testid: 'ai-key' } });
+  const aiModelField = el('input', { type: 'text', class: 'text-input', value: settings.aiModel ?? '', placeholder: DEFAULT_MODEL,
+    spellcheck: 'false', dataset: { testid: 'ai-model' } });
+  const aiMessage = el('p', { class: 'settings-message', role: 'status', dataset: { testid: 'ai-message' } });
+  const saveAI = async () => {
+    await secretSet(GEMINI_SECRET, aiKey.value.trim() || null);
+    await setSetting('aiModel', aiModelField.value.trim() || null);
+  };
+  const aiSave = el('button', { class: 'button primary', dataset: { testid: 'ai-save' }, onclick: async () => {
+    aiMessage.classList.remove('error');
+    await saveAI();
+    aiMessage.textContent = aiKey.value.trim() ? 'Sparat. Knappen Förklara i meningen finns nu i ordrutan.' : 'Nyckeln är borttagen.';
+  } }, 'Spara');
+  const aiTest = el('button', { class: 'button', dataset: { testid: 'ai-test' }, onclick: async () => {
+    aiMessage.classList.remove('error');
+    const key = aiKey.value.trim();
+    if (!key) {
+      aiMessage.textContent = 'Skriv in en nyckel först.';
+      return;
+    }
+    await saveAI();
+    aiMessage.textContent = 'Frågar Gemini ...';
+    try {
+      await testKey(key);
+      aiMessage.textContent = `Nyckeln fungerar med ${settings.aiModel || DEFAULT_MODEL}.`;
+    } catch (error) {
+      aiMessage.textContent = String(error?.message ?? error);
+      aiMessage.classList.add('error');
+    }
+  } }, 'Prova nyckeln');
+
   replace(container, el('div', { class: 'settings' },
+    el('section', { class: 'list-section' },
+      el('h3', {}, 'Förklaring med AI'),
+      el('div', { class: 'list-group settings-form' },
+        field('API-nyckel', aiKey, 'En gratis nyckel skapas i Google AI Studio (aistudio.google.com, Get API key). '
+          + 'Nyckeln sparas bara i Windows Autentiseringshanteraren.'),
+        field('Modell', aiModelField, `Tomt betyder ${DEFAULT_MODEL}, som på iPaden.`),
+        el('div', { class: 'row-buttons settings-buttons' }, aiSave, aiTest),
+        aiMessage),
+      el('p', { class: 'list-footer' }, 'Knappen Förklara i meningen i ordrutan använder Google Gemini. Meningen och ordet '
+        + 'skickas till Google, och på gratisnivån får Google använda det för att förbättra sina tjänster. Utan nyckel syns '
+        + 'ingen AI-knapp.')),
     el('section', { class: 'list-section' },
       el('h3', {}, 'Synk med iPaden'),
       el('div', { class: 'list-group settings-form' },

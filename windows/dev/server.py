@@ -113,7 +113,7 @@ class Backend:
                     with open(path, encoding="utf-8") as file:
                         secrets = json.load(file)
                 name = args["name"]
-                if name not in ("sync-publishable-key", "sync-refresh-token"):
+                if name not in ("sync-publishable-key", "sync-refresh-token", "gemini-api-key"):
                     raise ValueError(f"Okänd hemlighet: {name}")
                 if command == "secret_get":
                     return secrets.get(name)
