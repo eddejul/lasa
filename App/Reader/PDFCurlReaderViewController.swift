@@ -1760,6 +1760,33 @@ extension PDFCurlReaderViewController {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
+    /// Edvin 8 nov: menyn täckte text. I PDF mäts hur mycket av sidbilden som menyraden och nederkanten täcker
+    /// med menyn framme (sidans egen marginal är oftast vit, så siffran är ett tak för täckt text).
+    fileprivate func selfTestChromeCoverage() {
+        let wasHidden = chromeHidden
+        setChromeHidden(false, animated: false)
+        navigationController?.view.layoutIfNeeded()
+        view.layoutIfNeeded()
+        guard let bar = navigationController?.navigationBar,
+              let page = visiblePages.first(where: { !$0.isBlank && $0.imageFrame != nil }),
+              let local = page.imageFrame else {
+            SelfTest.log("FEL: ingen menyrad eller sidbild för mätningen (U3)")
+            return
+        }
+        let frame = page.view.convert(local, to: view)
+        let barBottom = bar.convert(bar.bounds, to: view).maxY
+        let bottomTop = bottomBar.convert(bottomBar.bounds, to: view).minY
+        let top = max(barBottom - frame.minY, 0)
+        let bottom = max(frame.maxY - bottomTop, 0)
+        let share = { (value: CGFloat) in Int((value / max(frame.height, 1) * 100).rounded()) }
+        SelfTest.log("Menyn över PDF-sidan (U3): sidbilden \(Int(frame.minY)) till \(Int(frame.maxY)), menyraden täcker "
+                     + "\(Int(top)) punkter (\(share(top)) procent av sidhöjden), nederkanten \(Int(bottom)) punkter "
+                     + "(\(share(bottom)) procent)")
+        if wasHidden {
+            setChromeHidden(true, animated: false)
+        }
+    }
+
     fileprivate func waitForImages() async -> Bool {
         for _ in 0..<150 {
             if !visiblePages.isEmpty, visiblePages.allSatisfy({ $0.isBlank || $0.imageFrame != nil }) {
@@ -1907,6 +1934,7 @@ extension PDFCurlReaderViewController {
         let shown = await waitForImages()
         SelfTest.log("Första sidan: \(shown ? "ok" : "FEL, sidbilden kom inte")")
         SelfTest.saveScreen(view, name: "01-start")
+        selfTestChromeCoverage()
 
         let drawsBefore = ReaderTimeline.trackDraws
         turnPage(forward: true)
