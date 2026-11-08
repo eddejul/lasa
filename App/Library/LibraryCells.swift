@@ -88,8 +88,10 @@ final class CoverView: UIView {
         layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: 4).cgPath
         let width = bounds.width
         let side = max(width * 0.1, 8)
-        let titleSize = max(min(width * 0.12, 22), 12)
-        drawnTitle.font = Theme.serif(.title3, size: titleSize, weight: .regular)
+        let titleSize = max(min(width * 0.12, 22), 12).rounded()
+        if drawnTitle.font.pointSize != titleSize {
+            drawnTitle.font = Theme.serif(.title3, size: titleSize, weight: .regular)
+        }
         let titleWidth = width - side * 2
         let fitted = drawnTitle.sizeThatFits(CGSize(width: titleWidth, height: bounds.height * 0.5))
         let titleHeight = min(fitted.height, bounds.height * 0.5)
@@ -97,7 +99,10 @@ final class CoverView: UIView {
                                   height: titleHeight)
         drawnRule.frame = CGRect(x: (width - width * 0.22) / 2, y: drawnTitle.frame.maxY + 12,
                                  width: width * 0.22, height: 1.5)
-        drawnFooter.font = .systemFont(ofSize: max(min(width * 0.055, 11), 8), weight: .medium)
+        let footerSize = max(min(width * 0.055, 11), 8).rounded()
+        if drawnFooter.font.pointSize != footerSize {
+            drawnFooter.font = .systemFont(ofSize: footerSize, weight: .medium)
+        }
         drawnFooter.frame = CGRect(x: side, y: bounds.height - side - 14, width: titleWidth, height: 14)
         spine.frame = CGRect(x: 0, y: 0, width: 3, height: bounds.height)
     }
@@ -561,12 +566,31 @@ final class MessageCell: UICollectionViewCell {
     }
 
     /// `lines`: texten och förloppet (nil: ingen stapel).
+    /// Raderna som visas, för att se om bara texten och förloppet ändrats.
+    private var shape: [Bool] = []
+
     func configure(lines: [(text: String, progress: Double?)], background: UIColor, palette: Palette) {
+        contentView.backgroundColor = background
+        // Förloppet uppdateras många gånger under en import. Har bara texten och förloppet ändrats byts de på
+        // plats, utan nya vyer, så att rutnätet inte behöver läggas ut på nytt varje gång.
+        let newShape = lines.map { $0.progress != nil }
+        if newShape == shape, !shape.isEmpty {
+            var views = stack.arrangedSubviews.makeIterator()
+            for line in lines {
+                let label = views.next() as? UILabel
+                label?.text = line.text
+                label?.textColor = palette.ink
+                if let progress = line.progress {
+                    (views.next() as? UIProgressView)?.progress = Float(progress)
+                }
+            }
+            return
+        }
+        shape = newShape
         for view in stack.arrangedSubviews {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        contentView.backgroundColor = background
         for line in lines {
             let label = UILabel()
             label.text = line.text
