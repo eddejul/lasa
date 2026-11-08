@@ -36,6 +36,18 @@ xcrun simctl install "$UDID" "$APP"
 DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data)
 mkdir -p "$DATA/Documents/Böcker"
 cp "$BOOKS"/* "$DATA/Documents/Böcker/"
+# G3: en bok i en undermapp, som ska synas i biblioteket.
+mkdir -p "$DATA/Documents/Böcker/Kurs"
+printf '# Anteckningar\n\nEn kort text i en undermapp, för att se att biblioteket visar den.\n' \
+  > "$DATA/Documents/Böcker/Kurs/Anteckningar.md"
+# G3: läspositioner sparade under filnamnet, som före bokregistret. Vid första starten ska de flyttas
+# till bokens id (självtestet loggar det i test-epub.log och appens logg).
+mkdir -p "$DATA/Library/Preferences"
+python3 - "$DATA/Library/Preferences/$BUNDLE.plist" << 'PLIST'
+import plistlib, sys
+plistlib.dump({"location.test.txt": "0|0.0", "positionDate.test.txt": 1700000000.0,
+               "positionDate.Anteckningar.md": 1700000000.0}, open(sys.argv[1], "wb"))
+PLIST
 
 status=0
 for BOOK in test.epub test.md test.txt test.rtf test.pdf; do

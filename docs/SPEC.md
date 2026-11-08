@@ -208,6 +208,11 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Logg:** Filer, Diagnostik, med starter, tider, fel och Apples rapporter om krascher (MetricKit). Delas från Inställningar.
 * **Databaserna** har versionsnummer och en trappa av uppdateringar, skriver i transaktioner och säger till när något inte kunde sparas.
 
+### 6.7 Våg 2 (8 november 2026)
+
+* **Boken känns igen på innehållet (G3):** varje bok har ett eget id i ett bokregister med kontrollsumma, sökväg och titel. Namnbyte och flytt i Filer behåller markeringar och läsposition. En ny version av en bok (samma namn och nytt innehåll, eller liknande namn när den gamla filen är borta) ger frågan Ny version av boken. Böcker i undermappar syns, med mappen under titeln.
+* **EPUB-kapitel som inte kunde visas (G2):** visar Kapitlet kunde inte visas med Försök igen i stället för en tom sida.
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.

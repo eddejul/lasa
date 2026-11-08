@@ -46,6 +46,7 @@ enum Fas6SelfTest {
         navigation.popToRootViewController(animated: false)
 
         testDatabases()
+        testBookMigration()
         await testExpiryAndBackup(library: library)
 
         // AI-svaret: tolkningen av ett svar från Gemini, och att påhittade ord rensas bort.
@@ -122,7 +123,7 @@ enum Fas6SelfTest {
     /// Trappan provas i en databas i minnet, så att användarens filer inte rörs.
     private static func testDatabases() {
         SelfTest.log("Databasernas versioner: markeringar \(AnnotationStore.shared.schemaVersion), "
-                     + "sparade ord \(UserWords.shared.schemaVersion) (ska vara 1 och 1)")
+                     + "sparade ord \(UserWords.shared.schemaVersion) (ska vara 2 och 2)")
         struct Stop: Error {}
         do {
             let memory = try SQLiteDatabase(path: ":memory:", readOnly: false)
@@ -142,6 +143,89 @@ enum Fas6SelfTest {
             SelfTest.log("FEL: databastestet: \(error)")
         }
         SelfTest.log("Fel vid sparning hittills: \(SaveProblems.count)")
+    }
+
+    /// G3: flytten från filnamn till bokens id, med påhittade gamla data i en egen databas och en egen
+    /// UserDefaults, så att användarens data inte rörs. Gamla nycklar in, nya ut, samma antal markeringar
+    /// på samma sida, och en andra körning ändrar ingenting.
+    private static func testBookMigration() {
+        let suite = "se.edvin.lasa.migreringsprov"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("migreringsprov.sqlite")
+        try? FileManager.default.removeItem(at: url)
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            SelfTest.log("FEL: provets UserDefaults gick inte att skapa")
+            return
+        }
+        defaults.removePersistentDomain(forName: suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: url)
+        }
+        do {
+            let db = try SQLiteDatabase(path: url.path, readOnly: false)
+            // Databasen som den såg ut före G3, med markeringar och ett bokmärke under filnamnen.
+            try db.migrate(Array(AnnotationStore.migrations.prefix(1)))
+            for (index, start) in [10, 40, 90].enumerated() {
+                try db.execute("""
+                    INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+                    VALUES (?, 'Gammal bok.pdf', 4, ?, 5, 'text', 'yellow', ?, 1, 2, 0)
+                    """, ["prov-\(index)", start, index == 1 ? "en anteckning" : ""])
+            }
+            try db.execute("""
+                INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+                VALUES ('prov-epub', 'Roman.epub', 2, 0, 5, 'text', 'blue', '', 1, 2, 0)
+                """)
+            try db.execute("""
+                INSERT INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
+                VALUES ('prov-bm', 'Gammal bok.pdf', 9, 0, 'Sidan 10', 1, 2, 0)
+                """)
+            defaults.set(41, forKey: "position.Gammal bok.pdf")
+            defaults.set(1_700_000_000.0, forKey: "positionDate.Gammal bok.pdf")
+            defaults.set("3|0.25", forKey: "location.Roman.epub")
+            let versions = try db.migrate(AnnotationStore.migrations)
+            let records = [
+                BookRecord(id: "id-pdf", sha256: "", file: "Gammal bok.pdf", title: "Gammal bok", size: 1, modified: 1,
+                           added: 1, missing: false),
+                BookRecord(id: "id-epub", sha256: "", file: "Roman.epub", title: "Roman", size: 1, modified: 1,
+                           added: 1, missing: false),
+            ]
+            let work = LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults)
+            let first = try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+            func count(_ sql: String) throws -> Int {
+                var value = 0
+                try db.query(sql) { value = $0.int(0) }
+                return value
+            }
+            let onPage = try count("SELECT COUNT(*) FROM highlights WHERE book = 'id-pdf' AND section = 4")
+            let notes = try count("SELECT COUNT(*) FROM highlights WHERE book = 'id-pdf' AND note <> ''")
+            let epub = try count("SELECT COUNT(*) FROM highlights WHERE book = 'id-epub' AND section = 2")
+            let marks = try count("SELECT COUNT(*) FROM bookmarks WHERE book = 'id-pdf' AND section = 9")
+            let left = try count("SELECT COUNT(*) FROM highlights WHERE book LIKE '%.pdf' OR book LIKE '%.epub'")
+            let oldKeys = ["position.Gammal bok.pdf", "positionDate.Gammal bok.pdf", "location.Roman.epub"]
+                .filter { defaults.object(forKey: $0) != nil }.count
+            let position = defaults.integer(forKey: "bookPosition.id-pdf")
+            let location = defaults.string(forKey: "bookLocation.id-epub") ?? "saknas"
+            let done = try LegacyBookMigration.isDone(db)
+            let ok = work && onPage == 3 && notes == 1 && epub == 1 && marks == 1 && left == 0 && oldKeys == 0
+                && position == 41 && location == "3|0.25" && done
+            SelfTest.log("Flytten till bokens id (påhittade gamla data, version \(versions.from) till \(versions.to)): "
+                         + "\(first.summary). Efter: \(onPage) markeringar på sidan 5 varav \(notes) med anteckning, "
+                         + "\(epub) i romanen, \(marks) bokmärke, \(left) kvar under filnamn, \(oldKeys) gamla nycklar kvar, "
+                         + "läsposition \(position), plats \(location). \(ok ? "Rätt" : "FEL")")
+            let second = try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+            let again = try count("SELECT COUNT(*) FROM highlights WHERE book = 'id-pdf' AND section = 4")
+            let stillThere = defaults.integer(forKey: "bookPosition.id-pdf")
+            SelfTest.log("Flytten en gång till: \(second.summary), \(again) markeringar på sidan 5, läsposition "
+                         + "\(stillThere). \(again == 3 && stillThere == 41 && second.highlights == 0 ? "Rätt" : "FEL")")
+        } catch {
+            SelfTest.log("FEL: provet av flytten till bokens id: \(error)")
+        }
+
+        // Registret i appen: varje testbok har ett id, och Böcker/Kurs/ (undermappen) syns.
+        let books = LibraryStore.shared.allBooks()
+        let ids = Set(books.map(\.id))
+        SelfTest.log("Bokregistret i appen: \(books.count) böcker, \(ids.count) olika id, "
+                     + "i undermappar: \(books.compactMap(\.folder).joined(separator: ", "))")
     }
 
     /// G1: utgångsdatumet ur profilen, raden i biblioteket, och en säkerhetskopia som sparas och återställs.

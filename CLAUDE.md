@@ -76,7 +76,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 
 ## Markeringar, bokmärken och sök (fas 4)
 
-* Allt sparas i `markeringar.sqlite` under Application Support (`AnnotationStore`), böckerna känns igen på filnamnet som läspositionen. Inget raderas: borttaget får `deleted = 1` och ny ändringstid, för synken.
+* Allt sparas i `markeringar.sqlite` under Application Support (`AnnotationStore`). Böckerna känns igen på sitt id i bokregistret (G3, se Grunden), inte på filnamnet. Inget raderas: borttaget får `deleted = 1` och ny ändringstid, för synken.
 * Båda databaserna (`markeringar.sqlite`, `anvandarord.sqlite`) har ett versionsnummer (`PRAGMA user_version`) och en trappa av uppdateringar (`migrations` i `AnnotationStore` och `UserWords`, körs av `SQLiteDatabase.migrate`). Ett nytt fält blir ett nytt steg sist, ändra aldrig ett steg som redan finns. Varje skrivning går i en transaktion, och ett fel skrivs i loggen och visas för användaren (`SaveProblems`).
 * En markering är `section` plus ett teckenintervall i UTF-16. PDF: sidan och `PDFPage.string`. EPUB och text: kapitlet och kapitlets text (all text i body utom script och style). `text` sparas också, och skriptet letar upp markeringen via texten om platsen inte stämmer.
 * Markeringsläget (pennan): sidans vikning, menyn och ordfunktionen stängs av, och en `UILongPressGestureRecognizer` med tiden 0 följer fingret. Ett vanligt tryck på en markering öppnar `HighlightMenuViewController`.
@@ -100,6 +100,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Loggen: `AppLog` skriver `Documents/Diagnostik/logg.txt`, som syns i Filer. Nya fel och tider loggas där, kort och utan text ur böckerna. Apples MetricKit-rapporter sparas i `Diagnostik/MetricKit` (`DiagnosticReports`). Inställningar har Dela loggen, och Simulatortest lägger loggen i artefakten (`Diagnostik/`).
 * Säkerhetskopian: `Backup` sparar en kopia per dag i `Documents/Säkerhetskopia/<datum tid>/` (båda databaserna med SQLite:s backup, läspositionerna ur UserDefaults som JSON) och behåller de sju senaste. Ny användardata (en ny databas, nya nycklar i UserDefaults) ska också in i `Backup`.
 * Utgångsvarningen: `AppExpiry` läser utgångsdatumet ur `embedded.mobileprovision` och visar en rad i biblioteket två dagar före. Simulatorn har ingen profil.
+* Bokregistret (G3, våg 2): tabellen `books` i `markeringar.sqlite` (`BookRegistry`) ger varje bok ett eget id med kontrollsumma (SHA-256, samma som synkens book_id), sökväg i Böcker och titel. Markeringar, bokmärken, läsposition (`bookPosition.<id>`, `bookLocation.<id>`, `bookPositionDate.<id>` i UserDefaults) och sparade ord (`book_id`) hänger på id:t. Matchningen är ren logik i `BookMatcher` (testad i XCTest). Gamla nycklar under filnamnet flyttas en gång av `LegacyBookMigration`, med en säkerhetskopia precis före. Böcker i undermappar syns.
 * Fel vid sparning visas av `SaveProblems` (se fas 4). Ren logik får ett test i `Tests/LasaTests`. XcodeGen är låst (`XCODEGEN_VERSION` i workflowen), och arkivets dSYM sparas som artefakten `Lasa-dSYM`.
 
 ## Ordboken (fas 2)

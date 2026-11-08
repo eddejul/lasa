@@ -58,8 +58,14 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // Bara i simulatortestet i bygget: öppna testboken direkt.
+        askNextQuestion()
         guard let name = SelfTest.bookName, !didStartSelfTest else { return }
         didStartSelfTest = true
+        if let summary = BookRegistry.shared.lastMigrationSummary {
+            SelfTest.log("Flytten till bokens id vid starten: \(summary)")
+        }
+        SelfTest.log("Bokregistret: \(BookRegistry.shared.records().count) böcker, "
+                     + "biblioteket visar \(books.count): \(books.map(\.path).joined(separator: ", "))")
         if name == SelfTest.fas6Name {
             // Fas 6 utan bok: repetition, inställningar, AI-svaret och synken mot en låtsasserver.
             Task { @MainActor [weak self] in
@@ -77,11 +83,88 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
     }
 
     func reload() {
-        books = LibraryStore.shared.allBooks()
+        let scanned = LibraryStore.shared.scan()
+        books = scanned.books
         guard isViewLoaded else { return }
         tableView.reloadData()
         updateEmptyState()
         updateExpiryBanner()
+        resolvePending(scanned.pending, urls: scanned.urls)
+    }
+
+    // MARK: Nya och ändrade filer (G3)
+
+    private var isResolving = false
+    private var questions: [BookRegistry.VersionQuestion] = []
+
+    /// Filer som inte känns igen direkt (nya, omdöpta, flyttade eller ändrade) får sin kontrollsumma räknad
+    /// i bakgrunden. En ny version av en bok ger frågan om markeringarna ska behållas.
+    private func resolvePending(_ pending: [BookFile], urls: [String: URL]) {
+        let waiting = pending.filter { file in !questions.contains { $0.file.path == file.path } }
+        guard !isResolving, !waiting.isEmpty else {
+            updateFooter(pendingCount: isResolving ? waiting.count : 0)
+            return
+        }
+        isResolving = true
+        updateFooter(pendingCount: waiting.count)
+        Task { @MainActor [weak self] in
+            let found = await BookRegistry.shared.resolve(waiting, urls: urls)
+            guard let self = self else { return }
+            self.isResolving = false
+            self.questions.append(contentsOf: found.filter { new in
+                !self.questions.contains { $0.file.path == new.file.path }
+            })
+            self.updateFooter(pendingCount: 0)
+            self.reloadKnownBooks()
+            self.askNextQuestion()
+        }
+    }
+
+    /// Läser om listan utan att starta en ny inläsning.
+    private func reloadKnownBooks() {
+        books = LibraryStore.shared.scan().books
+        tableView.reloadData()
+        updateEmptyState()
+    }
+
+    private func updateFooter(pendingCount: Int) {
+        guard pendingCount > 0 else {
+            tableView.tableFooterView = nil
+            return
+        }
+        let label = UILabel()
+        label.text = pendingCount == 1 ? "Läser in en ny fil" : "Läser in \(pendingCount) nya filer"
+        label.textAlignment = .center
+        label.font = .preferredFont(forTextStyle: .footnote)
+        label.textColor = .secondaryLabel
+        label.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 44)
+        tableView.tableFooterView = label
+    }
+
+    /// Ny version av boken, behåll markeringarna? En fråga i taget.
+    private func askNextQuestion() {
+        guard presentedViewController == nil, navigationController?.topViewController === self,
+              let question = questions.first else { return }
+        let old = question.record.file
+        let new = question.file.path
+        let message = old == new
+            ? "\(new) har ändrats. Ska markeringar, anteckningar och läsposition följa med till den nya versionen?"
+            : "\(new) liknar \(old), som inte finns längre. Ska markeringar, anteckningar och läsposition följa med?"
+        let alert = UIAlertController(title: "Ny version av boken", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Behåll markeringarna", style: .default) { [weak self] _ in
+            self?.answer(question, keep: true)
+        })
+        alert.addAction(UIAlertAction(title: "Nej, börja om", style: .default) { [weak self] _ in
+            self?.answer(question, keep: false)
+        })
+        present(alert, animated: true)
+    }
+
+    private func answer(_ question: BookRegistry.VersionQuestion, keep: Bool) {
+        questions.removeAll { $0.file.path == question.file.path }
+        BookRegistry.shared.answer(question, keep: keep)
+        reloadKnownBooks()
+        askNextQuestion()
     }
 
     // MARK: Appen går ut (G1)
@@ -219,7 +302,8 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
 
         var content = cell.defaultContentConfiguration()
         content.text = book.title
-        content.secondaryText = book.kindLabel
+        // Böcker i undermappar (G3) visar mappen, till exempel PDF, RETA30.
+        content.secondaryText = book.folder.map { "\(book.kindLabel), \($0)" } ?? book.kindLabel
         content.secondaryTextProperties.color = .secondaryLabel
         content.image = UIImage(systemName: book.symbolName)
         cell.contentConfiguration = content

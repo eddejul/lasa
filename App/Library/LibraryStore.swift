@@ -8,9 +8,20 @@ struct Book: Equatable {
     }
 
     let url: URL
+    /// Bokens id i bokregistret (G3). Markeringar, bokmärken, läsposition och sparade ord hänger på det,
+    /// så att de följer med när filen byter namn eller flyttas.
+    let id: String
+    /// Sökvägen i Böcker, till exempel "RETA30/Bok.pdf".
+    let path: String
 
     var title: String {
         url.deletingPathExtension().lastPathComponent
+    }
+
+    /// Undermappen i Böcker, eller nil för böcker direkt i Böcker.
+    var folder: String? {
+        let parts = path.split(separator: "/")
+        return parts.count > 1 ? parts.dropLast().joined(separator: "/") : nil
     }
 
     var kind: Kind {
@@ -45,8 +56,9 @@ struct Book: Equatable {
     }
 }
 
-/// Böckerna ligger i appens mapp "Böcker".
+/// Böckerna ligger i appens mapp "Böcker", också i undermappar.
 /// Den syns i Filer-appen under På min iPad, Läsa, så filer kan också läggas in därifrån.
+/// Läspositionen sparas under bokens id (G3), inte under filnamnet.
 final class LibraryStore {
 
     static let shared = LibraryStore()
@@ -60,20 +72,48 @@ final class LibraryStore {
         try? FileManager.default.createDirectory(at: booksDirectory, withIntermediateDirectories: true)
     }
 
-    func allBooks() -> [Book] {
-        let urls = (try? FileManager.default.contentsOfDirectory(
-            at: booksDirectory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
+    /// Alla filer i Böcker, också i undermappar (G3), med sökvägen i Böcker som nyckel.
+    func listFiles() -> (files: [BookFile], urls: [String: URL]) {
+        let base = booksDirectory.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
+        guard let enumerator = FileManager.default.enumerator(at: booksDirectory,
+                                                              includingPropertiesForKeys: keys,
+                                                              options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+            return ([], [:])
+        }
+        var files: [BookFile] = []
+        var urls: [String: URL] = [:]
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            guard values?.isDirectory != true else { continue }
+            let components = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+            guard components.count > base.count, Array(components.prefix(base.count)) == base else { continue }
+            let path = components.dropFirst(base.count).joined(separator: "/")
+            let file = BookFile(path: path,
+                                size: values?.fileSize ?? 0,
+                                modified: Int(values?.contentModificationDate?.timeIntervalSince1970 ?? 0))
+            files.append(file)
+            urls[path] = url
+        }
+        return (files, urls)
+    }
 
-        return urls
-            .filter { url in
-                let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                return !isDirectory
-            }
-            .map { Book(url: $0) }
-            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    /// Böckerna som känns igen direkt, och filer som behöver sin kontrollsumma först (G3).
+    func scan() -> (books: [Book], pending: [BookFile], urls: [String: URL]) {
+        let listed = listFiles()
+        let result = BookRegistry.shared.scan(files: listed.files, urls: listed.urls)
+        let books = result.books.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        return (books, result.pending, listed.urls)
+    }
+
+    func allBooks() -> [Book] {
+        scan().books
+    }
+
+    /// Boken för en fil i Böcker, om den är känd i registret.
+    func book(at url: URL) -> Book? {
+        let target = url.resolvingSymlinksInPath().standardizedFileURL.path
+        return allBooks().first { $0.url.resolvingSymlinksInPath().standardizedFileURL.path == target }
     }
 
     /// Kopierar in en fil i biblioteket. Finns en fil med samma namn ersätts den.
@@ -86,21 +126,42 @@ final class LibraryStore {
             }
         }
 
-        let destination = booksDirectory.appendingPathComponent(source.lastPathComponent)
-
-        // Filen ligger redan i biblioteket, till exempel öppnad direkt från Filer-appen.
+        // Filen ligger redan i biblioteket, till exempel öppnad direkt från Filer-appen. Den kopieras aldrig.
         let sourcePath = source.standardizedFileURL.resolvingSymlinksInPath().path
-        let destinationPath = destination.standardizedFileURL.resolvingSymlinksInPath().path
-        if sourcePath == destinationPath {
-            return Book(url: destination)
+        let booksPath = booksDirectory.resolvingSymlinksInPath().standardizedFileURL.path
+        if sourcePath.hasPrefix(booksPath + "/") {
+            guard let book = registeredBook(at: source) else { throw CocoaError(.fileReadUnknown) }
+            return book
         }
 
+        let destination = booksDirectory.appendingPathComponent(source.lastPathComponent)
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: destination.path) {
             try fileManager.removeItem(at: destination)
         }
         try fileManager.copyItem(at: source, to: destination)
-        return Book(url: destination)
+        guard let book = registeredBook(at: destination) else { throw CocoaError(.fileReadUnknown) }
+        return book
+    }
+
+    /// Boken för en fil i Böcker. Känns den inte igen direkt räknas kontrollsumman och filen läggs in i
+    /// registret: samma innehåll som en bok som inte finns längre ger dess id tillbaka.
+    func registeredBook(at url: URL) -> Book? {
+        let scanned = scan()
+        let target = url.resolvingSymlinksInPath().standardizedFileURL.path
+        func same(_ other: URL) -> Bool {
+            other.resolvingSymlinksInPath().standardizedFileURL.path == target
+        }
+        if let book = scanned.books.first(where: { same($0.url) }) {
+            return book
+        }
+        guard let match = scanned.urls.first(where: { same($0.value) }),
+              let file = scanned.pending.first(where: { $0.path == match.key }),
+              let hash = BookIdentity.hash(of: match.value) else {
+            return nil
+        }
+        let id = BookRegistry.shared.register(file, hash: hash)
+        return Book(url: match.value, id: id, path: match.key)
     }
 
     func delete(_ book: Book) throws {
@@ -108,6 +169,8 @@ final class LibraryStore {
         defaults.removeObject(forKey: positionKey(for: book))
         defaults.removeObject(forKey: locationKey(for: book))
         ReflowableBookLoader.removeCaches(for: book)
+        // Bokens rad och markeringar finns kvar, så att de kommer tillbaka om samma fil läggs in igen.
+        BookRegistry.shared.markMissing(id: book.id)
     }
 
     // MARK: Läsposition
@@ -122,7 +185,7 @@ final class LibraryStore {
     }
 
     private func positionKey(for book: Book) -> String {
-        "position.\(book.url.lastPathComponent)"
+        "bookPosition.\(book.id)"
     }
 
     // MARK: Läsposition i EPUB och textfiler
@@ -163,10 +226,10 @@ final class LibraryStore {
     }
 
     private func positionDateKey(for book: Book) -> String {
-        "positionDate.\(book.url.lastPathComponent)"
+        "bookPositionDate.\(book.id)"
     }
 
     private func locationKey(for book: Book) -> String {
-        "location.\(book.url.lastPathComponent)"
+        "bookLocation.\(book.id)"
     }
 }

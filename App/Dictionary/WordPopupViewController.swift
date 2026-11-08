@@ -84,6 +84,8 @@ final class WordPopupViewController: UITableViewController {
         let pageIndex: Int?
         /// Ordet som det stod, om det inte hittades (visas i meddelandet).
         let triedWord: String
+        /// Bokens id i bokregistret (G3), sparas med ordet.
+        var bookID: String? = nil
     }
 
     private enum Row {
@@ -243,7 +245,8 @@ final class WordPopupViewController: UITableViewController {
         guard let pending = pendingSave, let book = context.book else { return }
         pendingSave = nil
         UserWords.shared.save(word: pending.word, lemma: pending.lemma, language: pending.language,
-                              sentence: context.sentence, book: book, pageIndex: context.pageIndex ?? 0)
+                              sentence: context.sentence, book: book, pageIndex: context.pageIndex ?? 0,
+                              bookID: context.bookID)
     }
 
     /// Sparat, eller sparas så fort rutan syns.

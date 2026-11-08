@@ -77,6 +77,11 @@ final class UserWords {
                 PRIMARY KEY (lemma, language)
             );
             """,
+        // Steg 2 (G3): bokens id i bokregistret, utöver titeln. Fylls i för gamla ord när böckerna flyttas
+        // till id:t, och för nya ord när de sparas. Synken skickar fortfarande bara titeln.
+        """
+            ALTER TABLE saved_words ADD COLUMN book_id TEXT NOT NULL DEFAULT '';
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.
@@ -152,16 +157,18 @@ final class UserWords {
     // MARK: Sparade ord
 
     /// Sparar ett uppslaget ord. Har det slagits upp förut räknas det upp, och meningen byts mot den senaste.
-    func save(word: String, lemma: String, language: WordLanguage, sentence: String, book: String, pageIndex: Int) {
+    func save(word: String, lemma: String, language: WordLanguage, sentence: String, book: String, pageIndex: Int,
+              bookID: String? = nil) {
         let now = Date().timeIntervalSince1970
         write("ordet") { db in
             try db.execute("""
-                INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated, book_id)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                 ON CONFLICT (lemma, language) DO UPDATE SET
                     word = excluded.word, sentence = excluded.sentence, book = excluded.book,
-                    page = excluded.page, lookups = lookups + 1, updated = excluded.updated
-                """, [word, lemma, language.rawValue, sentence, book, pageIndex, now, now])
+                    page = excluded.page, lookups = lookups + 1, updated = excluded.updated,
+                    book_id = excluded.book_id
+                """, [word, lemma, language.rawValue, sentence, book, pageIndex, now, now, bookID ?? ""])
             try db.execute("DELETE FROM deleted_words WHERE lemma = ? AND language = ?", [lemma, language.rawValue])
         }
     }
@@ -446,6 +453,31 @@ extension UserWords {
             }
         }
         return Array(words.values)
+    }
+
+    /// G3: sparade ord från före bokregistret får bokens id, när titeln hör till exakt en bok.
+    /// Titeln (`book`) står kvar, den visas och synkas som förut. Går att köra om utan skada.
+    func linkBooks(_ books: [(id: String, title: String)]) {
+        var byTitle: [String: [String]] = [:]
+        for book in books {
+            byTitle[book.title, default: []].append(book.id)
+        }
+        let unique = byTitle.compactMapValues { $0.count == 1 ? $0[0] : nil }
+        guard !unique.isEmpty else { return }
+        write("bokens id i sparade ord") { db in
+            for (title, id) in unique {
+                try db.execute("UPDATE saved_words SET book_id = ? WHERE book = ? AND book_id = ''", [id, title])
+            }
+        }
+    }
+
+    /// Antalet sparade ord med bokens id, till självtestet.
+    func linkedWordCount(bookID: String) -> Int {
+        var count = 0
+        read("orden med bokens id") { db in
+            try db.query("SELECT COUNT(*) FROM saved_words WHERE book_id = ?", [bookID]) { count = $0.int(0) }
+        }
+        return count
     }
 
     /// Sparar ett ord från en annan enhet med dess egna tider, eller tar bort det.

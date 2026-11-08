@@ -92,7 +92,7 @@ struct Bookmark: Equatable {
 
 /// Markeringar, anteckningar och bokmärken, i en egen databas under Application Support.
 ///
-/// Böckerna känns igen på filnamnet, som läspositionen. Inget raderas på riktigt: en borttagen rad får
+/// Böckerna känns igen på sitt id i bokregistret (G3), som läspositionen. Inget raderas på riktigt: en borttagen rad får
 /// `deleted = 1` och en ny ändringstid, så att synken i fas 6 kan föra borttagningen vidare.
 /// Används bara från huvudtråden.
 final class AnnotationStore {
@@ -137,6 +137,26 @@ final class AnnotationStore {
             );
             CREATE INDEX IF NOT EXISTS bookmarks_book ON bookmarks (book, section);
             """,
+        // Steg 2 (G3): bokregistret. Böckerna får ett eget id, och markeringar, bokmärken och läsposition
+        // flyttas från filnamnet till id:t av `LegacyBookMigration` när appen startar.
+        """
+            CREATE TABLE IF NOT EXISTS books (
+                id TEXT PRIMARY KEY,
+                sha256 TEXT NOT NULL DEFAULT '',
+                file TEXT NOT NULL,
+                title TEXT NOT NULL,
+                size INTEGER NOT NULL DEFAULT 0,
+                modified INTEGER NOT NULL DEFAULT 0,
+                added REAL NOT NULL,
+                missing INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS books_file ON books (file);
+            CREATE INDEX IF NOT EXISTS books_sha ON books (sha256);
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.
@@ -178,7 +198,25 @@ final class AnnotationStore {
         }
         try db.replaceContents(with: url)
         try db.migrate(Self.migrations)
+        // Kopian har sitt eget bokregister (eller inget, om den är från före G3). Böckerna läses in på nytt.
+        BookRegistry.shared.reset()
         NotificationCenter.default.post(name: Self.didChange, object: nil)
+    }
+
+    // MARK: Bokregistret (G3)
+
+    /// Databasen, för bokregistret och flytten av gamla nycklar. Används bara från huvudtråden.
+    var database: SQLiteDatabase? {
+        db
+    }
+
+    func readBooks(_ body: (SQLiteDatabase) throws -> Void) {
+        read("bokregistret", body)
+    }
+
+    @discardableResult
+    func writeBooks(_ what: String, _ body: (SQLiteDatabase) throws -> Void) -> Bool {
+        write(what, body)
     }
 
     /// Kör en skrivning i en transaktion: allt eller inget. Går det inte säger appen till.
@@ -207,9 +245,9 @@ final class AnnotationStore {
         }
     }
 
-    /// Nyckeln som en bok sparas under.
+    /// Nyckeln som en bok sparas under: bokens id i bokregistret (G3). Före G3 var det filnamnet.
     static func key(for book: Book) -> String {
-        book.url.lastPathComponent
+        book.id
     }
 
     // MARK: Markeringar

@@ -688,7 +688,8 @@ final class PDFCurlReaderViewController: UIViewController {
                                                       rangeInSentence: found.rangeInSentence,
                                                       book: book.title,
                                                       pageIndex: pageIndex,
-                                                      triedWord: found.candidates.first ?? "")
+                                                      triedWord: found.candidates.first ?? "",
+                                                      bookID: book.id)
         WordPopupViewController.present(
             lookup: lookup,
             context: context,

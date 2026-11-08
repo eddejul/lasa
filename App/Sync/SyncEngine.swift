@@ -2,34 +2,41 @@ import CryptoKit
 import Foundation
 
 /// Böckernas id i synken: SHA-256 av filens innehåll (gemener, hex). Samma fil får samma id på iPaden och
-/// i Windows-appen, oavsett filnamn. Räknas en gång per fil och sparas med filens namn, storlek och ändringstid.
+/// i Windows-appen, oavsett filnamn. Sedan G3 står kontrollsumman i bokregistret. Saknas den där räknas den
+/// (en gång per fil, sparad med filens namn, storlek och ändringstid) och sparas i registret.
 enum BookIdentity {
 
     private static let cacheKey = "bookIdentity.cache"
 
-    /// Filnamn till id för böckerna. Filer som inte räknats förut räknas i bakgrunden.
+    /// Bokens id i registret till kontrollsumman. Filer som inte räknats förut räknas i bakgrunden.
     @MainActor
     static func ids(for books: [Book]) async -> [String: String] {
         var cache = UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String] ?? [:]
         var result: [String: String] = [:]
-        var missing: [(name: String, signature: String, url: URL)] = []
+        var missing: [(book: Book, signature: String)] = []
         for book in books {
+            if let known = BookRegistry.shared.record(id: book.id)?.sha256, !known.isEmpty {
+                result[book.id] = known
+                continue
+            }
             let signature = Self.signature(of: book)
             if let id = cache[signature] {
-                result[book.url.lastPathComponent] = id
+                result[book.id] = id
+                BookRegistry.shared.setHash(id, for: book.id)
             } else {
-                missing.append((book.url.lastPathComponent, signature, book.url))
+                missing.append((book, signature))
             }
         }
         if !missing.isEmpty {
-            let urls = missing.map { $0.url }
+            let urls = missing.map { $0.book.url }
             let computed = await Task.detached(priority: .utility) { () -> [String?] in
                 urls.map { BookIdentity.hash(of: $0) }
             }.value
             for (item, id) in zip(missing, computed) {
                 guard let id = id else { continue }
                 cache[item.signature] = id
-                result[item.name] = id
+                result[item.book.id] = id
+                BookRegistry.shared.setHash(id, for: item.book.id)
             }
             // Bara böcker som finns kvar sparas.
             let current = Set(books.map { Self.signature(of: $0) })
@@ -206,7 +213,7 @@ final class SyncEngine {
         }
         var push: [[String: Any]] = []
         for book in books {
-            guard let id = ids[book.url.lastPathComponent] else { continue }
+            guard let id = ids[book.id] else { continue }
             let kind = book.kind == .pdf ? "pdf" : "reflow"
             let local = LibraryStore.shared.positionDate(for: book)?.timeIntervalSince1970
             let row = remoteByBook[id]
@@ -231,6 +238,17 @@ final class SyncEngine {
                              "progression": progression, "updated_at": SyncTime.string(local)])
             }
         }
+        // Samma bok inlagd två gånger (till exempel i två mappar, som syns sedan G3) ger samma book_id.
+        // Supabase vägrar två rader för samma bok i ett anrop, så bara den nyaste skickas (K10).
+        var newest: [String: [String: Any]] = [:]
+        for row in push {
+            guard let id = row["book_id"] as? String else { continue }
+            if let other = newest[id], (other["updated_at"] as? String ?? "") >= (row["updated_at"] as? String ?? "") {
+                continue
+            }
+            newest[id] = row
+        }
+        push = Array(newest.values)
         if !push.isEmpty {
             try await SyncClient.shared.upsert(push, into: "positions", onConflict: "user_id,book_id")
             report.pushed += push.count
@@ -241,6 +259,7 @@ final class SyncEngine {
 
     private func syncHighlights(ids: [String: String], user: String, report: inout SyncReport) async throws {
         let remote = try await SyncClient.shared.rows(in: "highlights")
+        // Kontrollsumman till bokens id i registret (G3).
         let fileForID = Dictionary(ids.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
         var remoteByID: [String: [String: Any]] = [:]
         for row in remote {

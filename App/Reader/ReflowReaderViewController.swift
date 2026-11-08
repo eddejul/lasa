@@ -1037,7 +1037,8 @@ final class ReflowReaderViewController: UIViewController {
                                                       rangeInSentence: range,
                                                       book: book.title,
                                                       pageIndex: pageIndex,
-                                                      triedWord: found.word)
+                                                      triedWord: found.word,
+                                                      bookID: book.id)
         WordPopupViewController.present(
             lookup: lookup,
             context: context,

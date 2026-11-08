@@ -32,8 +32,9 @@ enum Backup {
     private static let annotationsName = "markeringar.sqlite"
     private static let wordsName = "anvandarord.sqlite"
     private static let positionsName = "lasepositioner.json"
-    /// Nycklarna i UserDefaults som hör till läspositionerna.
-    private static let positionPrefixes = ["position.", "location.", "positionDate."]
+    /// Nycklarna i UserDefaults som hör till läspositionerna: under filnamnet (före G3) och under bokens id.
+    private static let positionPrefixes = ["position.", "location.", "positionDate.",
+                                           "bookPosition.", "bookLocation.", "bookPositionDate."]
 
     static var directory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -88,6 +89,19 @@ enum Backup {
         queue.async {
             let result = Result { try makeNow(positions: positions) }
             DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// G3: en kopia precis innan läspositioner och markeringar flyttas från filnamnet till bokens id.
+    /// Körs på huvudtråden och väntar tills kopian är klar. Falskt om den inte gick att spara.
+    static func makeBeforeMigration() -> Bool {
+        let positions = positionSnapshot()
+        do {
+            let copy = try queue.sync { try makeNow(positions: positions) }
+            AppLog.shared.write("Säkerhetskopia före flytten till bokens id: \(copy.url.lastPathComponent)")
+            return true
+        } catch {
+            return false
         }
     }
 
