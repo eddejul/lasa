@@ -38,7 +38,8 @@ final class PDFCurlReaderViewController: UIViewController {
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
                                            goToPage: #selector(showGoToPage), zoom: #selector(zoomCurrentPage),
-                                           thumbnails: #selector(showThumbnails)),
+                                           thumbnails: #selector(showThumbnails),
+                                           bookPages: #selector(showBookPages)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -622,8 +623,14 @@ final class PDFCurlReaderViewController: UIViewController {
         return "s. \(numbers) av \(renderer.pageCount)"
     }
 
-    /// Sidnumret som står i boken, om det skiljer sig från sidans plats i filen.
-    private func printedLabel(for index: Int) -> String? {
+    /// Sidnumret som står i boken, om det skiljer sig från sidans plats i filen (K2: inställningen för boken,
+    /// förslaget ur filnamnet eller PDF:ens sidetiketter).
+    fileprivate func printedLabel(for index: Int) -> String? {
+        pageNumbering.printed(for: index, pdfLabel: pdfLabel(for: index))
+    }
+
+    /// PDF:ens egen sidetikett för sidan, om den finns.
+    private func pdfLabel(for index: Int) -> String? {
         guard let label = document.page(at: index)?.label?.trimmingCharacters(in: .whitespaces),
               !label.isEmpty,
               label != String(index + 1) else {
@@ -632,10 +639,32 @@ final class PDFCurlReaderViewController: UIViewController {
         return label
     }
 
-    private lazy var hasPrintedLabels: Bool = {
+    private lazy var hasPDFLabels: Bool = {
         let limit = min(self.document.pageCount, 60)
-        return (0..<limit).contains { self.printedLabel(for: $0) != nil }
+        return (0..<limit).contains { self.pdfLabel(for: $0) != nil }
     }()
+
+    /// K2: bokens egna sidnummer. Läses om när inställningen ändras i Bokens sidnummer.
+    fileprivate lazy var pageNumbering: BookPageNumbering = makePageNumbering()
+
+    private func makePageNumbering() -> BookPageNumbering {
+        let info = BookInfoStore.shared.info(book: bookKey)
+        return BookPageNumbering.resolve(first: info.pageFirst, spread: info.pageSpread,
+                                         fileName: book.url.lastPathComponent, pageCount: document.pageCount,
+                                         hasPDFLabels: hasPDFLabels)
+    }
+
+    /// K3: bokens sidnummer för en markering. I ett uppslag avgör markeringens plats på bilden vilken sida.
+    fileprivate func citationPage(for highlight: Highlight) -> String {
+        var half: Int?
+        if case let .offset(_, spread) = pageNumbering.source, spread,
+           let rect = highlight.rects.first, let page = document.page(at: highlight.section) {
+            let bounds = page.bounds(for: .cropBox)
+            half = rect.midX > bounds.midX ? 1 : 0
+        }
+        return pageNumbering.citationPage(for: highlight.section, half: half,
+                                          pdfLabel: pdfLabel(for: highlight.section))
+    }
 
     // MARK: Reglaget
 
@@ -782,7 +811,7 @@ final class PDFCurlReaderViewController: UIViewController {
     }
 
     @objc private func showGoToPage() {
-        let message = hasPrintedLabels
+        let message = pageNumbering.usesBookNumbers
             ? "Skriv sidnumret som det står i boken."
             : "Skriv ett nummer från 1 till \(renderer.pageCount)."
         let alert = UIAlertController(title: "Gå till sida", message: message, preferredStyle: .alert)
@@ -805,22 +834,76 @@ final class PDFCurlReaderViewController: UIViewController {
         present(alert, animated: true)
     }
 
-    /// Bokens egna sidnummer först (som "xii" eller "45"), annars sidans plats i filen.
+    /// Bokens egna sidnummer först (som "xii" eller "45"), annars sidans plats i filen (K2).
     private func pageIndex(forTyped text: String) -> Int? {
-        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else { return nil }
-        if hasPrintedLabels {
-            for index in 0..<document.pageCount {
-                if let label = document.page(at: index)?.label,
-                   label.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(typed) == .orderedSame {
-                    return index
-                }
+        pageNumbering.index(forTyped: text, pageCount: document.pageCount) { [weak self] index in
+            self?.document.page(at: index)?.label
+        }
+    }
+
+    /// K2: Bokens sidnummer i Mer. Filens första sida som bokens sida, en eller två boksidor per bild.
+    @objc fileprivate func showBookPages() {
+        guard presentedViewController == nil else { return }
+        var info = BookInfoStore.shared.info(book: bookKey)
+        let suggestion = BookPageNumbering.suggestion(fileName: book.url.lastPathComponent,
+                                                      pageCount: document.pageCount)
+        var message = pageNumbering.summary
+        if let suggestion = suggestion {
+            message += suggestion.spread
+                ? " Förslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last), uppslag."
+                : " Förslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last)."
+        }
+        message += "\n\nSkriv bokens sidnummer för filens första sida."
+        let alert = UIAlertController(title: "Bokens sidnummer", message: message, preferredStyle: .alert)
+        let current: Int?
+        if case let .offset(first, _) = pageNumbering.source {
+            current = first
+        } else {
+            current = suggestion?.first
+        }
+        alert.addTextField { field in
+            field.keyboardType = .numberPad
+            field.placeholder = "Till exempel 63"
+            field.text = current.map { String($0) }
+            field.clearButtonMode = .whileEditing
+        }
+        let save: (Bool) -> Void = { [weak self, weak alert] spread in
+            guard let self = self else { return }
+            let typed = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard let first = Int(typed), first > 0, first < 100_000 else {
+                self.showMessage(title: "Skriv ett sidnummer", message: "Sidnumret ska vara ett tal, till exempel 63.")
+                return
             }
+            info.pageFirst = first
+            info.pageSpread = spread
+            self.applyBookPages(info)
         }
-        if let number = Int(typed), number >= 1, number <= document.pageCount {
-            return number - 1
+        alert.addAction(UIAlertAction(title: "En boksida per sida i filen", style: .default) { _ in save(false) })
+        alert.addAction(UIAlertAction(title: "Två boksidor per sida (uppslag)", style: .default) { _ in save(true) })
+        if info.pageFirst != 0 {
+            alert.addAction(UIAlertAction(title: suggestion == nil ? "Automatiskt" : "Förslaget ur filnamnet",
+                                          style: .default) { [weak self] _ in
+                info.pageFirst = 0
+                info.pageSpread = false
+                self?.applyBookPages(info)
+            })
         }
-        return nil
+        if info.pageFirst != -1 {
+            alert.addAction(UIAlertAction(title: "Filens egna sidnummer", style: .default) { [weak self] _ in
+                info.pageFirst = -1
+                info.pageSpread = false
+                self?.applyBookPages(info)
+            })
+        }
+        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        present(alert, animated: true)
+    }
+
+    private func applyBookPages(_ info: BookInfo) {
+        BookInfoStore.shared.save(info, book: bookKey)
+        pageNumbering = makePageNumbering()
+        updatePageLabel()
+        AppLog.shared.write("K2: bokens sidnummer ändrade (\(pageNumbering.summary))")
     }
 
     private func showMessage(title: String, message: String) {

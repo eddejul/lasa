@@ -199,6 +199,20 @@ final class AnnotationStore {
                 PRIMARY KEY (course, book)
             );
             """,
+        // Steg 6 (K2, K3): bokens egna sidnummer i en PDF och bokinfon till citaten, en rad per bok.
+        """
+            CREATE TABLE IF NOT EXISTS book_info (
+                book TEXT PRIMARY KEY,
+                page_first INTEGER NOT NULL DEFAULT 0,
+                page_spread INTEGER NOT NULL DEFAULT 0,
+                author TEXT NOT NULL DEFAULT '',
+                year TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                publisher TEXT NOT NULL DEFAULT '',
+                place TEXT NOT NULL DEFAULT '',
+                updated REAL NOT NULL DEFAULT 0
+            );
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.

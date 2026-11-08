@@ -22,6 +22,12 @@ final class ReaderChrome {
         var zoom: Selector? = nil
         /// V3: miniatyrerna (PDF).
         var thumbnails: Selector? = nil
+        /// K2: bokens egna sidnummer (PDF).
+        var bookPages: Selector? = nil
+        /// K3: bokinfon till citaten.
+        var bookInfo: Selector? = nil
+        /// K1: anteckningsboken.
+        var notebook: Selector? = nil
     }
 
     let contentsItem: UIBarButtonItem
@@ -180,6 +186,28 @@ final class ReaderChrome {
                 [weak self] _ in
                 self?.send(zoom)
             })
+        }
+        var study: [UIMenuElement] = []
+        if let notebook = actions.notebook {
+            study.append(UIAction(title: "Anteckningsbok", image: UIImage(systemName: "text.book.closed")) {
+                [weak self] _ in
+                self?.send(notebook)
+            })
+        }
+        if let bookPages = actions.bookPages {
+            study.append(UIAction(title: "Bokens sidnummer", image: UIImage(systemName: "number")) {
+                [weak self] _ in
+                self?.send(bookPages)
+            })
+        }
+        if let bookInfo = actions.bookInfo {
+            study.append(UIAction(title: "Bokinfo för citat", image: UIImage(systemName: "text.quote")) {
+                [weak self] _ in
+                self?.send(bookInfo)
+            })
+        }
+        if !study.isEmpty {
+            children.append(UIMenu(title: "", options: .displayInline, children: study))
         }
         if !historyLabels.isEmpty {
             // V4: platserna man hoppat ifrån, även när Tillbaka i hörnet har dolts.
