@@ -261,6 +261,32 @@ final class PDFPageRenderer {
         return operation
     }
 
+    /// V5: sidans interna länkar (till en annan sida i filen), lästa på renderingskön. `completion` på huvudtråden.
+    func links(onPage index: Int, completion: @escaping ([PDFInternalLink]) -> Void) {
+        let worker = self.worker
+        let operation = BlockOperation {
+            let result = worker.links(index: index)
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+        operation.queuePriority = .low
+        queue.addOperation(operation)
+    }
+
+    /// V5: texten där en länk pekar (fotnoten), läst på renderingskön före allt annat, eftersom någon väntar.
+    func noteText(onPage index: Int, at point: CGPoint?, completion: @escaping (String?) -> Void) {
+        let worker = self.worker
+        let operation = BlockOperation {
+            let result = worker.noteText(index: index, point: point)
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+        operation.queuePriority = .veryHigh
+        queue.addOperation(operation)
+    }
+
     // MARK: Internt
 
     private func isValid(_ index: Int) -> Bool {
@@ -410,6 +436,20 @@ final class PDFPageRenderer {
     }
 }
 
+/// V5: en länk inom PDF:en. `rect` i sidans koordinater, `page` och `point` där den pekar (point saknas när
+/// länken pekar på hela sidan), `label` texten under länken (en fotnotssiffra är en kort text).
+struct PDFInternalLink {
+    let rect: CGRect
+    let page: Int
+    let point: CGPoint?
+    let label: String
+
+    /// En fotnotssiffra eller hänvisning som [12]: kort text under länken.
+    var isNote: Bool {
+        !label.isEmpty && label.count <= 6
+    }
+}
+
 /// Ritar sidor till bilder. Används bara inne i renderarens kö, aldrig från huvudtråden.
 private final class PDFRenderWorker {
 
@@ -432,6 +472,49 @@ private final class PDFRenderWorker {
             let rects = PDFTextRanges.rects(on: page, range: match.range)
             return rects.isEmpty ? nil : PDFPageViewController.WordMark(value: match.value, rects: rects)
         }
+    }
+
+    func links(index: Int) -> [PDFInternalLink] {
+        guard let page = document.page(at: index) else { return [] }
+        return page.annotations.prefix(300).compactMap { annotation in
+            guard annotation.type == "Link", annotation.url == nil,
+                  let destination = annotation.destination ?? (annotation.action as? PDFActionGoTo)?.destination,
+                  let target = destination.page else { return nil }
+            let targetIndex = document.index(for: target)
+            guard targetIndex >= 0, targetIndex < document.pageCount else { return nil }
+            let unspecified = CGFloat(kPDFDestinationUnspecifiedValue)
+            let point = destination.point
+            let label = page.selection(for: annotation.bounds)?.string?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return PDFInternalLink(rect: annotation.bounds, page: targetIndex,
+                                   point: point.y == unspecified ? nil : point, label: label)
+        }
+    }
+
+    /// Fotnoten där en länk pekar: raderna under punkten, till nästa not (en rad som börjar med en annan siffra).
+    func noteText(index: Int, point: CGPoint?) -> String? {
+        guard let point = point, let page = document.page(at: index) else { return nil }
+        let box = page.bounds(for: .mediaBox)
+        let top = min(point.y + 4, box.maxY)
+        let bottom = max(top - 160, box.minY)
+        guard top > bottom,
+              let raw = page.selection(for: CGRect(x: box.minX, y: bottom, width: box.width, height: top - bottom))?.string
+        else { return nil }
+        let lines = raw.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        var kept: [String] = []
+        for line in lines {
+            if !kept.isEmpty, let first = line.first, first.isNumber {
+                break
+            }
+            kept.append(line)
+            if kept.joined(separator: " ").count > 800 {
+                break
+            }
+        }
+        let text = kept.joined(separator: " ")
+        return text.isEmpty ? nil : text
     }
 
     func render(index: Int, size: CGSize, scale: CGFloat, theme: ReaderTheme) -> UIImage? {

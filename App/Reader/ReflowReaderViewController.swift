@@ -103,6 +103,8 @@ final class ReflowReaderViewController: UIViewController {
     /// V4: platserna man hoppat ifrån och Tillbaka i hörnet (G12, samma som i PDF-läsaren).
     private let backStack = ReaderBackStack<ReflowLocation>()
     private var typographyTask: Task<Void, Never>?
+    /// V5: hur lång tid det tog att hitta senaste fotnoten, till självtestet.
+    private var lastNoteMilliseconds: Int?
     private var selfTestStarted = false
 
     // Fas 4: markeringar, anteckningar, bokmärken och sökning. Koden ligger sist i filen.
@@ -1124,18 +1126,57 @@ final class ReflowReaderViewController: UIViewController {
     // MARK: Länkar
 
     private func link(at point: CGPoint) -> ReflowLink? {
+        linkHit(at: point)?.link
+    }
+
+    /// Länken under en punkt och bladet den står på.
+    private func linkHit(at point: CGPoint) -> (link: ReflowLink, page: ReflowPageViewController)? {
         for page in visiblePages where !page.isBlank {
             let local = page.view.convert(point, from: view)
             if page.view.bounds.contains(local) {
-                return page.link(at: local)
+                return page.link(at: local).map { ($0, page) }
             }
         }
         return nil
     }
 
     @objc private func handleLinkTap(_ tap: UITapGestureRecognizer) {
-        guard let link = link(at: tap.location(in: view)) else { return }
-        follow(link.url)
+        guard let hit = linkHit(at: tap.location(in: view)) else { return }
+        if hit.link.isNote, showNote(hit.link, on: hit.page) {
+            return
+        }
+        follow(hit.link.url)
+    }
+
+    /// V5: en fotnot i en ruta vid siffran. Noten letas upp i kapitelfilen i bakgrunden. Hittas den inte hoppar
+    /// boken till noten som förut. Svarar false när länken inte går till ett ankare i boken.
+    @discardableResult
+    private func showNote(_ link: ReflowLink, on page: ReflowPageViewController) -> Bool {
+        guard let content = content, link.url.isFileURL,
+              let chapter = content.chapterIndex(for: link.url),
+              let fragment = link.url.fragment.map({ $0.removingPercentEncoding ?? $0 }), !fragment.isEmpty else {
+            return false
+        }
+        let file = content.chapters[chapter].url
+        let anchor = view.convert(page.viewRect(link.rect), from: page.view)
+        let started = CACurrentMediaTime()
+        Task { @MainActor [weak self] in
+            let text = await Task.detached(priority: .userInitiated) {
+                NoteFinder.text(in: file, fragment: fragment)
+            }.value
+            guard let self = self, self.presentedViewController == nil else { return }
+            guard let text = text else {
+                AppLog.shared.write("Fotnoten hittades inte i kapitlet, hoppar dit i stället")
+                self.follow(link.url)
+                return
+            }
+            self.lastNoteMilliseconds = Int(((CACurrentMediaTime() - started) * 1000).rounded())
+            NotePopoverViewController.present(from: self, sourceView: self.view, sourceRect: anchor,
+                                              heading: "Not", text: text) { [weak self] in
+                self?.follow(link.url)
+            }
+        }
+        return true
     }
 
     /// En länk inom boken hoppar dit (med en Tillbaka-knapp). En webblänk öppnas i Safari i appen.
@@ -1311,6 +1352,10 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
         if onRibbon, gestureRecognizer is UITapGestureRecognizer {
             return false
         }
+        // V5: en notsiffra går före ett ordstreck (O4), en markering och bläddringen.
+        if !markMode, link(at: touch.location(in: view))?.isNote == true {
+            return gestureRecognizer === linkTap || gestureRecognizer === wordPress
+        }
         let onMark = markHit(at: touch.location(in: view)).map { hit in
             // O4: ett sparat ord tar trycket bara mitt på sidan, så att kanterna alltid bläddrar.
             !SavedWordMarks.isWordID(hit.id) || Self.isMiddle(touch.location(in: view).x, width: view.bounds.width)
@@ -1424,6 +1469,7 @@ extension ReflowReaderViewController {
             SelfTest.saveScreen(view, name: "04-innehall")
 
             if let link = visiblePages.flatMap({ $0.links }).first(where: { $0.url.isFileURL }) {
+                await selfTestNote(link)
                 SelfTest.log("Följer länken \(link.url.lastPathComponent)#\(link.url.fragment ?? "")")
                 follow(link.url)
                 _ = await waitUntilShown()
@@ -1498,6 +1544,33 @@ extension ReflowReaderViewController {
 
     /// G2: ett kapitel som inte går att mäta visar Kapitlet kunde inte visas och Försök igen, en krasch i
     /// webbvyn räknas som ett fel, och en minnesvarning stänger de dolda webbvyerna utom den man läser.
+    /// V5: fotnoten visas i en ruta vid siffran, och trycket på siffran går före bläddringen.
+    private func selfTestNote(_ link: ReflowLink) async {
+        guard let page = visiblePages.first(where: { $0.links.contains { $0.url == link.url } }) else {
+            SelfTest.log("FEL: hittade inte bladet med fotnoten")
+            return
+        }
+        let center = view.convert(CGPoint(x: page.viewRect(link.rect).midX, y: page.viewRect(link.rect).midY), from: page.view)
+        let tapGoesToLink = self.link(at: center)?.isNote == true
+        SelfTest.log("Fotnoten (V5): länken räknas som not \(link.isNote ? "ja" : "FEL, nej"), trycket på siffran hittar noten "
+                     + "\(tapGoesToLink ? "ja" : "FEL, nej")")
+        lastNoteMilliseconds = nil
+        showNote(link, on: page)
+        for _ in 0..<40 where !(presentedViewController is NotePopoverViewController) {
+            await pause(0.1)
+        }
+        if let note = presentedViewController as? NotePopoverViewController {
+            await pause(0.5)
+            SelfTest.log("Fotnoten i rutan: \"\(note.noteText.prefix(80))\" efter \(lastNoteMilliseconds.map { "\($0)" } ?? "?") ms, "
+                         + "\(Int(note.preferredContentSize.width)) x \(Int(note.preferredContentSize.height)) punkter")
+            SelfTest.saveScreen(note.view, name: "04b-fotnot")
+            dismiss(animated: false)
+            await pause(0.3)
+        } else {
+            SelfTest.log("FEL: fotnoten visades inte i en ruta")
+        }
+    }
+
     private func selfTestBrokenChapter() async {
         guard let renderer = renderer, let content = content, content.chapters.count > 4 else { return }
         let start = currentLocation()

@@ -11,6 +11,8 @@ struct ReflowPage: Hashable {
 struct ReflowLink {
     let rect: CGRect
     let url: URL
+    /// V5: en fotnotssiffra eller hänvisning, som visas i en ruta i stället för att boken hoppar.
+    var isNote = false
 }
 
 /// En färdig sidbild och länkarna på sidan.
@@ -729,7 +731,7 @@ enum ReflowValues {
                   let rect = rect(from: entry) else {
                 return nil
             }
-            return ReflowLink(rect: rect, url: url)
+            return ReflowLink(rect: rect, url: url, isNote: entry["note"] as? Bool ?? false)
         }
     }
 

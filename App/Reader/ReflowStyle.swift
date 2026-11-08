@@ -254,6 +254,21 @@ enum ReflowStyle {
       // flyttas bara i sidled med den.
       var linkCache = null;
 
+      // V5: en fotnotssiffra eller hänvisning (epub:type noteref, role doc-noteref, eller en länk inom boken
+      // vars text bara är en siffra eller ett tecken som * och [12]).
+      function isNoteRef(anchor, href) {
+        var type = (anchor.getAttributeNS('http://www.idpf.org/2007/ops', 'type') || anchor.getAttribute('epub:type') || '')
+          + ' ' + (anchor.getAttribute('role') || '');
+        if (/noteref|biblioref/.test(type)) {
+          return true;
+        }
+        if (href.indexOf('#') < 0) {
+          return false;
+        }
+        var text = (anchor.textContent || '').replace(/\s+/g, '');
+        return /^[\[(]?(\d{1,3}|[*†‡§]{1,3})[\])]?$/.test(text);
+      }
+
       function allLinks() {
         var w = pageWidth();
         var h = window.innerHeight;
@@ -269,13 +284,14 @@ enum ReflowStyle {
           if (typeof href !== 'string' || !href) {
             continue;
           }
+          var note = isNoteRef(anchors[i], href);
           var rects = anchors[i].getClientRects();
           for (var k = 0; k < rects.length; k++) {
             var r = rects[k];
             if (r.width < 1 || r.height < 1 || r.bottom <= 0 || r.top >= h) {
               continue;
             }
-            items.push({ x: r.left + offset, y: r.top, w: r.width, h: r.height, href: href });
+            items.push({ x: r.left + offset, y: r.top, w: r.width, h: r.height, href: href, note: note });
           }
         }
         linkCache = { key: key, items: items };
@@ -293,7 +309,7 @@ enum ReflowStyle {
           if (x + item.w <= 0 || x >= w) {
             continue;
           }
-          out.push({ x: x, y: item.y, w: item.w, h: item.h, href: item.href });
+          out.push({ x: x, y: item.y, w: item.w, h: item.h, href: item.href, note: item.note });
         }
         return out;
       }

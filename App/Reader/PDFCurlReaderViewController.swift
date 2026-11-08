@@ -102,6 +102,11 @@ final class PDFCurlReaderViewController: UIViewController {
     private var wordMarksVersion = -1
     /// Punkten i sidans koordinater där ordet under fingret senast togs fram (G6).
     private var lastWordProbe: CGPoint?
+    /// V5: sidornas interna länkar, lästa på renderingskön, och trycket på dem.
+    private var linksCache: [Int: [PDFInternalLink]] = [:]
+    private var linksInFlight = Set<Int>()
+    private var linkTap: UITapGestureRecognizer?
+    private var lastNoteMilliseconds: Int?
     /// Hur många gånger ordet under fingret togs fram och hur många gånger det kunde hoppas över (G6).
     private(set) var wordProbes = 0
     private(set) var skippedWordProbes = 0
@@ -530,6 +535,11 @@ final class PDFCurlReaderViewController: UIViewController {
         let press = WordPressGesture.makeRecognizer(target: self, action: #selector(handleWordPress(_:)), delegate: self)
         view.addGestureRecognizer(press)
 
+        let link = UITapGestureRecognizer(target: self, action: #selector(handleLinkTap(_:)))
+        link.delegate = self
+        view.addGestureRecognizer(link)
+        linkTap = link
+
         zoomTap = zoom
         chromeTap = chrome
         wordPress = press
@@ -629,6 +639,61 @@ final class PDFCurlReaderViewController: UIViewController {
 
     @objc private func sliderReleased() {
         hop(to: Int(bottomBar.slider.value.rounded()))
+    }
+
+    // MARK: Fotnoter och länkar (V5)
+
+    /// Läser sidans interna länkar på renderingskön en gång. Kamerafoton har inga, och då händer inget.
+    private func loadLinks(onPage index: Int) {
+        guard linksCache[index] == nil, linksInFlight.insert(index).inserted else { return }
+        renderer.links(onPage: index) { [weak self] links in
+            self?.linksInFlight.remove(index)
+            self?.linksCache[index] = links
+        }
+    }
+
+    /// Länken under en punkt och sidan den står på.
+    private func linkHit(at point: CGPoint) -> (link: PDFInternalLink, page: PDFPageViewController)? {
+        for page in visiblePages where !page.isBlank {
+            guard let links = linksCache[page.pageIndex], !links.isEmpty else { continue }
+            let local = page.view.convert(point, from: view)
+            guard page.view.bounds.contains(local) else { continue }
+            for link in links {
+                if let shown = page.viewRect(forPageRect: link.rect), shown.insetBy(dx: -8, dy: -6).contains(local) {
+                    return (link, page)
+                }
+            }
+        }
+        return nil
+    }
+
+    @objc private func handleLinkTap(_ tap: UITapGestureRecognizer) {
+        guard let hit = linkHit(at: tap.location(in: view)) else { return }
+        openLink(hit.link, on: hit.page)
+    }
+
+    /// En fotnotssiffra visar noten i en ruta (texten läses på renderingskön). Andra länkar, och noter vars text
+    /// inte går att läsa, hoppar dit som ett vanligt hopp med Tillbaka.
+    private func openLink(_ link: PDFInternalLink, on page: PDFPageViewController) {
+        guard link.isNote, presentedViewController == nil else {
+            hop(to: link.page)
+            return
+        }
+        let anchor = page.viewRect(forPageRect: link.rect).map { view.convert($0, from: page.view) }
+            ?? CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+        let started = CACurrentMediaTime()
+        renderer.noteText(onPage: link.page, at: link.point) { [weak self] text in
+            guard let self = self, self.presentedViewController == nil else { return }
+            guard let text = text else {
+                self.hop(to: link.page)
+                return
+            }
+            self.lastNoteMilliseconds = Int(((CACurrentMediaTime() - started) * 1000).rounded())
+            NotePopoverViewController.present(from: self, sourceView: self.view, sourceRect: anchor,
+                                              heading: "Not \(link.label)", text: text) { [weak self] in
+                self?.hop(to: link.page)
+            }
+        }
     }
 
     // MARK: Miniatyrer (V3)
@@ -1026,6 +1091,14 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
         if onRibbon, gestureRecognizer is UITapGestureRecognizer {
             return false
         }
+        // V5: en länk inom filen (en fotnotssiffra) går före ett ordstreck (O4), en markering och bläddringen.
+        let onLink = !markMode && linkHit(at: touch.location(in: view)) != nil
+        if gestureRecognizer === linkTap {
+            return onLink
+        }
+        if onLink {
+            return gestureRecognizer === wordPress
+        }
         let onMark = markHit(at: touch.location(in: view)).map { hit in
             // O4: ett sparat ord tar trycket bara mitt på sidan, så att kanterna alltid bläddrar.
             !SavedWordMarks.isWordID(hit.id) || Self.isMiddle(touch.location(in: view).x, width: view.bounds.width)
@@ -1155,6 +1228,7 @@ extension PDFCurlReaderViewController {
         applyWordMarks(to: page)
         page.isBookmarked = bookmarkedPages.contains(page.pageIndex)
         page.showsRibbonHint = !chromeHidden
+        loadLinks(onPage: page.pageIndex)
         if marksCache[page.pageIndex]?.isEmpty == false {
             markSetupTimes = Array((markSetupTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(200))
         }
@@ -2024,6 +2098,39 @@ extension PDFCurlReaderViewController {
         backStack.goBack()
         _ = await waitForImages()
         SelfTest.log("Tillbaka från miniatyren: sidan \(currentIndex + 1) (ska vara \(start + 1))")
+        await selfTestNote()
+    }
+
+    /// V5: fotnotssiffran på sida 3 i testboken har en intern länk till noten nederst på sida 8.
+    fileprivate func selfTestNote() async {
+        jump(to: 2)
+        _ = await waitForImages()
+        for _ in 0..<40 where linksCache[2] == nil {
+            await pause(0.1)
+        }
+        guard let link = linksCache[2]?.first, let page = visiblePages.first(where: { $0.pageIndex == 2 }),
+              let shown = page.viewRect(forPageRect: link.rect) else {
+            SelfTest.log("Fotnoten (V5): FEL, ingen intern länk på sida 3 (länkar: \(linksCache[2]?.count ?? -1))")
+            return
+        }
+        let center = view.convert(CGPoint(x: shown.midX, y: shown.midY), from: page.view)
+        SelfTest.log("Fotnoten (V5): länk på sida 3 med texten \"\(link.label)\" till sidan \(link.page + 1), "
+                     + "not \(link.isNote ? "ja" : "FEL, nej"), trycket hittar länken \(linkHit(at: center) != nil ? "ja" : "FEL, nej")")
+        lastNoteMilliseconds = nil
+        openLink(link, on: page)
+        for _ in 0..<40 where !(presentedViewController is NotePopoverViewController) {
+            await pause(0.1)
+        }
+        if let note = presentedViewController as? NotePopoverViewController {
+            await pause(0.5)
+            SelfTest.log("Fotnoten i rutan: \"\(note.noteText.prefix(80))\" efter \(lastNoteMilliseconds.map { "\($0)" } ?? "?") ms")
+            SelfTest.saveScreen(note.view, name: "06e-fotnot")
+            SelfTest.saveScreen(view.window ?? view, name: "06f-fotnot-sidan")
+            dismiss(animated: false)
+            await pause(0.3)
+        } else {
+            SelfTest.log("FEL: fotnoten visades inte i en ruta")
+        }
     }
 
     /// G6: markeringarnas rutor är sparade, saknade rutor räknas på renderingskön, sidor med markeringar
