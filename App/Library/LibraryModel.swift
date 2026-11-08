@@ -16,7 +16,7 @@ struct ReadingStatus: Equatable {
 }
 
 /// En bok som biblioteket visar den: titel, författare, andel läst, när den lästes senast och kurser.
-struct LibraryItem: Equatable {
+struct ShelfItem: Equatable {
     let book: Book
     let title: String
     let author: String
@@ -88,7 +88,7 @@ enum LibraryFilter: String, CaseIterable {
 /// Bibliotekets logik utan vyer, så att den går att testa (XCTest).
 enum LibraryLogic {
 
-    static func filter(_ items: [LibraryItem], _ filter: LibraryFilter) -> [LibraryItem] {
+    static func filter(_ items: [ShelfItem], _ filter: LibraryFilter) -> [ShelfItem] {
         switch filter {
         case .all: return items
         case .reading: return items.filter(\.isReading)
@@ -97,8 +97,8 @@ enum LibraryLogic {
         }
     }
 
-    static func sort(_ items: [LibraryItem], by sort: LibrarySort) -> [LibraryItem] {
-        func byTitle(_ a: LibraryItem, _ b: LibraryItem) -> Bool {
+    static func sort(_ items: [ShelfItem], by sort: LibrarySort) -> [ShelfItem] {
+        func byTitle(_ a: ShelfItem, _ b: ShelfItem) -> Bool {
             let order = a.title.localizedStandardCompare(b.title)
             return order == .orderedSame ? a.book.path < b.book.path : order == .orderedAscending
         }
@@ -118,7 +118,7 @@ enum LibraryLogic {
     }
 
     /// Sökning på titel, författare och mapp, utan hänsyn till skiftläge och accenter.
-    static func search(_ items: [LibraryItem], _ text: String) -> [LibraryItem] {
+    static func search(_ items: [ShelfItem], _ text: String) -> [ShelfItem] {
         let words = text.lowercased().split(separator: " ").map(String.init).filter { !$0.isEmpty }
         guard !words.isEmpty else { return items }
         return items.filter { item in
@@ -133,12 +133,12 @@ enum LibraryLogic {
     }
 
     /// Fortsätt läsa (B2): boken som lästes senast och inte är utläst.
-    static func continueReading(_ items: [LibraryItem]) -> LibraryItem? {
+    static func continueReading(_ items: [ShelfItem]) -> ShelfItem? {
         items.filter { $0.lastRead > 0 && !$0.finished }.max { $0.lastRead < $1.lastRead }
     }
 
     /// "Sida 45 av 312, 267 sidor kvar", eller "28 %, 4 sidor kvar i kapitlet". Aldrig tid (Edvins beslut).
-    static func statusLine(_ item: LibraryItem) -> String {
+    static func statusLine(_ item: ShelfItem) -> String {
         let percent = "\(Int((item.progress * 100).rounded(.down))) %"
         if item.pages > 0, item.page > 0 {
             let left = max(item.pages - item.page, 0)

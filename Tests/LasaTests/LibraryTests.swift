@@ -7,7 +7,7 @@ final class LibraryLogicTests: XCTestCase {
 
     private func item(_ path: String, title: String, progress: Double = 0, finished: Bool = false,
                       added: Double = 0, lastRead: Double = 0, page: Int = 0, pages: Int = 0,
-                      chapterLeft: Int = -1) -> LibraryItem {
+                      chapterLeft: Int = -1) -> ShelfItem {
         let url = URL(fileURLWithPath: "/tmp/Böcker/" + path)
         var record = BookRecord(id: path, sha256: "", file: path, title: (path as NSString).deletingPathExtension,
                                 size: 1, modified: 1, added: added, missing: false)
@@ -17,10 +17,10 @@ final class LibraryLogicTests: XCTestCase {
         record.page = page
         record.pages = pages
         record.chapterLeft = chapterLeft
-        return LibraryItem(book: Book(url: url, id: path, path: path), record: record, lastRead: lastRead)
+        return ShelfItem(book: Book(url: url, id: path, path: path), record: record, lastRead: lastRead)
     }
 
-    private lazy var sample: [LibraryItem] = [
+    private lazy var sample: [ShelfItem] = [
         item("a.pdf", title: "Retorikens grunder", progress: 0.28, added: 10, lastRead: 500, page: 87, pages: 312),
         item("b.epub", title: "Classical Rhetoric", progress: 0.09, added: 30, lastRead: 900),
         item("c.pdf", title: "Att analysera argument", added: 40),

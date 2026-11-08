@@ -166,7 +166,7 @@ final class BookCell: UICollectionViewCell {
         fatalError("init(coder:) används inte")
     }
 
-    func configure(_ item: LibraryItem, cover content: CoverView.Content, stripe: UIColor?, palette: Palette) {
+    func configure(_ item: ShelfItem, cover content: CoverView.Content, stripe: UIColor?, palette: Palette) {
         let footer = item.author.isEmpty ? item.book.kindLabel : item.author
         cover.configure(content, title: item.title, footer: footer, stripe: stripe, palette: palette)
         titleLabel.text = item.title
@@ -261,7 +261,7 @@ final class ContinueCell: UICollectionViewCell {
         onContinue?()
     }
 
-    func configure(_ item: LibraryItem, cover content: CoverView.Content, stripe: UIColor?, palette: Palette) {
+    func configure(_ item: ShelfItem, cover content: CoverView.Content, stripe: UIColor?, palette: Palette) {
         card.backgroundColor = palette.surface
         card.layer.borderColor = palette.rule.cgColor
         cover.configure(content, title: item.title, footer: item.author.isEmpty ? item.book.kindLabel : item.author,

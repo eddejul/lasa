@@ -14,9 +14,9 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     /// Alla böcker som känns igen i Böcker (också för självtestet).
     private(set) var books: [Book] = []
     /// Alla böcker som biblioteket visar dem, och de som syns med filtret och sorteringen.
-    private(set) var allItems: [LibraryItem] = []
-    private(set) var items: [LibraryItem] = []
-    private(set) var continueItem: LibraryItem?
+    private(set) var allItems: [ShelfItem] = []
+    private(set) var items: [ShelfItem] = []
+    private(set) var continueItem: ShelfItem?
     private var records: [String: BookRecord] = [:]
     private var didStartSelfTest = false
 
@@ -162,7 +162,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         records = Dictionary(BookRegistry.shared.records().map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let books = showsEmptyForSelfTest ? [] : self.books
         allItems = books.map { book in
-            LibraryItem(book: book, record: records[book.id],
+            ShelfItem(book: book, record: records[book.id],
                         lastRead: LibraryStore.shared.positionDate(for: book)?.timeIntervalSince1970 ?? 0)
         }
         continueItem = LibraryLogic.continueReading(allItems)
@@ -193,7 +193,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         }
     }
 
-    private func coverContent(for item: LibraryItem) -> CoverView.Content {
+    private func coverContent(for item: ShelfItem) -> CoverView.Content {
         let record = records[item.book.id]
         if let image = CoverStore.shared.image(for: item.book, record: record) {
             return .image(image)
@@ -557,7 +557,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         collectionView.reloadData()
     }
 
-    private func item(at indexPath: IndexPath) -> LibraryItem? {
+    private func item(at indexPath: IndexPath) -> ShelfItem? {
         switch Section(rawValue: indexPath.section) {
         case .continueReading: return continueItem
         case .books: return indexPath.item < items.count ? items[indexPath.item] : nil
@@ -604,7 +604,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     }
 
     /// Byt namn, Välj omslag (PDF), Markera som läst och Ta bort.
-    func menu(for item: LibraryItem) -> UIMenu {
+    func menu(for item: ShelfItem) -> UIMenu {
         let book = item.book
         var actions: [UIMenuElement] = [
             UIAction(title: "Byt namn", image: UIImage(systemName: "pencil")) { [weak self] _ in
@@ -630,7 +630,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         return UIMenu(title: item.title, children: actions)
     }
 
-    private func rename(_ item: LibraryItem) {
+    private func rename(_ item: ShelfItem) {
         let record = records[item.book.id]
         let alert = UIAlertController(title: "Byt namn", message: nil, preferredStyle: .alert)
         alert.addTextField { field in
@@ -664,7 +664,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         present(alert, animated: true)
     }
 
-    private func chooseCover(_ item: LibraryItem) {
+    private func chooseCover(_ item: ShelfItem) {
         guard let record = records[item.book.id] else { return }
         let picker = CoverPageViewController(book: item.book, selected: max(record.coverPage, 0)) { [weak self] page in
             if let old = BookRegistry.shared.record(id: item.book.id) {
@@ -678,7 +678,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         present(navigation, animated: true)
     }
 
-    private func confirmDelete(_ item: LibraryItem) {
+    private func confirmDelete(_ item: ShelfItem) {
         let alert = UIAlertController(title: "Ta bort \(item.title)?",
                                       message: "Filen tas bort ur Sensus. Markeringar, anteckningar och bokmärken sparas "
                                         + "och kommer tillbaka om du lägger in samma fil igen.",
