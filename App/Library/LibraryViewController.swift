@@ -895,7 +895,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             case .week:
                 guard count > 0 else { return empty }
                 let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1),
-                                                  heightDimension: .absolute(ReadingWeekCell.height))
+                                                  heightDimension: .absolute(narrow ? ReadingWeekCell.compactHeight
+                                                                                : ReadingWeekCell.height))
                 let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
                 let result = NSCollectionLayoutSection(group: group)
                 result.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: margin, bottom: 8, trailing: margin)

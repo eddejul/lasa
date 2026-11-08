@@ -303,6 +303,8 @@ final class ReadingWeekCell: UICollectionViewCell {
 
     static let id = "lasvecka"
     static let height: CGFloat = 112
+    /// Smal bredd (iPhone): texten får fler rader.
+    static let compactHeight: CGFloat = 150
 
     var onGoal: (() -> Void)?
 
@@ -320,6 +322,7 @@ final class ReadingWeekCell: UICollectionViewCell {
         summary.font = .preferredFont(forTextStyle: .subheadline)
         summary.numberOfLines = 2
         goal.font = .preferredFont(forTextStyle: .footnote)
+        goal.numberOfLines = 2
         let text = UIStackView(arrangedSubviews: [title, summary, goal])
         text.axis = .vertical
         text.spacing = 3
@@ -329,12 +332,16 @@ final class ReadingWeekCell: UICollectionViewCell {
         row.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(row)
         bars.translatesAutoresizingMaskIntoConstraints = false
+        let preferredWidth = bars.widthAnchor.constraint(equalToConstant: 196)
+        preferredWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
+            preferredWidth,
             row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             row.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
             row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-            bars.widthAnchor.constraint(equalToConstant: 196),
+            bars.widthAnchor.constraint(lessThanOrEqualToConstant: 196),
+            bars.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.4),
             bars.heightAnchor.constraint(equalToConstant: 84),
         ])
         isAccessibilityElement = true
@@ -359,9 +366,9 @@ final class ReadingWeekCell: UICollectionViewCell {
         goal.textColor = palette.inkSoft
         let today = week.days[safe: week.todayIndex]?.seconds ?? 0
         if goalMinutes > 0 {
-            goal.text = "I dag \(ReadingWeek.duration(today)) av \(goalMinutes) min. Tryck för att ändra dagsmålet."
+            goal.text = "I dag \(ReadingWeek.duration(today)) av \(goalMinutes) min."
         } else {
-            goal.text = "I dag \(ReadingWeek.duration(today)). Tryck för att sätta ett dagsmål."
+            goal.text = "I dag \(ReadingWeek.duration(today)). Tryck för dagsmål."
         }
         bars.week = week
         bars.goalSeconds = Double(goalMinutes * 60)
