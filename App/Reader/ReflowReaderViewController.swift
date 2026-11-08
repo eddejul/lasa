@@ -1557,8 +1557,14 @@ extension ReflowReaderViewController {
     /// O4: ordet som just slogs upp är sparat och ska ha fått ett streck på sidan, och ett tryck på strecket
     /// ska hitta ordet.
     fileprivate func selfTestWordMarks(name: String) async {
+        // Ordet som slogs upp kan vara ett småord, som inte får något streck. Två ord ur testböckerna sparas
+        // därför också, som om de slagits upp.
+        for word in ["kunskap", "vacker"] {
+            UserWords.shared.save(word: word, lemma: word, language: .swedish, sentence: word, book: book.title,
+                                  pageIndex: 0, bookID: book.id)
+        }
         var shown: [ReflowMarkRect] = []
-        for _ in 0..<25 {
+        for _ in 0..<30 {
             await pause(0.2)
             shown = visiblePages.flatMap { $0.marks }.filter { SavedWordMarks.isWordID($0.id) }
             if !shown.isEmpty {
