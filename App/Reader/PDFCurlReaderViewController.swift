@@ -61,10 +61,23 @@ final class PDFCurlReaderViewController: UIViewController {
     private var contentInsets: UIEdgeInsets = .zero
 
     // Fas 4: markeringar, anteckningar, bokmärken och sökning. Koden ligger sist i filen.
-    private var markMode = false
-    private var markDrag: UILongPressGestureRecognizer?
-    private var markTap: UITapGestureRecognizer?
-    private var markBar: HighlightModeBar?
+    /// Markeringsläget, gemensamt med EPUB-läsaren (G12). Skapas när gesterna läggs in.
+    private var marking: MarkMode?
+    private var markMode: Bool {
+        marking?.isOn ?? false
+    }
+
+    private var markDrag: UILongPressGestureRecognizer? {
+        marking?.drag
+    }
+
+    private var markTap: UITapGestureRecognizer? {
+        marking?.tap
+    }
+
+    private var markBar: HighlightModeBar? {
+        marking?.bar
+    }
     private var markSelection: PDFMarkSelection?
     private var marksCache: [Int: [PDFPageViewController.Mark]] = [:]
     /// Bokens markeringar per sida, inlästa en gång (G6), så att en sida som viks fram inte frågar databasen.
@@ -869,19 +882,15 @@ extension PDFCurlReaderViewController {
     }
 
     fileprivate func setUpMarkGestures() {
-        let drag = UILongPressGestureRecognizer(target: self, action: #selector(handleMarkDrag(_:)))
-        drag.minimumPressDuration = 0
-        drag.allowableMovement = .greatestFiniteMagnitude
-        drag.delegate = self
-        drag.isEnabled = false
-        view.addGestureRecognizer(drag)
-
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleMarkTap(_:)))
-        tap.delegate = self
-        view.addGestureRecognizer(tap)
-
-        markDrag = drag
-        markTap = tap
+        let marking = MarkMode(host: view, target: self, drag: #selector(handleMarkDrag(_:)),
+                               tap: #selector(handleMarkTap(_:)), delegate: self)
+        marking.onTurn = { [weak self] forward in
+            self?.turnPage(forward: forward)
+        }
+        marking.onDone = { [weak self] in
+            self?.setMarkMode(false)
+        }
+        self.marking = marking
         bookmarksChanged()
     }
 
@@ -986,34 +995,16 @@ extension PDFCurlReaderViewController {
 
     /// Markeringsläget: sidan står still, och fingret markerar det det drar över.
     fileprivate func setMarkMode(_ on: Bool) {
-        guard on != markMode else { return }
-        markMode = on
-        for recognizer in pageController?.gestureRecognizers ?? [] {
-            recognizer.isEnabled = !on
-        }
-        chromeTap?.isEnabled = !on
-        zoomTap?.isEnabled = !on
-        wordPress?.isEnabled = !on
-        markDrag?.isEnabled = on
+        let others: [UIGestureRecognizer?] = [chromeTap, zoomTap, wordPress]
+        let paused = (pageController?.gestureRecognizers ?? []) + others.compactMap { $0 }
+        guard let marking = marking, marking.setOn(on, pausing: paused) else { return }
         if on {
             setChromeHidden(true, animated: true)
-            let bar = HighlightModeBar(color: ReaderSettings.highlightColor)
-            bar.onColor = { color in
-                ReaderSettings.highlightColor = color
-            }
-            bar.onTurn = { [weak self] forward in
-                self?.turnPage(forward: forward)
-            }
-            bar.onDone = { [weak self] in
-                self?.setMarkMode(false)
-            }
-            ReaderMenus.installModeBar(bar, in: view)
-            markBar = bar
+            marking.showBar()
         } else {
             markSelection?.page.clearPreview()
             markSelection = nil
-            markBar?.removeFromSuperview()
-            markBar = nil
+            marking.removeBar()
         }
     }
 
