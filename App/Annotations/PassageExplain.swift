@@ -513,6 +513,18 @@ final class ExplainViewController: UIViewController {
         row.alignment = .center
         stack.addArrangedSubview(row)
         stack.addArrangedSubview(quoteLabel())
+        fitPopover()
+    }
+
+    /// Rutan som popover (iPad) blir lika hög som innehållet, mellan 220 och 620 punkter.
+    private func fitPopover() {
+        guard let navigation = navigationController, navigation.modalPresentationStyle == .popover else { return }
+        let width: CGFloat = 440
+        let fitting = stack.systemLayoutSizeFitting(
+            CGSize(width: width - 40, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let height = min(max(fitting.height + 36 + navigation.navigationBar.frame.height, 220), 620)
+        navigation.preferredContentSize = CGSize(width: width, height: ceil(height))
     }
 
     private func show(failure: AIClient.Failure) {
@@ -539,6 +551,7 @@ final class ExplainViewController: UIViewController {
             })
         }
         stack.addArrangedSubview(footer(cached: false))
+        fitPopover()
     }
 
     private func show(_ explanation: PassageExplain.Explanation, cached: Bool) {
@@ -582,6 +595,7 @@ final class ExplainViewController: UIViewController {
             }
         }
         stack.addArrangedSubview(footer(cached: cached))
+        fitPopover()
     }
 
     /// Visar svaret på kontrollfrågan, till självtestets bild.

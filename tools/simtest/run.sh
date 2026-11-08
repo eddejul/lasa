@@ -127,7 +127,12 @@ SUMMARY
 echo "== ai"
 python3 tools/simtest/mock_gemini.py 54322 "$OUT/mock-gemini.json" &
 GEMINI=$!
-sleep 1
+# Python kan ta en halv minut att starta på byggservern: vänta tills servern svarar (första
+# körningen fastnade 35 sekunder i anslutningen).
+for _ in $(seq 1 60); do
+  curl -s -o /dev/null http://127.0.0.1:54322/ && break
+  sleep 1
+done
 rm -f "$DATA/Documents/selftest/ai.klar"
 xcrun simctl launch "$UDID" "$BUNDLE" -LasaSelfTest ai -LasaGeminiURL http://127.0.0.1:54322
 waited=0

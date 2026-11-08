@@ -38,8 +38,11 @@ enum AISelfTest {
         }
 
         // Markeringar att förklara: ett svenskt stycke (A), ett engelskt med egen anteckning (B) och en PDF-sida (C).
+        let englishIndex = content.chapters.indices.first {
+            content.title(ofChapter: $0)?.contains("English") == true
+        } ?? 3
         guard let a = highlight(in: content.chapters[1].url, book: epub, section: 1, paragraph: 1),
-              var b = highlight(in: content.chapters[3].url, book: epub, section: 3, paragraph: 1),
+              var b = highlight(in: content.chapters[englishIndex].url, book: epub, section: englishIndex, paragraph: 1),
               let c = pdfHighlight(pdf) else {
             SelfTest.log("FEL: kunde inte göra testmarkeringarna")
             SelfTest.finish()
@@ -93,8 +96,9 @@ enum AISelfTest {
                      + "\(AIClient.callsToday), förklaringar i anteckningen \(count(PassageExplain.noteHeading, in: noteA))")
         SelfTest.log("Anteckning A börjar: \(noteA.prefix(120).replacingOccurrences(of: "\n", with: " / "))")
 
-        let english = await explain(b, book: epub, chapter: content.title(ofChapter: 3),
-                                    source: .chapter(content.chapters[3].url), navigation: navigation, photo: nil)
+        let english = await explain(b, book: epub, chapter: content.title(ofChapter: englishIndex),
+                                    source: .chapter(content.chapters[englishIndex].url), navigation: navigation,
+                                    photo: nil)
         navigation.popToRootViewController(animated: false)
         let noteB = AnnotationStore.shared.highlight(id: b.id)?.note ?? ""
         SelfTest.log("Svar B (engelska, egen anteckning): \(english.stateText), egen text först "
