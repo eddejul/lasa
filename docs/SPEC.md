@@ -232,6 +232,14 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Utseenderutan (U2):** Aa har bakgrunderna och, för EPUB och text, storlek, typsnitt, marginal, radavstånd, justering och Återställ. Raden hålls till ungefär 66 tecken, radavståndet är 1,5 och justerade stycken avstavas på bokens språk. PDF har bakgrunderna och Zooma sidan.
 * **Databasrättningar ur granskningen:** säkerhetskopiorna rensas per dag och aldrig kopian före uppdateringen eller den som återställts, synken väntar till nästa start efter en återställning, och böcker från före bokregistret känns igen på storlek och ändringstid.
 
+### 6.10 Våg 4 (8 november 2026)
+
+* **Biblioteket (B1, B2):** ett rutnät med omslag, riktiga titlar och författare ur filerna och en tunn stapel för hur långt man läst. Överst Fortsätt läsa med kapitel, sida och sidor kvar (ingen tid kvar). Filter (Alla, Pågående, Olästa, Utlästa) och Sortera (Senast läst, Titel, Tillagd). Håll fingret på ett omslag för Byt namn, Välj omslag (PDF), Lägg i kurs, Markera som läst och Ta bort.
+* **Kurser (B3):** sidopanel med Alla böcker, Läser nu, kurserna (mappar i Böcker blir kurser av sig själva), Repetera med antalet ord som väntar, Sparade ord och Om ordboken, och ett sökfält. En kurs kan få en färg som syns som rand på omslagen. Kurserna synkas inte än.
+* **Första start (B5):** en ny installation utan böcker får en välkomstsida och en exempelbok som lär ut bläddring, ordet under fingret och markering, och kortet Gör mer med Sensus (Förklaring med AI). Ett tomt bibliotek har Välj filer, Öppna från Filer och Prova exempelboken.
+* **iPhone (U9) och rörelser (U10):** två kolumner och en flikrad längst ner på iPhone. Boken öppnas från omslaget och stängs in i det, omslaget trycks ner lite, och med Minska rörelse blir det toningar.
+* **Databasrättningar 2:** dagens säkerhetskopior gallras inte bort, synken står still efter en återställning tills den startas i Inställningar, en fil med samma namn som en borttagen bok ger frågan Ny version, och bokmärkesbandet tar bort med Ångra.
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.
