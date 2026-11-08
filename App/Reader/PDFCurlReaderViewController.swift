@@ -27,7 +27,22 @@ final class PDFCurlReaderViewController: UIViewController {
 
     /// Sidan man läser. I ett uppslag en av de två sidorna som syns.
     private var currentIndex: Int
-    private var chromeHidden = false
+    /// Menyraden, gemensam med EPUB-läsaren (G12).
+    private lazy var chrome: ReaderChrome = {
+        let zoom = UIBarButtonItem(image: UIImage(systemName: "plus.magnifyingglass"),
+                                   style: .plain,
+                                   target: self,
+                                   action: #selector(zoomCurrentPage))
+        zoom.accessibilityLabel = "Zooma sidan"
+        return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: zoom, theme: theme,
+                            actions: .init(contents: #selector(showContents), search: #selector(showSearch),
+                                           mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark)),
+                            onTheme: { [weak self] option in self?.setTheme(option) })
+    }()
+
+    private var chromeHidden: Bool {
+        chrome.isHidden
+    }
 
     private let bottomBar = ReaderBottomBar()
     private var chromeTap: UITapGestureRecognizer?
@@ -35,9 +50,10 @@ final class PDFCurlReaderViewController: UIViewController {
     private var wordPress: UILongPressGestureRecognizer?
     private var pressedWord: PressedWord?
     private weak var wordBubble: PaddedLabel?
-    private weak var toastLabel: UILabel?
-    private var contentsItem: UIBarButtonItem?
-    private var themeItem: UIBarButtonItem?
+
+    private var contentsItem: UIBarButtonItem? {
+        chrome.contentsItem
+    }
 
     private var lastLayoutSize: CGSize = .zero
     private var seenTopInset: CGFloat = 0
@@ -65,9 +81,17 @@ final class PDFCurlReaderViewController: UIViewController {
     private(set) var skippedWordProbes = 0
     private var bookmarks: [Bookmark] = []
     private var bookmarkedPages: Set<Int> = []
-    private var searchItem: UIBarButtonItem?
-    private var markItem: UIBarButtonItem?
-    private var bookmarkItem: UIBarButtonItem?
+    private var searchItem: UIBarButtonItem? {
+        chrome.searchItem
+    }
+
+    private var markItem: UIBarButtonItem? {
+        chrome.markItem
+    }
+
+    private var bookmarkItem: UIBarButtonItem? {
+        chrome.bookmarkItem
+    }
     /// Bokens nyckel i sökregistret (G11).
     private lazy var searchKey = SearchIndex.Key.make(for: book, chapters: nil)
     private lazy var bookSearch = BookSearch(source: .pdf(book.url), index: searchKey)
@@ -357,41 +381,7 @@ final class PDFCurlReaderViewController: UIViewController {
     // MARK: Menyn
 
     private func setUpNavigationBar() {
-        // Menyraden ligger ovanpå sidan med en egen bakgrund, så att knapparna syns mot texten.
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithDefaultBackground()
-        navigationItem.standardAppearance = appearance
-        navigationItem.scrollEdgeAppearance = appearance
-        navigationItem.compactAppearance = appearance
-
-        let contents = UIBarButtonItem(image: UIImage(systemName: "list.bullet"),
-                                       style: .plain,
-                                       target: self,
-                                       action: #selector(showContents))
-        contents.accessibilityLabel = "Innehåll"
-
-        let zoom = UIBarButtonItem(image: UIImage(systemName: "plus.magnifyingglass"),
-                                   style: .plain,
-                                   target: self,
-                                   action: #selector(zoomCurrentPage))
-        zoom.accessibilityLabel = "Zooma sidan"
-
-        let themeButton = UIBarButtonItem(title: nil,
-                                          image: UIImage(systemName: "circle.lefthalf.fill"),
-                                          primaryAction: nil,
-                                          menu: themeMenu())
-        themeButton.accessibilityLabel = "Bakgrund"
-
-        let annotationItems = ReaderMenus.annotationItems(target: self,
-                                                          search: #selector(showSearch),
-                                                          mark: #selector(toggleMarkMode),
-                                                          bookmark: #selector(toggleBookmark))
-        searchItem = annotationItems[0]
-        markItem = annotationItems[1]
-        bookmarkItem = annotationItems[2]
-        navigationItem.rightBarButtonItems = [themeButton, zoom] + annotationItems + [contents]
-        contentsItem = contents
-        themeItem = themeButton
+        chrome.install()
     }
 
     private func setUpBottomBar() {
@@ -442,14 +432,7 @@ final class PDFCurlReaderViewController: UIViewController {
     }
 
     private func setChromeHidden(_ hidden: Bool, animated: Bool) {
-        guard hidden != chromeHidden else { return }
-        chromeHidden = hidden
-        navigationController?.setNavigationBarHidden(hidden, animated: animated)
-        bottomBar.isUserInteractionEnabled = !hidden
-        UIView.animate(withDuration: animated ? 0.25 : 0) {
-            self.bottomBar.alpha = hidden ? 0 : 1
-            self.setNeedsStatusBarAppearanceUpdate()
-        }
+        chrome.setHidden(hidden, animated: animated)
     }
 
     private func updatePageLabel() {
@@ -799,54 +782,16 @@ final class PDFCurlReaderViewController: UIViewController {
 
     /// Ett kort meddelande nere på sidan som försvinner av sig självt.
     private func showToast(_ text: String) {
-        toastLabel?.removeFromSuperview()
-        let label = PaddedLabel()
-        label.text = text
-        label.numberOfLines = 0
-        label.textAlignment = .center
-        label.font = .preferredFont(forTextStyle: .subheadline)
-        label.textColor = .white
-        label.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
-        label.layer.cornerRadius = 12
-        label.layer.masksToBounds = true
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.alpha = 0
-        view.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -60),
-            label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
-        ])
-        toastLabel = label
-        UIView.animate(withDuration: 0.2) { label.alpha = 1 }
-        UIView.animate(withDuration: 0.4, delay: 2.5, options: []) {
-            label.alpha = 0
-        } completion: { _ in
-            label.removeFromSuperview()
-        }
+        chrome.showToast(text)
     }
 
     // MARK: Bakgrund
-
-    private func themeMenu() -> UIMenu {
-        let actions = ReaderTheme.allCases.map { option in
-            UIAction(title: option.title,
-                     image: UIImage(systemName: option.symbolName),
-                     state: option == theme ? .on : .off) { [weak self] _ in
-                self?.setTheme(option)
-            }
-        }
-        let sound = ReaderMenus.soundSection { [weak self] in
-            self?.themeItem?.menu = self?.themeMenu()
-        }
-        return UIMenu(title: "Bakgrund", children: actions + [sound])
-    }
 
     private func setTheme(_ newTheme: ReaderTheme) {
         guard newTheme != theme else { return }
         theme = newTheme
         ReaderTheme.current = newTheme
-        themeItem?.menu = themeMenu()
+        chrome.updateThemeMenu(newTheme)
         view.backgroundColor = newTheme.paperColor
         applyThemeToChrome()
         renderer.configure(size: renderSize(for: view.bounds.size, mode: mode), scale: displayScale, theme: newTheme)
@@ -857,10 +802,7 @@ final class PDFCurlReaderViewController: UIViewController {
 
     /// Menyraden och reglaget följer bakgrunden: mörka på mörkt papper, ljusa annars.
     private func applyThemeToChrome() {
-        let style: UIUserInterfaceStyle = theme.isDark ? .dark : .light
-        overrideUserInterfaceStyle = style
-        navigationController?.overrideUserInterfaceStyle = style
-        setNeedsStatusBarAppearanceUpdate()
+        chrome.applyStyle(for: theme)
     }
 }
 

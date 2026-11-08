@@ -57,8 +57,23 @@ final class ReflowReaderViewController: UIViewController {
     private var deferredShow: (chapter: Int, page: Int)?
     private var turnToken = 0
 
-    private var chromeHidden = false
     private let bottomBar = ReaderBottomBar()
+    /// Menyraden, gemensam med PDF-läsaren (G12).
+    private lazy var chrome: ReaderChrome = {
+        let text = UIBarButtonItem(image: UIImage(systemName: "textformat.size"),
+                                   style: .plain,
+                                   target: self,
+                                   action: #selector(showTypography))
+        text.accessibilityLabel = "Typsnitt och storlek"
+        return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: text, theme: theme,
+                            actions: .init(contents: #selector(showContents), search: #selector(showSearch),
+                                           mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark)),
+                            onTheme: { [weak self] option in self?.setTheme(option) })
+    }()
+
+    private var chromeHidden: Bool {
+        chrome.isHidden
+    }
     private let spinner = UIActivityIndicatorView(style: .large)
     private var chromeTap: UITapGestureRecognizer?
     private var linkTap: UITapGestureRecognizer?
@@ -68,10 +83,14 @@ final class ReflowReaderViewController: UIViewController {
     private var queuedWordPoint: CGPoint?
     private var pressEnded = false
     private weak var wordBubble: PaddedLabel?
-    private weak var toastLabel: UILabel?
-    private var contentsItem: UIBarButtonItem?
-    private var typographyItem: UIBarButtonItem?
-    private var themeItem: UIBarButtonItem?
+
+    private var contentsItem: UIBarButtonItem? {
+        chrome.contentsItem
+    }
+
+    private var typographyItem: UIBarButtonItem? {
+        chrome.readerItem
+    }
 
     private var lastLayout: ReflowLayout?
     private var lastSize: CGSize = .zero
@@ -89,9 +108,17 @@ final class ReflowReaderViewController: UIViewController {
     private var markBar: HighlightModeBar?
     private var markSelection: ReflowMarkSelection?
     private var bookmarks: [Bookmark] = []
-    private var searchItem: UIBarButtonItem?
-    private var markItem: UIBarButtonItem?
-    private var bookmarkItem: UIBarButtonItem?
+    private var searchItem: UIBarButtonItem? {
+        chrome.searchItem
+    }
+
+    private var markItem: UIBarButtonItem? {
+        chrome.markItem
+    }
+
+    private var bookmarkItem: UIBarButtonItem? {
+        chrome.bookmarkItem
+    }
     private var bookSearch: BookSearch?
     private var lastQuery: String?
 
@@ -565,42 +592,7 @@ final class ReflowReaderViewController: UIViewController {
     // MARK: Menyn
 
     private func setUpNavigationBar() {
-        // Menyraden ligger ovanpå sidan med en egen bakgrund, så att knapparna syns mot texten.
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithDefaultBackground()
-        navigationItem.standardAppearance = appearance
-        navigationItem.scrollEdgeAppearance = appearance
-        navigationItem.compactAppearance = appearance
-
-        let contents = UIBarButtonItem(image: UIImage(systemName: "list.bullet"),
-                                       style: .plain,
-                                       target: self,
-                                       action: #selector(showContents))
-        contents.accessibilityLabel = "Innehåll"
-
-        let text = UIBarButtonItem(image: UIImage(systemName: "textformat.size"),
-                                   style: .plain,
-                                   target: self,
-                                   action: #selector(showTypography))
-        text.accessibilityLabel = "Typsnitt och storlek"
-
-        let themeButton = UIBarButtonItem(title: nil,
-                                          image: UIImage(systemName: "circle.lefthalf.fill"),
-                                          primaryAction: nil,
-                                          menu: themeMenu())
-        themeButton.accessibilityLabel = "Bakgrund"
-
-        let annotationItems = ReaderMenus.annotationItems(target: self,
-                                                          search: #selector(showSearch),
-                                                          mark: #selector(toggleMarkMode),
-                                                          bookmark: #selector(toggleBookmark))
-        searchItem = annotationItems[0]
-        markItem = annotationItems[1]
-        bookmarkItem = annotationItems[2]
-        navigationItem.rightBarButtonItems = [themeButton, text] + annotationItems + [contents]
-        contentsItem = contents
-        typographyItem = text
-        themeItem = themeButton
+        chrome.install()
     }
 
     private func setUpBottomBar() {
@@ -651,14 +643,7 @@ final class ReflowReaderViewController: UIViewController {
     }
 
     private func setChromeHidden(_ hidden: Bool, animated: Bool) {
-        guard hidden != chromeHidden else { return }
-        chromeHidden = hidden
-        navigationController?.setNavigationBarHidden(hidden, animated: animated)
-        bottomBar.isUserInteractionEnabled = !hidden
-        UIView.animate(withDuration: animated ? 0.25 : 0) {
-            self.bottomBar.alpha = hidden ? 0 : 1
-            self.setNeedsStatusBarAppearanceUpdate()
-        }
+        chrome.setHidden(hidden, animated: animated)
     }
 
     private func updatePageLabel() {
@@ -803,25 +788,11 @@ final class ReflowReaderViewController: UIViewController {
 
     // MARK: Bakgrund
 
-    private func themeMenu() -> UIMenu {
-        let actions = ReaderTheme.allCases.map { option in
-            UIAction(title: option.title,
-                     image: UIImage(systemName: option.symbolName),
-                     state: option == theme ? .on : .off) { [weak self] _ in
-                self?.setTheme(option)
-            }
-        }
-        let sound = ReaderMenus.soundSection { [weak self] in
-            self?.themeItem?.menu = self?.themeMenu()
-        }
-        return UIMenu(title: "Bakgrund", children: actions + [sound])
-    }
-
     private func setTheme(_ newTheme: ReaderTheme) {
         guard newTheme != theme else { return }
         theme = newTheme
         ReaderTheme.current = newTheme
-        themeItem?.menu = themeMenu()
+        chrome.updateThemeMenu(newTheme)
         view.backgroundColor = newTheme.paperColor
         paperCover.backgroundColor = newTheme.paperColor
         applyThemeToChrome()
@@ -836,10 +807,7 @@ final class ReflowReaderViewController: UIViewController {
 
     /// Menyraden och reglaget följer bakgrunden: mörka på mörkt papper, ljusa annars.
     private func applyThemeToChrome() {
-        let style: UIUserInterfaceStyle = theme.isDark ? .dark : .light
-        overrideUserInterfaceStyle = style
-        navigationController?.overrideUserInterfaceStyle = style
-        setNeedsStatusBarAppearanceUpdate()
+        chrome.applyStyle(for: theme)
     }
 
     // MARK: Ordboken
@@ -1143,31 +1111,7 @@ final class ReflowReaderViewController: UIViewController {
 
     /// Ett kort meddelande nere på sidan som försvinner av sig självt.
     private func showToast(_ text: String) {
-        toastLabel?.removeFromSuperview()
-        let label = PaddedLabel()
-        label.text = text
-        label.numberOfLines = 0
-        label.textAlignment = .center
-        label.font = .preferredFont(forTextStyle: .subheadline)
-        label.textColor = .white
-        label.backgroundColor = UIColor(white: 0.1, alpha: 0.85)
-        label.layer.cornerRadius = 12
-        label.layer.masksToBounds = true
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.alpha = 0
-        view.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -60),
-            label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
-        ])
-        toastLabel = label
-        UIView.animate(withDuration: 0.2) { label.alpha = 1 }
-        UIView.animate(withDuration: 0.4, delay: 2.5, options: []) {
-            label.alpha = 0
-        } completion: { _ in
-            label.removeFromSuperview()
-        }
+        chrome.showToast(text)
     }
 
     // MARK: Bläddra med kod
