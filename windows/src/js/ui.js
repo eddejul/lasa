@@ -61,8 +61,9 @@ export function confirmDialog({ title, message, confirm = 'OK', cancel = 'Avbryt
 }
 
 /** En fråga med flera svar (choices: { label, value, kind: 'primary' | 'danger' }). Ger svarets value, eller
- *  null om rutan stängs med Esc eller ett klick utanför. Svaren står i den ordning de ges. */
-export function choiceDialog({ title, message, choices }) {
+ *  null om rutan stängs med Esc eller ett klick utanför. Svaren står i den ordning de ges. details är rader
+ *  ({ label, value }) som visas under meddelandet, till exempel två filnamn sida vid sida. */
+export function choiceDialog({ title, message, details = [], choices }) {
   return new Promise((resolve) => {
     const layer = document.getElementById('modal-layer');
     const close = (answer) => {
@@ -85,6 +86,8 @@ export function choiceDialog({ title, message, choices }) {
       el('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': title, dataset: { testid: 'choice-dialog' } },
         el('h2', {}, title),
         message ? el('p', {}, message) : null,
+        details.length ? el('dl', { class: 'dialog-details', dataset: { testid: 'choice-details' } },
+          details.map((row) => [el('dt', {}, row.label), el('dd', {}, row.value)])) : null,
         el('div', { class: 'dialog-buttons dialog-choices' }, buttons)));
     layer.append(dialog);
     document.addEventListener('keydown', onKey, true);

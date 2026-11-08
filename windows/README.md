@@ -34,7 +34,8 @@ Läsa behöver Microsoft Edge WebView2, som redan finns i Windows 11. Saknas den
   ny OCR), frågar Sensus: Ersätt och behåll markeringarna, Ersätt och börja om, Behåll båda (den nya heter då
   `Bok 2.pdf`) eller Avbryt. **Ta bort** tar bort boken ur biblioteket, men markeringar och läsposition finns
   kvar: lägger du till samma fil igen kommer allt tillbaka, och en fil med liknande namn (`Bok (OCR) 2.pdf`)
-  ger frågan Ny version av boken, behåll markeringarna?
+  ger frågan Ny version av boken, behåll markeringarna? Frågan visar både den borttagna bokens och den nya
+  filens namn, eftersom siffror inte räknas (`Föreläsning 3.pdf` och `Föreläsning 4.pdf` liknar varandra).
   Medan filerna läses in visas hur långt det har kommit. Låsta (lösenord) och trasiga PDF:er läggs inte till,
   och appen säger varför.
 * **Bläddra:** högerpil och vänsterpil, PageDown och PageUp, mellanslag (Skift och mellanslag bakåt),

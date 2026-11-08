@@ -6,7 +6,7 @@ Testet startar själv dev/server.py (på --port, en process i taget, stoppas på
 datamappar under --out:
 * G3: en datamapp med påhittade data från version 0.7.0 (bok-id = SHA-256), flytten till bokens id med
   kopian före, en andra start, namnbyte, ny version, Behåll båda, Ersätt och börja om, Ta bort och
-  tillbaka, och liknande namn på en borttagen bok. Fynd 5: en bok
+  tillbaka, och liknande namn på en borttagen bok (frågan visar båda filnamnen, fynd 12). Fynd 5: en bok
   som togs bort i 0.7.0 (raden borta, markeringen kvar under kontrollsumman) läggs till igen, och
   markeringen syns.
 * W10: Rulla och Bläddra, uppslaget, ordfunktionen, markeringar, sök och läspositionen i båda lägena.
@@ -371,6 +371,12 @@ def g3(browser, args):
         with open(txt_b, "w", encoding="utf-8") as file:
             file.write("Anteckningar om retorik.\n\nEthos, pathos och logos, och kairos.\n")
         add_file(page, txt_b)
+        # Fynd 12: frågan visar både den borttagna bokens och den nya filens namn.
+        page.wait_for_selector('[data-testid="choice-dialog"]', timeout=10000)
+        details = page.locator('[data-testid="choice-details"]').inner_text()
+        check('Borttagen bok' in details and 'Anteckningar.txt' in details and 'Ny fil' in details
+              and 'Anteckningar (OCR) 2.txt' in details, f'frågan visar båda filnamnen: {details!r}')
+        page.screenshot(path=os.path.join(args.out, "g3-04-ny-version.png"))
         title = answer(page, 'keep')
         check(title == 'Ny version av boken', f'frågan Ny version av boken: {title}')
         check(wait_for(lambda: server.sql("SELECT missing, file_name FROM books WHERE id = ?", [txt_id])

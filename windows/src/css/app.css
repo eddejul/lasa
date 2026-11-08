@@ -420,6 +420,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .dialog p { margin: 0 0 12px; color: var(--muted); line-height: 1.4; }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .dialog-choices { flex-direction: column; align-items: stretch; }
+.dialog-details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0 0 12px; }
+.dialog-details dt { color: var(--muted); }
+.dialog-details dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 .text-input { width: 100%; padding: 8px 10px; font: inherit; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 
 .toast-stack {

@@ -136,14 +136,17 @@ function askNameTaken(name) {
   });
 }
 
-/** Ny version av boken, behåll markeringarna? (som på iPaden, LibraryViewController.swift). */
+/** Ny version av boken, behåll markeringarna? (som på iPaden, LibraryViewController.swift). Båda filnamnen
+ *  visas (fynd 12): liknande namn räknar bort siffror, så "Föreläsning 3" och "Föreläsning 4" ger också
+ *  frågan, och då ska det synas att det är två olika filer. */
 function askNewVersion(name, old) {
   const message = sameName(name, old)
-    ? `${name} är en ny version av en bok som du tagit bort ur biblioteket. Ska markeringar, anteckningar och läsposition följa med?`
-    : `${name} liknar ${old}, som du tagit bort ur biblioteket. Ska markeringar, anteckningar och läsposition följa med?`;
+    ? 'Filen har samma namn som en bok som du tagit bort ur biblioteket. Är det en ny version av den, så kan markeringar, anteckningar och läsposition följa med.'
+    : 'Filen har ett liknande namn som en bok som du tagit bort ur biblioteket. Är det en ny version av den, så kan markeringar, anteckningar och läsposition följa med. Är det en annan bok, välj Nej, börja om.';
   return choiceDialog({
     title: 'Ny version av boken',
     message,
+    details: [{ label: 'Borttagen bok', value: old }, { label: 'Ny fil', value: name }],
     choices: [
       { label: 'Behåll markeringarna', value: 'keep', kind: 'primary' },
       { label: 'Nej, börja om', value: 'new' },
