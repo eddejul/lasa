@@ -471,9 +471,17 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     /// Lägger exempelboken i biblioteket och öppnar den.
     func openSampleBook() {
         guard let url = Onboarding.writeSampleBook() else { return }
+        // Finns det borttagna böcker i registret känns en ny fil igen först när kontrollsumman räknats.
+        // Exempelboken är liten, så den räknas direkt och boken läggs in på en gång.
+        var book = LibraryStore.shared.book(at: url)
+        if book == nil, let hash = BookIdentity.hash(of: url) {
+            book = LibraryStore.shared.registerFile(at: url, hash: hash)
+        }
         reload()
-        if let book = books.first(where: { $0.path == Onboarding.sampleName }) ?? LibraryStore.shared.book(at: url) {
+        if let book = book {
             open(book)
+        } else {
+            AppLog.shared.write("Exempelboken kunde inte öppnas")
         }
     }
 
