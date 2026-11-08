@@ -7,7 +7,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     UICollectionViewDelegate, UISearchResultsUpdating, UITabBarDelegate, UINavigationControllerDelegate {
 
     private enum Section: Int, CaseIterable {
-        case banner, activity, week, continueReading, more, books
+        case banner, activity, week, study, continueReading, more, books
     }
 
     private var collectionView: UICollectionView!
@@ -29,6 +29,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     private var searchText = ""
     private var reviewCount = 0
     private var savedCount = 0
+    /// U6: studiekorten under läsveckan (Repetera, och Dagens markeringar när K7 kopplas in). Räknas i `reload`.
+    private(set) var studyItems: [StudyItem] = []
     /// B5: kortet Gör mer med Sensus (läses i `reload`, nyckelringen ska inte läsas vid varje utläggning).
     private var showsMoreCard = false
     /// U9: på iPhone en flikrad längst ner i stället för sidopanelen.
@@ -80,6 +82,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         collectionView.register(MessageCell.self, forCellWithReuseIdentifier: MessageCell.id)
         collectionView.register(MoreCell.self, forCellWithReuseIdentifier: MoreCell.id)
         collectionView.register(ReadingWeekCell.self, forCellWithReuseIdentifier: ReadingWeekCell.id)
+        collectionView.register(StudyCardsCell.self, forCellWithReuseIdentifier: StudyCardsCell.id)
         collectionView.register(BooksHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
                                 withReuseIdentifier: BooksHeaderView.id)
         view.addSubview(collectionView)
@@ -176,8 +179,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             }
         }
         panel.onReview = { [weak self] in
-            self?.afterDismissingPanel { self?.navigationController?.pushViewController(WordReviewViewController(),
-                                                                                         animated: true) }
+            self?.afterDismissingPanel { self?.openReview() }
         }
         panel.onSavedWords = { [weak self] in
             self?.afterDismissingPanel { self?.navigationController?.pushViewController(SavedWordsViewController(),
@@ -257,6 +259,27 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         guard isViewLoaded, collectionView.numberOfSections > Section.week.rawValue else { return }
         UIView.performWithoutAnimation {
             collectionView.reloadSections(IndexSet(integer: Section.week.rawValue))
+        }
+    }
+
+    /// U6: repetitionen, från sidopanelen och kortet Repetera.
+    func openReview() {
+        navigationController?.pushViewController(WordReviewViewController(), animated: true)
+    }
+
+    /// U6: studiekorten visas i Alla böcker utan sökning.
+    private var showsStudy: Bool {
+        !studyItems.isEmpty && scope == .all && searchText.isEmpty
+    }
+
+    /// U6: ett tryck på ett studiekort.
+    private func openStudy(_ item: StudyItem) {
+        switch item {
+        case .review:
+            openReview()
+        case .highlights:
+            // K7 kopplar in Dagens markeringar.
+            break
         }
     }
 
@@ -575,6 +598,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         }
         reviewCount = UserWords.shared.reviewCount()
         savedCount = UserWords.shared.savedWords().count
+        studyItems = savedCount > 0 ? [.review(count: reviewCount)] : []
         showsMoreCard = Onboarding.showsMoreCard
         rebuildItems()
         collectionView.reloadData()
@@ -901,6 +925,14 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
                 let result = NSCollectionLayoutSection(group: group)
                 result.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: margin, bottom: 8, trailing: margin)
                 return result
+            case .study:
+                guard count > 0 else { return empty }
+                let height = StudyCardsCell.height(count: self.studyItems.count, width: width - margin * 2)
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(height))
+                let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
+                let result = NSCollectionLayoutSection(group: group)
+                result.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: margin, bottom: 8, trailing: margin)
+                return result
             case .banner, .activity:
                 guard count > 0 else { return empty }
                 let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(56))
@@ -962,6 +994,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         case .banner: return expiryText == nil ? 0 : 1
         case .activity: return activityLines.isEmpty ? 0 : 1
         case .week: return showsReadingWeek ? 1 : 0
+        case .study: return showsStudy ? 1 : 0
         case .continueReading: return continueItem == nil || scope != .all || !searchText.isEmpty ? 0 : 1
         case .more: return showsMoreCard && scope == .all && searchText.isEmpty && !allItems.isEmpty ? 1 : 0
         case .books: return items.count
@@ -993,6 +1026,14 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             cell.onGoal = { [weak self, weak cell] in
                 guard let cell = cell else { return }
                 self?.chooseReadingGoal(from: cell)
+            }
+            return cell
+        case .study:
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: StudyCardsCell.id,
+                                                          for: indexPath) as! StudyCardsCell
+            cell.configure(items: studyItems, palette: palette)
+            cell.onOpen = { [weak self] item in
+                self?.openStudy(item)
             }
             return cell
         case .continueReading:

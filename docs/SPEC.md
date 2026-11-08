@@ -200,6 +200,7 @@ Byggd 7 november 2026 på grenen `fas4`.
 Byggd 7 november 2026 på grenen `fas6`.
 
 * **Repetera ord:** kort med ordet och meningen det stod i, svaret ur ordboken bakom ett tryck. Igen, Svårt, Bra och Lätt flyttar ordet i ett schema i stil med Anki (Igen: tio minuter, Bra: en dag, sedan tre dagar och vidare). Högst 20 nya ord per dag.
+* **Kortläget (U6, 9 november 2026):** kortet Repetera i biblioteket med antalet ord, en tunn framstegslinje och ett papperskort med ordet, meningen och källan, svaret tonas fram vid ett tryck och betygen ligger längst ner med intervallet under. Filter överst: alla ord, en bok eller en kurs. Svårt ger alltid kortare tid än Bra (nytt ord: 10 min, 6 tim, 1 dag, 4 dagar). Småord sparas aldrig, och ord utan svar i ordboken kommer inte med. Ingen tid för omgången, bara antal ord.
 * **Uppläsning:** byggdes med AVSpeechSynthesizer men togs bort 8 november 2026, eftersom rösterna lät som en robot. Ett bättre alternativ undersöks senare.
 * **AI-knappen:** se 5.5. Modellen är `gemini-3.5-flash-lite` från början och kan bytas under Inställningar.
 * **Synk:** se `docs/SYNK.md`. Supabase med e-post och lösenord, regler som bara släpper fram den inloggades rader, och den nyaste ändringen vinner rad för rad.
