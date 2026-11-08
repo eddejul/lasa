@@ -45,6 +45,22 @@ final class PDFPageViewController: UIViewController {
             }
         }
     }
+    /// Bandets kontur syns medan menyn är framme, så att man ser var ett tryck bokmärker sidan (U3).
+    var showsRibbonHint = false {
+        didSet {
+            guard showsRibbonHint != oldValue else { return }
+            overlaysDirty = true
+            if isViewLoaded {
+                view.setNeedsLayout()
+            }
+        }
+    }
+
+    /// Där ett tryck bokmärker sidan: bandets hörn med marginal, i sidvyns koordinater. Nil utan sidbild.
+    var ribbonZone: CGRect? {
+        guard let frame = imageFrame, !frame.isNull, !frame.isEmpty else { return nil }
+        return CGRect(x: frame.maxX - 64, y: frame.minY - 4, width: 64, height: 60)
+    }
     private var marks: [Mark] = []
     private var darkMarks = false
     private let marksView = UIView()
@@ -83,7 +99,7 @@ final class PDFPageViewController: UIViewController {
         view.addSubview(imageView)
         marksView.isUserInteractionEnabled = false
         view.addSubview(marksView)
-        ribbon.tintColor = .systemRed
+        ribbon.tintColor = Theme.current.ribbon
         ribbon.contentMode = .scaleAspectFit
         ribbon.isHidden = true
         ribbon.isAccessibilityElement = true
@@ -217,7 +233,9 @@ final class PDFPageViewController: UIViewController {
                 }
             }
         }
-        ribbon.isHidden = !isBookmarked
+        ribbon.isHidden = !(isBookmarked || showsRibbonHint)
+        ribbon.image = UIImage(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+        ribbon.tintColor = isBookmarked ? Theme.current.ribbon : Theme.current.inkFaint
         ribbon.frame = CGRect(x: frame.maxX - 34, y: frame.minY - 3, width: 20, height: 30)
 
         if !flashRects.isEmpty {

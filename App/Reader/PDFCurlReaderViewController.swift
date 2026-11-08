@@ -29,14 +29,10 @@ final class PDFCurlReaderViewController: UIViewController {
     private var currentIndex: Int
     /// Menyraden, gemensam med EPUB-läsaren (G12).
     private lazy var chrome: ReaderChrome = {
-        let zoom = UIBarButtonItem(image: UIImage(systemName: "plus.magnifyingglass"),
-                                   style: .plain,
-                                   target: self,
-                                   action: #selector(zoomCurrentPage))
-        zoom.accessibilityLabel = "Zooma sidan"
-        return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: zoom, theme: theme,
+        return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: nil, theme: theme,
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
-                                           mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark)),
+                                           mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
+                                           goToPage: #selector(showGoToPage), zoom: #selector(zoomCurrentPage)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -47,6 +43,8 @@ final class PDFCurlReaderViewController: UIViewController {
     private let bottomBar = ReaderBottomBar()
     private var chromeTap: UITapGestureRecognizer?
     private var zoomTap: UITapGestureRecognizer?
+    /// Trycket på bokmärkesbandet i sidans hörn (U3).
+    private var ribbonTap: UITapGestureRecognizer?
     private var wordPress: UILongPressGestureRecognizer?
     private var pressedWord: PressedWord?
     /// Markeringsradens ruta senast den visades (U5), till självtestet.
@@ -434,6 +432,11 @@ final class PDFCurlReaderViewController: UIViewController {
         chrome.require(toFail: zoom)
         view.addGestureRecognizer(chrome)
 
+        let ribbon = UITapGestureRecognizer(target: self, action: #selector(handleRibbonTap(_:)))
+        ribbon.delegate = self
+        view.addGestureRecognizer(ribbon)
+        ribbonTap = ribbon
+
         let press = WordPressGesture.makeRecognizer(target: self, action: #selector(handleWordPress(_:)), delegate: self)
         view.addGestureRecognizer(press)
 
@@ -449,14 +452,47 @@ final class PDFCurlReaderViewController: UIViewController {
 
     private func setChromeHidden(_ hidden: Bool, animated: Bool) {
         chrome.setHidden(hidden, animated: animated)
+        // Bandets kontur i hörnet syns medan menyn är framme, så att man ser var man trycker (U3).
+        for page in visiblePages {
+            page.showsRibbonHint = !hidden
+        }
     }
 
     private func updatePageLabel() {
         let indices = visibleIndices.isEmpty ? [currentIndex] : visibleIndices
         bottomBar.pageButton.setTitle(pageText(for: indices), for: .normal)
+        chrome.setSubtitle(chapterTitle(for: indices.first ?? currentIndex))
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(currentIndex)
         }
+    }
+
+    /// PDF:ens bokmärken (innehållet) med sidorna, i sidordning. Läses en gång, på huvudtråden.
+    private lazy var chapterStarts: [(index: Int, title: String)] = {
+        guard let root = document.outlineRoot else { return [] }
+        var result: [(index: Int, title: String)] = []
+        func visit(_ outline: PDFOutline, depth: Int) {
+            guard depth < 2 else { return }
+            for childIndex in 0..<outline.numberOfChildren {
+                guard result.count < 500, let child = outline.child(at: childIndex) else { continue }
+                let page = child.destination?.page ?? (child.action as? PDFActionGoTo)?.destination.page
+                let title = (child.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if let page = page, !title.isEmpty {
+                    let index = document.index(for: page)
+                    if index >= 0, index < document.pageCount {
+                        result.append((index, title))
+                    }
+                }
+                visit(child, depth: depth + 1)
+            }
+        }
+        visit(root, depth: 0)
+        return result.sorted { $0.index < $1.index }
+    }()
+
+    /// Kapitlet som sidan hör till, ur PDF:ens innehåll (U3, under titeln i menyraden).
+    private func chapterTitle(for index: Int) -> String? {
+        chapterStarts.last { $0.index <= index }?.title
     }
 
     /// "52 av 300", eller med bokens egna sidnummer när de skiljer sig: "Sida 45, 52 av 300".
@@ -847,6 +883,14 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
         if gestureRecognizer === markDrag {
             return markMode
         }
+        // Bandet i hörnet (U3) går före kanttrycket som bläddrar och före menyn.
+        let onRibbon = !markMode && ribbonPage(at: touch.location(in: view)) != nil
+        if gestureRecognizer === ribbonTap {
+            return onRibbon
+        }
+        if onRibbon, gestureRecognizer is UITapGestureRecognizer {
+            return false
+        }
         let onMark = markHit(at: touch.location(in: view)) != nil
         if gestureRecognizer === markTap {
             return !markMode && onMark
@@ -971,6 +1015,7 @@ extension PDFCurlReaderViewController {
         page.pdfPage = document.page(at: page.pageIndex)
         page.setMarks(marks(forPage: page.pageIndex), dark: theme.isDark)
         page.isBookmarked = bookmarkedPages.contains(page.pageIndex)
+        page.showsRibbonHint = !chromeHidden
         if marksCache[page.pageIndex]?.isEmpty == false {
             markSetupTimes = Array((markSetupTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(200))
         }
@@ -1206,11 +1251,43 @@ extension PDFCurlReaderViewController {
         let marked = shown.contains { bookmarkedPages.contains($0) }
         bookmarkItem?.image = UIImage(systemName: marked ? "bookmark.fill" : "bookmark")
         bookmarkItem?.accessibilityValue = marked ? "Sidan har ett bokmärke" : "Inget bokmärke"
+        chrome.updateBookmark(marked)
     }
 
     /// Bokmärker sidan man läser, eller tar bort bokmärket om sidan redan har ett.
     @objc fileprivate func toggleBookmark() {
-        let shown = visibleIndices.isEmpty ? [currentIndex] : visibleIndices
+        toggleBookmark(indices: visibleIndices.isEmpty ? [currentIndex] : visibleIndices)
+    }
+
+    /// Bandet i sidans hörn (U3): ett tryck där bokmärker just den sidan.
+    @objc fileprivate func handleRibbonTap(_ tap: UITapGestureRecognizer) {
+        guard let page = ribbonPage(at: tap.location(in: view)) else { return }
+        toggleBookmark(indices: [page.pageIndex])
+        SelfTest.log("Bandet i hörnet: sidan \(page.pageIndex + 1) \(bookmarkedPages.contains(page.pageIndex) ? "har" : "har inte") bokmärke")
+    }
+
+    fileprivate func ribbonPage(at point: CGPoint) -> PDFPageViewController? {
+        visiblePages.first { page in
+            guard !page.isBlank, let zone = page.ribbonZone else { return false }
+            return page.view.convert(zone, to: view).contains(point)
+        }
+    }
+
+    /// Självtestet (U3): menyradens zoner och bandets tryckyta i hörnet.
+    fileprivate func selfTestChromeLayout() {
+        let left = (navigationItem.leftBarButtonItems ?? []).compactMap(\.accessibilityLabel)
+        let right = (navigationItem.rightBarButtonItems ?? []).compactMap(\.accessibilityLabel)
+        let page = visiblePages.first { !$0.isBlank && $0.ribbonZone != nil }
+        let zone: CGRect? = page.flatMap { shown in shown.ribbonZone.map { shown.view.convert($0, to: view) } }
+        let hit = zone.map { ribbonPage(at: CGPoint(x: $0.midX, y: $0.midY)) != nil } ?? false
+        let middle = ribbonPage(at: CGPoint(x: view.bounds.midX, y: view.bounds.midY)) != nil
+        SelfTest.log("Menyraden (U3): vänster \(left.joined(separator: ", ")), höger från kanten "
+                     + "\(right.joined(separator: ", ")), titel \(title ?? "ingen"), under titeln "
+                     + "\(chrome.subtitle ?? "inget"). Bandet i hörnet tar trycket: \(hit ? "ja" : "FEL, nej"), "
+                     + "mitten av sidan: \(middle ? "FEL, ja" : "nej")")
+    }
+
+    fileprivate func toggleBookmark(indices shown: [Int]) {
         let existing = bookmarks.filter { shown.contains($0.section) }
         if existing.isEmpty {
             let index = shown.first ?? currentIndex
@@ -1551,6 +1628,7 @@ extension PDFCurlReaderViewController {
         setChromeHidden(false, animated: false)
         await pause(0.4)
         SelfTest.saveScreen(view, name: "03-bokmarke")
+        selfTestChromeLayout()
 
         setMarkMode(true)
         await pause(0.6)

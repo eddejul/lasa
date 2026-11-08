@@ -77,6 +77,8 @@ final class ReflowReaderViewController: UIViewController {
     private let spinner = UIActivityIndicatorView(style: .large)
     private var chromeTap: UITapGestureRecognizer?
     private var linkTap: UITapGestureRecognizer?
+    /// Trycket på bokmärkesbandet i sidans hörn (U3).
+    private var ribbonTap: UITapGestureRecognizer?
     private var wordPress: UILongPressGestureRecognizer?
     private var pressedWord: PressedWord?
     /// Markeringsradens ruta senast den visades (U5), till självtestet.
@@ -390,6 +392,7 @@ final class ReflowReaderViewController: UIViewController {
                                             renderer: renderer,
                                             paperColor: theme.paperColor)
         page.isBookmarked = !bookmarksOnPage(page).isEmpty
+        page.showsRibbonHint = !chromeHidden
         page.onRetry = { [weak self] page in
             self?.retryChapter(page.chapter)
         }
@@ -645,6 +648,11 @@ final class ReflowReaderViewController: UIViewController {
         chrome.delegate = self
         view.addGestureRecognizer(chrome)
 
+        let ribbon = UITapGestureRecognizer(target: self, action: #selector(handleRibbonTap(_:)))
+        ribbon.delegate = self
+        view.addGestureRecognizer(ribbon)
+        ribbonTap = ribbon
+
         let press = WordPressGesture.makeRecognizer(target: self, action: #selector(handleWordPress(_:)), delegate: self)
         view.addGestureRecognizer(press)
 
@@ -660,11 +668,16 @@ final class ReflowReaderViewController: UIViewController {
 
     private func setChromeHidden(_ hidden: Bool, animated: Bool) {
         chrome.setHidden(hidden, animated: animated)
+        // Bandets kontur i hörnet syns medan menyn är framme, så att man ser var man trycker (U3).
+        for page in visiblePages {
+            page.showsRibbonHint = !hidden
+        }
     }
 
     private func updatePageLabel() {
         guard let content = content, let renderer = renderer, isShowingPages else { return }
         bottomBar.pageButton.setTitle(pageText(content: content, renderer: renderer), for: .normal)
+        chrome.setSubtitle(chapterName(currentChapter))
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(content.fraction(at: currentLocation()))
         }
@@ -1197,6 +1210,14 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
         }
         if gestureRecognizer === markDrag {
             return markMode
+        }
+        // Bandet i hörnet (U3) går före kanttrycket som bläddrar, menyn och länkarna.
+        let onRibbon = !markMode && ribbonPage(at: touch.location(in: view)) != nil
+        if gestureRecognizer === ribbonTap {
+            return onRibbon
+        }
+        if onRibbon, gestureRecognizer is UITapGestureRecognizer {
+            return false
         }
         let onMark = markHit(at: touch.location(in: view)) != nil
         if gestureRecognizer === markTap {
@@ -1815,11 +1836,43 @@ extension ReflowReaderViewController {
         }
         bookmarkItem?.image = UIImage(systemName: marked ? "bookmark.fill" : "bookmark")
         bookmarkItem?.accessibilityValue = marked ? "Sidan har ett bokmärke" : "Inget bokmärke"
+        chrome.updateBookmark(marked)
     }
 
     /// Bokmärker sidan man läser, eller tar bort bokmärket om sidan redan har ett.
     @objc fileprivate func toggleBookmark() {
-        let shown = visiblePages.filter { !$0.isBlank }
+        toggleBookmark(pages: visiblePages.filter { !$0.isBlank })
+    }
+
+    /// Bandet i sidans hörn (U3): ett tryck där bokmärker just den sidan.
+    @objc fileprivate func handleRibbonTap(_ tap: UITapGestureRecognizer) {
+        guard let page = ribbonPage(at: tap.location(in: view)) else { return }
+        toggleBookmark(pages: [page])
+        SelfTest.log("Bandet i hörnet: sidan \(bookmarksOnPage(page).isEmpty ? "har inte" : "har") bokmärke")
+    }
+
+    fileprivate func ribbonPage(at point: CGPoint) -> ReflowPageViewController? {
+        visiblePages.first { page in
+            guard !page.isBlank, page.page != nil else { return false }
+            return page.view.convert(page.ribbonZone, to: view).contains(point)
+        }
+    }
+
+    /// Självtestet (U3): menyradens zoner och bandets tryckyta i hörnet.
+    fileprivate func selfTestChromeLayout() {
+        let left = (navigationItem.leftBarButtonItems ?? []).compactMap(\.accessibilityLabel)
+        let right = (navigationItem.rightBarButtonItems ?? []).compactMap(\.accessibilityLabel)
+        let page = visiblePages.first { !$0.isBlank && $0.page != nil }
+        let zone = page.map { $0.view.convert($0.ribbonZone, to: view) }
+        let hit = zone.map { ribbonPage(at: CGPoint(x: $0.midX, y: $0.midY)) != nil } ?? false
+        let middle = ribbonPage(at: CGPoint(x: view.bounds.midX, y: view.bounds.midY)) != nil
+        SelfTest.log("Menyraden (U3): vänster \(left.joined(separator: ", ")), höger från kanten "
+                     + "\(right.joined(separator: ", ")), titel \(title ?? "ingen"), under titeln "
+                     + "\(chrome.subtitle ?? "inget"). Bandet i hörnet tar trycket: \(hit ? "ja" : "FEL, nej"), "
+                     + "mitten av sidan: \(middle ? "FEL, ja" : "nej")")
+    }
+
+    fileprivate func toggleBookmark(pages shown: [ReflowPageViewController]) {
         let existing = shown.flatMap { bookmarksOnPage($0) }
         if existing.isEmpty {
             guard let page = shown.first, let number = page.page else { return }
@@ -2019,6 +2072,7 @@ extension ReflowReaderViewController {
         toggleBookmark()
         await pause(0.3)
         SelfTest.log("Bokmärke: \(bookmarkItem?.accessibilityValue ?? "inget"), \(bookmarks.count) i boken")
+        selfTestChromeLayout()
         setMarkMode(true)
         await pause(0.5)
         SelfTest.saveScreen(view, name: "03d-markeringslage")

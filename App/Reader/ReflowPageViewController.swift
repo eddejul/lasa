@@ -32,8 +32,25 @@ final class ReflowPageViewController: UIViewController {
     private let ribbon = UIImageView(image: UIImage(systemName: "bookmark.fill"))
     var isBookmarked = false {
         didSet {
-            ribbon.isHidden = !isBookmarked
+            updateRibbon()
         }
+    }
+    /// Bandets kontur syns medan menyn är framme, så att man ser var ett tryck bokmärker sidan (U3).
+    var showsRibbonHint = false {
+        didSet {
+            updateRibbon()
+        }
+    }
+
+    /// Där ett tryck bokmärker sidan: bandets hörn med marginal, i sidvyns koordinater.
+    var ribbonZone: CGRect {
+        CGRect(x: view.bounds.width - 70, y: 0, width: 70, height: 60)
+    }
+
+    private func updateRibbon() {
+        ribbon.isHidden = !(isBookmarked || showsRibbonHint)
+        ribbon.image = UIImage(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+        ribbon.tintColor = isBookmarked ? Theme.current.ribbon : Theme.current.inkFaint
     }
 
     init(chapter: Int,
@@ -66,9 +83,8 @@ final class ReflowPageViewController: UIViewController {
         view.backgroundColor = paperColor
         imageView.contentMode = .scaleToFill
         view.addSubview(imageView)
-        ribbon.tintColor = .systemRed
         ribbon.contentMode = .scaleAspectFit
-        ribbon.isHidden = !isBookmarked
+        updateRibbon()
         ribbon.isAccessibilityElement = true
         ribbon.accessibilityLabel = "Bokmärke"
         view.addSubview(ribbon)

@@ -2,8 +2,11 @@ import UIKit
 
 /// Menyraden i båda läsarna (G12 steg 1): knapparna och deras ordning, menyn Bakgrund, att menyraden och
 /// nederkanten döljs och visas, färgerna efter bakgrunden och det korta meddelandet nere på sidan.
-/// Läsarna ger den sina åtgärder och knappen som skiljer dem åt (zoom i PDF, typsnitt i EPUB och text).
 /// Ändras menyraden ska den ändras här, inte i läsarna.
+///
+/// U3: tre zoner. Till vänster Bibliotek (tillbaka) och Innehåll, i mitten bokens titel med kapitlet under,
+/// till höger Sök, Markera, Aa och Mer. Mer har bokmärket, Gå till sida och Zooma sidan (PDF). Bokmärket
+/// är annars bandet i sidans övre hörn, som läsarna låter fingret trycka på direkt.
 @MainActor
 final class ReaderChrome {
 
@@ -13,15 +16,35 @@ final class ReaderChrome {
         let search: Selector
         let mark: Selector
         let bookmark: Selector
+        /// Gå till sida (PDF). EPUB har platsen i Innehåll.
+        var goToPage: Selector? = nil
+        /// Zooma sidan (PDF).
+        var zoom: Selector? = nil
     }
 
     let contentsItem: UIBarButtonItem
+    /// Bakgrunden. I PDF är det knappen Aa, i EPUB och text ligger bakgrunderna i Mer.
     let themeItem: UIBarButtonItem
     let searchItem: UIBarButtonItem
     let markItem: UIBarButtonItem
+    /// Finns inte i menyraden (U3), men läsarna håller dess bild och tillgänglighetsvärde aktuella.
     let bookmarkItem: UIBarButtonItem
-    /// Knappen som bara den ena läsaren har: zoom i PDF, typsnitt och storlek i EPUB och text.
-    let readerItem: UIBarButtonItem
+    /// Aa i EPUB och text (typsnitt och storlek). Nil i PDF, där Aa är bakgrunden.
+    let readerItem: UIBarButtonItem?
+    /// Mer: bokmärket, Gå till sida, Zooma sidan och (i EPUB) bakgrunden.
+    let moreItem: UIBarButtonItem
+
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
+    private lazy var titleStack: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 0
+        return stack
+    }()
+    private let actions: Actions
+    private var isBookmarked = false
 
     /// Om menyraden och nederkanten är dolda.
     private(set) var isHidden = false
@@ -33,13 +56,15 @@ final class ReaderChrome {
     private let onTheme: (ReaderTheme) -> Void
 
     /// `onTheme` anropas när en bakgrund väljs i menyn. Läsaren byter bakgrund och anropar `updateThemeMenu`.
-    init(controller: UIViewController, bottomBar: ReaderBottomBar, readerItem: UIBarButtonItem,
+    init(controller: UIViewController, bottomBar: ReaderBottomBar, readerItem: UIBarButtonItem?,
          theme: ReaderTheme, actions: Actions, onTheme: @escaping (ReaderTheme) -> Void) {
         self.controller = controller
         self.bottomBar = bottomBar
         self.readerItem = readerItem
         self.theme = theme
         self.onTheme = onTheme
+        self.actions = actions
+        readerItem?.image = UIImage(systemName: "textformat.size")
 
         let contents = UIBarButtonItem(image: UIImage(systemName: "list.bullet"),
                                        style: .plain,
@@ -49,11 +74,17 @@ final class ReaderChrome {
         contentsItem = contents
 
         let themeButton = UIBarButtonItem(title: nil,
-                                          image: UIImage(systemName: "circle.lefthalf.fill"),
+                                          image: UIImage(systemName: readerItem == nil ? "textformat.size"
+                                                            : "circle.lefthalf.fill"),
                                           primaryAction: nil,
                                           menu: nil)
-        themeButton.accessibilityLabel = "Bakgrund"
+        themeButton.accessibilityLabel = readerItem == nil ? "Utseende" : "Bakgrund"
         themeItem = themeButton
+
+        let more = UIBarButtonItem(title: nil, image: UIImage(systemName: "ellipsis.circle"), primaryAction: nil,
+                                   menu: nil)
+        more.accessibilityLabel = "Mer"
+        moreItem = more
 
         let annotationItems = ReaderMenus.annotationItems(target: controller,
                                                           search: actions.search,
@@ -64,6 +95,7 @@ final class ReaderChrome {
         bookmarkItem = annotationItems[2]
 
         themeItem.menu = makeThemeMenu()
+        moreItem.menu = makeMoreMenu()
     }
 
     /// Lägger knapparna i läsarens menyrad. Anropas en gång, när läsarens vy laddats.
@@ -71,8 +103,82 @@ final class ReaderChrome {
         guard let controller = controller else { return }
         // Menyraden ligger ovanpå sidan med en egen bakgrund, så att knapparna syns mot texten.
         applyAppearance()
-        controller.navigationItem.rightBarButtonItems = [themeItem, readerItem, searchItem, markItem, bookmarkItem,
-                                                         contentsItem]
+        let item = controller.navigationItem
+        // Till vänster: Bibliotek (tillbakaknappen) och Innehåll.
+        item.leftItemsSupplementBackButton = true
+        item.leftBarButtonItems = [contentsItem]
+        // Till höger, längst till höger först: Mer, Aa, Markera, Sök.
+        item.rightBarButtonItems = [moreItem, readerItem ?? themeItem, markItem, searchItem]
+        // I mitten: bokens titel och kapitlet under.
+        titleLabel.text = controller.title
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.isHidden = true
+        item.titleView = titleStack
+        applyTitleStyle()
+    }
+
+    /// Kapitlet (eller avsnittet) under bokens titel. Nil eller tom döljer raden.
+    func setSubtitle(_ text: String?) {
+        let value = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard subtitleLabel.text != value || subtitleLabel.isHidden != value.isEmpty else { return }
+        subtitleLabel.text = value
+        subtitleLabel.isHidden = value.isEmpty
+        titleStack.setNeedsLayout()
+    }
+
+    /// Texten under titeln, till självtestet.
+    var subtitle: String? {
+        subtitleLabel.isHidden ? nil : subtitleLabel.text
+    }
+
+    /// Om sidan man läser har ett bokmärke. Bygger om Mer så att raden Bokmärke stämmer.
+    func updateBookmark(_ marked: Bool) {
+        guard marked != isBookmarked else { return }
+        isBookmarked = marked
+        moreItem.menu = makeMoreMenu()
+    }
+
+    private func applyTitleStyle() {
+        let palette = Theme.palette(for: theme)
+        titleLabel.font = Theme.serif(.subheadline, size: 15, weight: .semibold)
+        titleLabel.textColor = palette.ink
+        subtitleLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        subtitleLabel.textColor = palette.inkSoft
+    }
+
+    private func makeMoreMenu() -> UIMenu {
+        var children: [UIMenuElement] = []
+        let bookmark = UIAction(title: isBookmarked ? "Ta bort bokmärket" : "Bokmärk sidan",
+                                image: UIImage(systemName: isBookmarked ? "bookmark.slash" : "bookmark")) {
+            [weak self] _ in
+            self?.send(self?.actions.bookmark)
+        }
+        children.append(bookmark)
+        if let goToPage = actions.goToPage {
+            children.append(UIAction(title: "Gå till sida", image: UIImage(systemName: "arrow.right.doc.on.clipboard")) {
+                [weak self] _ in
+                self?.send(goToPage)
+            })
+        }
+        if let zoom = actions.zoom {
+            children.append(UIAction(title: "Zooma sidan", image: UIImage(systemName: "plus.magnifyingglass")) {
+                [weak self] _ in
+                self?.send(zoom)
+            })
+        }
+        if readerItem != nil {
+            // EPUB och text: bakgrunderna här tills Aa samlar allt utseende (U2).
+            children.append(UIMenu(title: "Bakgrund", image: UIImage(systemName: "circle.lefthalf.fill"),
+                                   children: themeActions()))
+        }
+        return UIMenu(title: "", children: children)
+    }
+
+    /// Skickar en åtgärd till läsaren, som har metoden.
+    private func send(_ selector: Selector?) {
+        guard let selector = selector, let controller = controller else { return }
+        UIApplication.shared.sendAction(selector, to: controller, from: nil, for: nil)
     }
 
     // MARK: Dölja och visa
@@ -95,6 +201,7 @@ final class ReaderChrome {
     func updateThemeMenu(_ theme: ReaderTheme) {
         self.theme = theme
         themeItem.menu = makeThemeMenu()
+        moreItem.menu = makeMoreMenu()
     }
 
     /// Menyraden och reglaget följer bakgrunden: papperets färg, mörka på mörkt papper (U1).
@@ -118,21 +225,22 @@ final class ReaderChrome {
         controller.navigationItem.compactAppearance = appearance
         controller.navigationController?.navigationBar.tintColor = palette.accent
         bottomBar.apply(palette)
+        applyTitleStyle()
     }
 
+    /// Bakgrunderna. Bläddringsljudet ligger i Inställningar (U2).
     private func makeThemeMenu() -> UIMenu {
-        let actions = ReaderTheme.allCases.map { option in
+        UIMenu(title: "Bakgrund", children: themeActions())
+    }
+
+    private func themeActions() -> [UIMenuElement] {
+        ReaderTheme.allCases.map { option in
             UIAction(title: option.title,
                      image: UIImage(systemName: option.symbolName),
                      state: option == theme ? .on : .off) { [weak self] _ in
                 self?.onTheme(option)
             }
         }
-        let sound = ReaderMenus.soundSection { [weak self] in
-            guard let self = self else { return }
-            self.themeItem.menu = self.makeThemeMenu()
-        }
-        return UIMenu(title: "Bakgrund", children: actions + [sound])
     }
 
     // MARK: Meddelandet
