@@ -2,6 +2,7 @@
 
 import { renderAbout } from './about.js';
 import { checkDictionary, dictionary } from './context.js';
+import { onOpenFiles, pendingRead, pendingTake } from './backend.js';
 import { ACCEPT_ATTRIBUTE, importFiles, renderLibrary } from './library.js';
 import { setAboutHandler } from './popup.js';
 import { closeReader, isReaderOpen, openReader } from './reader.js';
@@ -129,6 +130,29 @@ function setUpDrop() {
   });
 }
 
+/** Öppna med i Utforskaren: böckerna läggs till (om de inte redan finns) och den första öppnas. */
+async function openPendingFiles() {
+  let list = [];
+  try {
+    list = await pendingTake();
+  } catch {
+    return;
+  }
+  if (!list?.length) return;
+  const files = [];
+  for (const [index, item] of list.entries()) {
+    try {
+      files.push(new File([await pendingRead(index)], item.name));
+    } catch (error) {
+      toast(`${item.name} kunde inte läsas (${error?.message ?? error}).`);
+    }
+  }
+  const ids = [];
+  await importFiles(files, { ids });
+  if (ids.length) await openBook(ids[0]);
+  else if (currentTab === 'library') showTab('library');
+}
+
 /** Genvägar som gäller i hela appen. Läsaren skickar hit tangenter som trycks i ett EPUB-kapitel. */
 export function handleAppKey(event) {
   if (event.defaultPrevented) return;
@@ -205,6 +229,8 @@ async function start() {
     }
   });
   await showTab('library');
+  onOpenFiles(openPendingFiles);
+  await openPendingFiles();
   syncSoon();
 }
 

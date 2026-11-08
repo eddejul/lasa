@@ -70,6 +70,29 @@ export async function secretSet(name, value) {
   return invoke('secret_set', { name, value: value || null });
 }
 
+/** Böcker som Windows har gett appen (Öppna med i Utforskaren): [{ name }]. Listan töms när den hämtas. */
+export async function pendingTake() {
+  return invoke('pending_take');
+}
+
+/** En av böckerna från pendingTake, som byte. */
+export async function pendingRead(index) {
+  if (tauri) {
+    const data = await tauri.invoke('pending_read', { index });
+    return new Uint8Array(data);
+  }
+  const response = await fetch('/api/pending_read', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Anropar callback när Windows ger appen fler böcker medan den är öppen. */
+export function onOpenFiles(callback) {
+  globalThis.__TAURI__?.event?.listen('lasa-open-files', () => callback());
+}
+
 /** Öppnar en adress i den vanliga webbläsaren (svenska.se, källorna under Om ordboken). */
 export async function openUrl(url) {
   if (tauri) return tauri.invoke('plugin:opener|open_url', { url });

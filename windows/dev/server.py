@@ -36,8 +36,10 @@ BOOK_NAME = re.compile(r"^[0-9a-f]{64}\.(pdf|epub|txt|md|rtf|html)$")
 
 
 class Backend:
-    def __init__(self, dictionary, data):
+    def __init__(self, dictionary, data, open_files=()):
         self.lock = threading.Lock()
+        self.waiting = list(open_files)
+        self.taken = []
         self.dictionary = sqlite3.connect(f"file:{dictionary}?mode=ro", uri=True, check_same_thread=False)
         self.dictionary.execute("PRAGMA query_only = ON")
         os.makedirs(os.path.join(data, "Böcker"), exist_ok=True)
@@ -106,6 +108,13 @@ class Backend:
                 with open(path, "w", encoding="utf-8") as file:
                     json.dump(secrets, file)
                 return None
+            if command == "pending_take":
+                # Som Öppna med i appen: filerna från --open, en gång.
+                self.taken, self.waiting = self.waiting, []
+                return [{"name": os.path.basename(path)} for path in self.taken]
+            if command == "pending_read":
+                with open(self.taken[int(args["index"])], "rb") as file:
+                    return file.read()
             if command == "open_url":
                 with open(os.path.join(self.data, "opened_urls.txt"), "a", encoding="utf-8") as file:
                     file.write(args["url"] + "\n")
@@ -171,6 +180,7 @@ def main():
     parser.add_argument("--dictionary", required=True)
     parser.add_argument("--data", default=os.path.join(HERE, "data"))
     parser.add_argument("--port", type=int, default=8955)
+    parser.add_argument("--open", nargs="*", default=[], help="böcker som om de öppnats med Öppna med i Utforskaren")
     args = parser.parse_args()
     with open(CONFIG, encoding="utf-8") as file:
         config = json.load(file)
@@ -178,7 +188,7 @@ def main():
     # anropa 127.0.0.1, så att synken kan provas mot låtsasservern (windows/tests/mock_supabase.py).
     csp = config["app"]["security"]["csp"].replace(" ipc: http://ipc.localhost", "")
     csp = csp.replace("https://*.supabase.co", "https://*.supabase.co http://127.0.0.1:*")
-    backend = Backend(args.dictionary, args.data)
+    backend = Backend(args.dictionary, args.data, args.open)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(backend, csp))
     print(f"Läsa på http://127.0.0.1:{args.port}/ (pid {os.getpid()}, data i {args.data})", flush=True)
     try:

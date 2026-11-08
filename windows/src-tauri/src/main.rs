@@ -15,7 +15,7 @@ use serde_json::Value;
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::path::BaseDirectory;
 use tauri::webview::PageLoadEvent;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 struct AppState {
     /// Ordboken (lasa-ordbok.sqlite bland appens resurser), skrivskyddad. Felet sparas om den saknas.
@@ -284,10 +284,104 @@ fn show_main_window_once(show: impl FnOnce()) {
     }
 }
 
+// Öppna med (W8): filer som Windows ger appen när man väljer Öppna med i Utforskaren eller dubbelklickar
+// på en bok. Gränssnittet hämtar dem med pending_take och läser dem med pending_read. Det kan bara läsa
+// filer som kommit den här vägen, aldrig en valfri sökväg.
+
+#[derive(Default)]
+struct OpenFiles {
+    /// Filer som har kommit men inte hämtats av gränssnittet än.
+    waiting: Mutex<Vec<PathBuf>>,
+    /// Filerna som gränssnittet senast hämtade, i samma ordning som listan det fick.
+    taken: Mutex<Vec<PathBuf>>,
+}
+
+const OPENABLE: [&str; 8] = ["pdf", "epub", "txt", "md", "markdown", "rtf", "html", "htm"];
+
+/// Böckerna bland argumenten (det första är programmet självt). Relativa sökvägar räknas från cwd.
+fn book_arguments(arguments: &[String], cwd: Option<&Path>) -> Vec<PathBuf> {
+    arguments
+        .iter()
+        .skip(1)
+        .filter(|argument| !argument.starts_with('-'))
+        .map(|argument| {
+            let path = PathBuf::from(argument);
+            match cwd {
+                Some(directory) if path.is_relative() => directory.join(path),
+                _ => path,
+            }
+        })
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| OPENABLE.contains(&ext.to_lowercase().as_str()))
+        })
+        .collect()
+}
+
+fn queue_files(app: &AppHandle, files: Vec<PathBuf>) {
+    if files.is_empty() {
+        return;
+    }
+    let state = app.state::<OpenFiles>();
+    state.waiting.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).extend(files);
+    let _ = app.emit("lasa-open-files", ());
+}
+
+/// Filerna som väntar: namn och storlek. Listans plats används av pending_read.
+#[tauri::command(async)]
+fn pending_take(files: State<'_, OpenFiles>) -> Result<Vec<Value>, String> {
+    let waiting: Vec<PathBuf> = std::mem::take(&mut *files.waiting.lock().unwrap_or_else(|p| p.into_inner()));
+    let list = waiting
+        .iter()
+        .map(|path| {
+            let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            serde_json::json!({ "name": name })
+        })
+        .collect();
+    *files.taken.lock().unwrap_or_else(|p| p.into_inner()) = waiting;
+    Ok(list)
+}
+
+/// En av filerna som pending_take gav, som råa byte.
+#[tauri::command(async)]
+fn pending_read(files: State<'_, OpenFiles>, index: usize) -> Result<Response, String> {
+    let path = files
+        .taken
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(index)
+        .cloned()
+        .ok_or_else(|| "Filen finns inte i listan.".to_string())?;
+    let bytes = fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(Response::new(bytes))
+}
+
 fn main() {
     tauri::Builder::default()
+        // En enda instans: startas appen en gång till (till exempel med Öppna med) kommer det öppna
+        // fönstret fram, och filerna öppnas där.
+        .plugin(tauri_plugin_single_instance::init(|app, arguments, cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            queue_files(app, book_arguments(&arguments, Some(Path::new(&cwd))));
+        }))
         .plugin(tauri_plugin_opener::init())
+        .manage(OpenFiles::default())
         .setup(|app| {
+            let arguments: Vec<String> = std::env::args().collect();
+            let cwd = std::env::current_dir().ok();
+            let files = book_arguments(&arguments, cwd.as_deref());
+            app.state::<OpenFiles>()
+                .waiting
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .extend(files);
             let data = app.path().app_data_dir()?;
             let books = data.join("Böcker");
             fs::create_dir_all(&books)?;
@@ -333,7 +427,9 @@ fn main() {
             library_read,
             library_delete,
             secret_get,
-            secret_set
+            secret_set,
+            pending_take,
+            pending_read
         ])
         .run(tauri::generate_context!())
         .expect("Läsa kunde inte starta");

@@ -121,7 +121,7 @@ async function readMetadata(bytes, ext, fileName) {
 
 /** Lägger till filer i biblioteket. Ger antalet nya böcker. Medan filerna läses in visas hur långt det
  *  har kommit ("Lägger till 3 av 7"). */
-export async function importFiles(files) {
+export async function importFiles(files, { ids = null } = {}) {
   let added = 0;
   const list = [...files];
   const status = list.length ? statusBox() : null;
@@ -138,7 +138,8 @@ export async function importFiles(files) {
       const size = bytes.length;
       const id = await sha256(bytes);
       if (await getBook(id)) {
-        toast(`${file.name} finns redan i biblioteket.`);
+        if (ids) ids.push(id);
+        else toast(`${file.name} finns redan i biblioteket.`);
         continue;
       }
       // Filen sparas först, eftersom pdf.js tar över byten när titel och omslag läses.
@@ -149,6 +150,7 @@ export async function importFiles(files) {
         ext, fileName: file.name, size, cover: meta.cover });
       stored = null;
       added += 1;
+      ids?.push(id);
     } catch (error) {
       console.error(error);
       toast(isUnreadable(error) ? bookErrorMessage(error, file.name)
