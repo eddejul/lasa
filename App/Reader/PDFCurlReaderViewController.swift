@@ -39,7 +39,8 @@ final class PDFCurlReaderViewController: UIViewController {
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
                                            goToPage: #selector(showGoToPage), zoom: #selector(zoomCurrentPage),
                                            thumbnails: #selector(showThumbnails),
-                                           bookPages: #selector(showBookPages), bookInfo: #selector(showBookInfo)),
+                                           bookPages: #selector(showBookPages), bookInfo: #selector(showBookInfo),
+                                           notebook: #selector(showNotebook)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -1752,6 +1753,22 @@ extension PDFCurlReaderViewController {
     }
 
     // MARK: Listan med bokmärken och markeringar
+
+    /// K1: anteckningsboken för boken, med läsarens kapitel och sidnummer.
+    @objc fileprivate func showNotebook() {
+        guard presentedViewController == nil else { return }
+        let notebook = NotebookViewController(scope: .book(book, chapter: { [weak self] highlight in
+            self?.chapterTitle(for: highlight.section) ?? ""
+        }, page: { [weak self] highlight in
+            self?.citationPage(for: highlight)
+        }))
+        notebook.onSelect = { [weak self] highlight in
+            self?.openAnnotation(.highlights, id: highlight.id)
+        }
+        let navigation = UINavigationController(rootViewController: notebook)
+        navigation.modalPresentationStyle = traitCollection.userInterfaceIdiom == .pad ? .formSheet : .pageSheet
+        present(navigation, animated: true)
+    }
 
     fileprivate func makeAnnotationsList() -> AnnotationsViewController {
         let list = AnnotationsViewController(kind: .highlights)

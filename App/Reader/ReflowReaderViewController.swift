@@ -68,7 +68,7 @@ final class ReflowReaderViewController: UIViewController {
         return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: text, theme: theme,
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
-                                           bookInfo: #selector(showBookInfo)),
+                                           bookInfo: #selector(showBookInfo), notebook: #selector(showNotebook)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -2300,6 +2300,22 @@ extension ReflowReaderViewController {
     }
 
     // MARK: Listan med bokmärken och markeringar
+
+    /// K1: anteckningsboken för boken, med läsarens kapitel och sidnummer.
+    @objc fileprivate func showNotebook() {
+        guard presentedViewController == nil else { return }
+        let notebook = NotebookViewController(scope: .book(book, chapter: { [weak self] highlight in
+            self?.chapterName(highlight.section) ?? ""
+        }, page: { [weak self] highlight in
+            nil
+        }))
+        notebook.onSelect = { [weak self] highlight in
+            self?.openAnnotation(.highlights, id: highlight.id)
+        }
+        let navigation = UINavigationController(rootViewController: notebook)
+        navigation.modalPresentationStyle = traitCollection.userInterfaceIdiom == .pad ? .formSheet : .pageSheet
+        present(navigation, animated: true)
+    }
 
     fileprivate func makeAnnotationsList() -> AnnotationsViewController {
         let list = AnnotationsViewController(kind: .highlights)

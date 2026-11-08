@@ -101,7 +101,7 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
             button.backgroundColor = color.solid
             button.layer.cornerRadius = 15
             button.tintColor = .black
-            button.accessibilityLabel = color.title
+            button.accessibilityLabel = HighlightColorNames.name(color)
             button.addAction(UIAction { [weak self] _ in
                 self?.choose(color)
             }, for: .touchUpInside)

@@ -97,6 +97,36 @@ final class StudyTests: XCTestCase {
         XCTAssertEqual(Citation.year(fromDate: "2016-03-01"), "2016")
     }
 
+    // MARK: K1
+
+    private func entry(_ id: String, color: HighlightColor, note: String = "", chapter: String,
+                       book: String = "b") -> NotebookEntry {
+        let highlight = Highlight(id: id, book: book, section: 0, start: 0, length: 4, text: "Text \(id) om ethos",
+                                  color: color, note: note, created: Date(), updated: Date())
+        return NotebookEntry(highlight: highlight, bookID: book, bookTitle: "Bok \(book)", chapter: chapter, page: "63")
+    }
+
+    func testNotebookFiltersAndGroups() {
+        let entries = [entry("1", color: .yellow, chapter: "Kap 1"), entry("2", color: .blue, note: "Begrepp", chapter: "Kap 1"),
+                       entry("3", color: .yellow, chapter: "Kap 2"), entry("4", color: .pink, chapter: "", book: "c")]
+        var filter = NotebookLogic.Filter()
+        XCTAssertEqual(NotebookLogic.filter(entries, filter).count, 4)
+        filter.colors = [.yellow]
+        XCTAssertEqual(NotebookLogic.filter(entries, filter).map(\.highlight.id), ["1", "3"])
+        filter.colors = []
+        filter.notesOnly = true
+        XCTAssertEqual(NotebookLogic.filter(entries, filter).map(\.highlight.id), ["2"])
+        filter.notesOnly = false
+        filter.query = "BEGREPP"
+        XCTAssertEqual(NotebookLogic.filter(entries, filter).map(\.highlight.id), ["2"])
+        filter.query = ""
+        filter.books = ["c"]
+        XCTAssertEqual(NotebookLogic.filter(entries, filter).map(\.highlight.id), ["4"])
+        let groups = NotebookLogic.groups(Array(entries.prefix(3)), allBooks: false)
+        XCTAssertEqual(groups.map(\.title), ["Kap 1", "Kap 2"])
+        XCTAssertEqual(NotebookLogic.groups(entries, allBooks: true).map(\.title), ["Bok b: Kap 1", "Bok b: Kap 2", "Bok c"])
+    }
+
     // MARK: Trappan
 
     /// Edvins data: en databas i den form main har i dag (steg 5) går genom de nya stegen utan att något

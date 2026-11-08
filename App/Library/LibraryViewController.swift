@@ -184,6 +184,14 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             self?.afterDismissingPanel { self?.navigationController?.pushViewController(AboutDictionaryViewController(),
                                                                                          animated: true) }
         }
+        panel.onNotebook = { [weak self] in
+            self?.afterDismissingPanel {
+                guard let self = self else { return }
+                let navigation = UINavigationController(rootViewController: NotebookViewController(scope: .all))
+                navigation.modalPresentationStyle = self.traitCollection.userInterfaceIdiom == .pad ? .formSheet : .pageSheet
+                self.present(navigation, animated: true)
+            }
+        }
         panel.onNewCourse = { [weak self] in
             self?.afterDismissingPanel { self?.newCourse(adding: nil) }
         }

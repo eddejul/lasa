@@ -13,7 +13,7 @@ enum LibraryScope: Equatable {
 final class LibrarySidebarViewController: UIViewController, UICollectionViewDelegate {
 
     enum Item: Hashable {
-        case all, reading, course(String), newCourse, review, savedWords, aboutDictionary
+        case all, reading, course(String), newCourse, notebook, review, savedWords, aboutDictionary
     }
 
     struct Counts: Equatable {
@@ -28,6 +28,8 @@ final class LibrarySidebarViewController: UIViewController, UICollectionViewDele
     var onReview: (() -> Void)?
     var onSavedWords: (() -> Void)?
     var onAboutDictionary: (() -> Void)?
+    /// K1: anteckningsboken för alla böcker.
+    var onNotebook: (() -> Void)?
     var onNewCourse: (() -> Void)?
     /// Hållmenyn på en kurs: Byt namn, Färg och Ta bort.
     var courseMenu: ((Course) -> UIMenu?)?
@@ -96,6 +98,7 @@ final class LibrarySidebarViewController: UIViewController, UICollectionViewDele
         sections = [
             (nil, [.all, .reading]),
             ("Kurser", courses.map { .course($0.id) } + [.newCourse]),
+            ("Plugg", [.notebook]),
             ("Ord", [.review, .savedWords, .aboutDictionary]),
         ]
         var snapshot = NSDiffableDataSourceSnapshot<Int, Item>()
@@ -144,6 +147,9 @@ final class LibrarySidebarViewController: UIViewController, UICollectionViewDele
             content.text = "Ny kurs"
             content.image = UIImage(systemName: "plus")
             content.textProperties.color = palette.accent
+        case .notebook:
+            content.text = "Anteckningsbok"
+            content.image = UIImage(systemName: "text.book.closed")
         case .review:
             content.text = "Repetera"
             content.image = UIImage(systemName: "rectangle.stack")
@@ -194,6 +200,8 @@ final class LibrarySidebarViewController: UIViewController, UICollectionViewDele
             return true
         case .newCourse:
             onNewCourse?()
+        case .notebook:
+            onNotebook?()
         case .review:
             onReview?()
         case .savedWords:
@@ -234,6 +242,7 @@ final class LibrarySidebarViewController: UIViewController, UICollectionViewDele
                 case .course(let id):
                     return "\(courses.first { $0.id == id }?.name ?? "?") \(counts.courses[id] ?? 0)"
                 case .newCourse: return "Ny kurs"
+                case .notebook: return "Anteckningsbok"
                 case .review: return "Repetera \(counts.review)"
                 case .savedWords: return "Sparade ord \(counts.saved)"
                 case .aboutDictionary: return "Om ordboken"
