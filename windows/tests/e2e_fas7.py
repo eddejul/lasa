@@ -499,7 +499,70 @@ def memory(page, books, out):
     back_to_library(page)
 
 
-STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory]
+def words_rows(page, sql):
+    return page.evaluate("""async (sql) => (await fetch('/api/user_query', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ db: 'ord', sql, params: [] }) })).json()""", sql)
+
+
+def review(page, books, out):
+    # Tre ord till, som om de slagits upp tidigare (äldre än det första).
+    page.evaluate("""async () => {
+      for (const [i, word] of ['stad', 'bro', 'library'].entries()) {
+        await fetch('/api/user_execute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ db: 'ord', sql: `INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups,
+            created, updated, uuid, book_id) VALUES (?, ?, ?, ?, 'Prov', 0, 1, ?, ?, ?, '')`,
+            params: [word, word, word === 'library' ? 'en' : 'sv', `En mening med ${word}.`, 1700000000 + i, 1700000000 + i, `uuid-${i}`] }) });
+      }
+    }""")
+    page.locator('[data-testid="tab-saved"]').click()
+    page.wait_for_selector('[data-testid="review-button"]')
+    label = page.locator('[data-testid="review-button"]').inner_text()
+    saved = len(words_rows(page, "SELECT lemma FROM saved_words WHERE deleted = 0"))
+    check(label == f'Repetera ({saved})', f'knappen visar antalet ord att repetera: {label}, {saved} sparade')
+    page.locator('[data-testid="review-button"]').click()
+    page.wait_for_selector('[data-testid="review-word"]')
+    first = page.locator('[data-testid="review-word"]').inner_text()
+    check('nytt ord' in page.locator('[data-testid="review-progress"]').inner_text(), 'ett nytt ord visas')
+    page.keyboard.press('Space')
+    check(wait_for(lambda: page.locator('[data-testid="review-answer"]').is_visible()), 'mellanslag visar svaret')
+    whens = page.locator('.grade-when').all_inner_texts()
+    check(whens == ['10 min', '1 dag', '1 dag', '4 dagar'], f'betygen visar när ordet kommer igen, som på iPaden: {whens}')
+    page.screenshot(path=os.path.join(out, "f09-repetera.png"))
+    page.keyboard.press('3')
+    check(wait_for(lambda: page.locator('[data-testid="review-done"]').count() == 1
+                   or page.locator('[data-testid="review-word"]').inner_text() != first),
+          f'Bra går till nästa ord: {page.locator(".review-dialog").inner_text()[:120]!r}')
+    row = words_rows(page, f"SELECT due, interval, ease, reps, lapses, review_updated, review_introduced, updated FROM saved_words WHERE lemma = '{first}'")
+    check(row and row[0][1] == 1 and row[0][2] == 2.5 and row[0][3] == 1 and row[0][4] == 0 and row[0][5] and row[0][6],
+          f'repetitionen sparas som på iPaden (1 dag, ease 2,5, reps 1): {row}')
+    check(row and abs(row[0][0] - (row[0][5] + 86400)) < 2, 'nästa gång om en dag')
+    check(row and row[0][5] > row[0][7], 'repetitionens ändringstid är ny, ordets egen ändringstid är orörd')
+    # Igen: ordet kommer tillbaka i slutet av omgången
+    if page.locator('[data-testid="review-word"]').count():
+        second = page.locator('[data-testid="review-word"]').inner_text()
+        page.keyboard.press('Space')
+        page.keyboard.press('1')
+        wait_for(lambda: page.locator('[data-testid="review-word"]').inner_text() != second)
+        remaining = []
+        for _ in range(40):
+            if page.locator('[data-testid="review-done"]').count():
+                break
+            remaining.append(page.locator('[data-testid="review-word"]').inner_text())
+            page.keyboard.press('Space')
+            page.wait_for_timeout(100)
+            page.keyboard.press('4')
+            page.wait_for_timeout(100)
+        check(remaining[-1:] == [second] and remaining.count(second) == 1, f'Igen lägger ordet sist i omgången: {second} i {remaining}')
+        check(wait_for(lambda: page.locator('[data-testid="review-done"]').count() == 1), 'omgången tar slut')
+        check('Klart för i dag' in page.locator('[data-testid="review-done"]').inner_text(), 'Klart för i dag')
+    page.keyboard.press('Escape')
+    check(wait_for(lambda: page.locator('[data-testid="review-button"]').inner_text() == 'Repetera'),
+          f'inga ord kvar att repetera: {page.locator("[data-testid=review-button]").inner_text()}')
+    page.locator('[data-testid="tab-library"]').click()
+    page.wait_for_selector('[data-testid="book"]')
+
+
+STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review]
 
 
 def main():

@@ -43,6 +43,8 @@ const WORD_COLUMNS = [
   ['reps', 'INTEGER'],
   ['lapses', 'INTEGER'],
   ['review_updated', 'REAL'],
+  // När ordet repeterades första gången (för högst 20 nya ord om dagen). Bara på den här datorn.
+  ['review_introduced', 'REAL'],
 ];
 
 const LIBRARY_SCHEMA = `
@@ -269,7 +271,7 @@ export async function savedWords() {
 /** Ett borttaget ord raderas inte: det märks som borttaget med ny ändringstid, så att synken kan ta bort
  *  det på iPaden också. Repetitionen följer inte med ett borttaget ord. */
 const TOMBSTONE = `UPDATE saved_words SET deleted = 1, updated = ?, due = NULL, interval = NULL, ease = NULL,
-  reps = NULL, lapses = NULL, review_updated = NULL`;
+  reps = NULL, lapses = NULL, review_updated = NULL, review_introduced = NULL`;
 
 export async function deleteSavedWord(id) {
   await words.run(`${TOMBSTONE} WHERE id = ?`, [now(), id]);
@@ -296,19 +298,40 @@ export async function wordsForSync() {
   }));
 }
 
-/** Skriver ett ord från synken. uuid och book_id behålls om ordet finns, annars får det ett nytt uuid. */
+/** Skriver ett ord från synken. uuid och book_id behålls om ordet finns, annars får det ett nytt uuid.
+ *  Repetitionen räknas som påbörjad när den första gången kom hit (som introduced på iPaden). */
 export async function applySyncedWord(word) {
+  const introduced = word.due === null || word.due === undefined ? null : (word.reviewUpdated ?? null);
   await words.run(`INSERT INTO saved_words (word, lemma, language, sentence, book, page, lookups, created, updated, uuid, book_id,
-      deleted, due, interval, ease, reps, lapses, review_updated)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?)
+      deleted, due, interval, ease, reps, lapses, review_updated, review_introduced)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (lemma, language) DO UPDATE SET
       word = excluded.word, sentence = excluded.sentence, book = excluded.book, page = excluded.page,
       lookups = excluded.lookups, created = excluded.created, updated = excluded.updated, deleted = excluded.deleted,
       due = excluded.due, interval = excluded.interval, ease = excluded.ease, reps = excluded.reps,
-      lapses = excluded.lapses, review_updated = excluded.review_updated`,
+      lapses = excluded.lapses, review_updated = excluded.review_updated,
+      review_introduced = CASE WHEN excluded.due IS NULL THEN NULL ELSE COALESCE(review_introduced, excluded.review_introduced) END`,
   [word.word, word.lemma, word.language, word.sentence, word.book, word.page, word.lookups, word.created, word.updated,
     crypto.randomUUID(), word.deleted ? 1 : 0, word.due ?? null, word.interval ?? null, word.ease ?? null,
-    word.reps ?? null, word.lapses ?? null, word.reviewUpdated ?? null]);
+    word.reps ?? null, word.lapses ?? null, word.reviewUpdated ?? null, introduced]);
+}
+
+// Repetitionen (W5, schemat i review.js)
+
+/** Sparade ord med repetitionen, senast ändrade först (samma ordning som på iPaden). */
+export async function reviewWords() {
+  const rows = await words.all(`SELECT id, word, lemma, language, sentence, book, page, updated, due, interval, ease, reps, lapses,
+      review_introduced FROM saved_words WHERE deleted = 0 ORDER BY updated DESC`);
+  return rows.map(([id, word, lemma, language, sentence, book, page, updated, due, interval, ease, reps, lapses, introduced]) =>
+    ({ id, word, lemma, language, sentence, book, page, updated, due, interval, ease, reps, lapses, introduced }));
+}
+
+/** Sparar hur det gick. Repetitionens ändringstid blir nu, så att synken skickar den till iPaden. */
+export async function recordReview(lemma, language, { due, interval, ease, reps, lapses }) {
+  const time = now();
+  await words.run(`UPDATE saved_words SET due = ?, interval = ?, ease = ?, reps = ?, lapses = ?, review_updated = ?,
+      review_introduced = COALESCE(review_introduced, ?) WHERE lemma = ? AND language = ? AND deleted = 0`,
+  [due, interval, ease, reps, lapses, time, time, lemma, language]);
 }
 
 // Fel synonym

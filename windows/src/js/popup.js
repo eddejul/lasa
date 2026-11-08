@@ -58,9 +58,9 @@ function shownSynonyms(sense) {
   return common.length ? common : sense.synonyms.slice(0, 3);
 }
 
-const synonymLine = (sense) => shownSynonyms(sense).map((s) => s.word).join(', ');
+export const synonymLine = (sense) => shownSynonyms(sense).map((s) => s.word).join(', ');
 
-const translationLine = (entry) => entry.translations
+export const translationLine = (entry) => entry.translations
   .map((t) => (t.comment ? `${t.text} (${t.comment})` : t.text)).join(', ');
 
 function summary(entry) {
