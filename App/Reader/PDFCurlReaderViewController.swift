@@ -39,7 +39,7 @@ final class PDFCurlReaderViewController: UIViewController {
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
                                            goToPage: #selector(showGoToPage), zoom: #selector(zoomCurrentPage),
                                            thumbnails: #selector(showThumbnails),
-                                           bookPages: #selector(showBookPages)),
+                                           bookPages: #selector(showBookPages), bookInfo: #selector(showBookInfo)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -899,6 +899,12 @@ final class PDFCurlReaderViewController: UIViewController {
         present(alert, animated: true)
     }
 
+    /// K3: Bokinfo för citat i Mer.
+    @objc fileprivate func showBookInfo() {
+        guard presentedViewController == nil else { return }
+        BookInfoEditor.present(book: book, from: self) {}
+    }
+
     private func applyBookPages(_ info: BookInfo) {
         BookInfoStore.shared.save(info, book: bookKey)
         pageNumbering = makePageNumbering()
@@ -1620,6 +1626,11 @@ extension PDFCurlReaderViewController {
             guard let self = self else { return }
             HighlightLookUp.present(highlight, book: self.book, pageIndex: highlight.section, from: self,
                                     sourceView: self.view, sourceRect: anchor)
+        }
+        menu.onCite = { [weak self] in
+            guard let self = self, let current = AnnotationStore.shared.highlight(id: id) else { return }
+            CitationViewController.present(book: self.book, text: current.text, page: self.citationPage(for: current),
+                                           from: self, sourceView: self.view, sourceRect: anchor)
         }
         lastMarkMenuAnchor = anchor
         HighlightMenuViewController.present(menu, from: self, sourceView: view, sourceRect: anchor)

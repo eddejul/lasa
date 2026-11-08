@@ -67,7 +67,8 @@ final class ReflowReaderViewController: UIViewController {
         text.accessibilityLabel = "Utseende och text"
         return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: text, theme: theme,
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
-                                           mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark)),
+                                           mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
+                                           bookInfo: #selector(showBookInfo)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -2109,6 +2110,12 @@ extension ReflowReaderViewController {
             HighlightLookUp.present(highlight, book: self.book, pageIndex: pageIndex, from: self,
                                     sourceView: self.view, sourceRect: anchor)
         }
+        menu.onCite = { [weak self] in
+            guard let self = self, let current = AnnotationStore.shared.highlight(id: id) else { return }
+            // EPUB och text har inga fasta sidor, så citatet får ingen sida.
+            CitationViewController.present(book: self.book, text: current.text, page: nil,
+                                           from: self, sourceView: self.view, sourceRect: anchor)
+        }
         lastMarkMenuAnchor = anchor
         HighlightMenuViewController.present(menu, from: self, sourceView: view, sourceRect: anchor)
     }
@@ -2150,6 +2157,12 @@ extension ReflowReaderViewController {
         bookmarkItem?.image = UIImage(systemName: marked ? "bookmark.fill" : "bookmark")
         bookmarkItem?.accessibilityValue = marked ? "Sidan har ett bokmärke" : "Inget bokmärke"
         chrome.updateBookmark(marked)
+    }
+
+    /// K3: Bokinfo för citat i Mer. EPUB fyller i år och förlag själv.
+    @objc fileprivate func showBookInfo() {
+        guard presentedViewController == nil else { return }
+        BookInfoEditor.present(book: book, from: self) {}
     }
 
     /// Bokmärker sidan man läser, eller tar bort bokmärket om sidan redan har ett.

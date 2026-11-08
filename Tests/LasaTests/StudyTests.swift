@@ -60,6 +60,43 @@ final class StudyTests: XCTestCase {
         XCTAssertFalse(off.usesBookNumbers)
     }
 
+    // MARK: K3
+
+    private let lindqvist = CitationSource(author: "Lindqvist, Anders", year: "2016",
+                                           title: "Klassisk retorik för vår tid", publisher: "Studentlitteratur",
+                                           place: "Lund")
+
+    func testInTextCitations() {
+        XCTAssertEqual(Citation.quote("Retoriken bygger på det sanno-\nlika.", style: .harvard, source: lindqvist,
+                                      page: "63"),
+                       "”Retoriken bygger på det sannolika.” (Lindqvist 2016, s. 63)")
+        XCTAssertEqual(Citation.inText(.apa, source: lindqvist, page: "63"), "(Lindqvist, 2016, s. 63)")
+        XCTAssertEqual(Citation.inText(.harvard, source: lindqvist, page: nil), "(Lindqvist 2016)")
+        var noYear = lindqvist
+        noYear.year = ""
+        XCTAssertEqual(Citation.inText(.harvard, source: noYear, page: "5"), "(Lindqvist u.å., s. 5)")
+        let two = CitationSource(author: "Anders Lindqvist; Mika Hietanen", year: "2020", title: "T")
+        XCTAssertEqual(Citation.inText(.harvard, source: two, page: nil), "(Lindqvist och Hietanen 2020)")
+        XCTAssertEqual(Citation.inText(.apa, source: two, page: nil), "(Lindqvist & Hietanen, 2020)")
+        let epub = CitationSource(author: "Anders Lindqvist, Mika Hietanen, Ola Ek", year: "2020", title: "T")
+        XCTAssertEqual(Citation.inText(.harvard, source: epub, page: nil), "(Lindqvist m.fl. 2020)")
+    }
+
+    func testFootnoteAndReferences() {
+        XCTAssertEqual(Citation.footnote(source: lindqvist, page: "63"),
+                       "Anders Lindqvist, Klassisk retorik för vår tid (Lund: Studentlitteratur, 2016), s. 63.")
+        XCTAssertEqual(Citation.quote("Text", style: .oxford, source: lindqvist, page: "63"),
+                       "”Text”¹\n\n¹ Anders Lindqvist, Klassisk retorik för vår tid (Lund: Studentlitteratur, 2016), s. 63.")
+        XCTAssertEqual(Citation.reference(.harvard, source: lindqvist),
+                       "Lindqvist, A. (2016) Klassisk retorik för vår tid. Lund: Studentlitteratur.")
+        XCTAssertEqual(Citation.reference(.apa, source: lindqvist),
+                       "Lindqvist, A. (2016). Klassisk retorik för vår tid. Studentlitteratur.")
+        XCTAssertEqual(Citation.names("Anders Lindqvist").first, Citation.Name(family: "Lindqvist", given: "Anders"))
+        XCTAssertEqual(Citation.year(inFileName: "Lindqvist 2016 kap 3 (s63-80).pdf"), "2016")
+        XCTAssertNil(Citation.year(inFileName: "Kap (s281-305).pdf"))
+        XCTAssertEqual(Citation.year(fromDate: "2016-03-01"), "2016")
+    }
+
     // MARK: Trappan
 
     /// Edvins data: en databas i den form main har i dag (steg 5) går genom de nya stegen utan att något

@@ -11,6 +11,8 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
     var onDelete: (() -> Void)?
     /// Slå upp: läsaren visar ordrutan för markeringens första ord.
     var onLookUp: (() -> Void)?
+    /// K3: Kopiera som citat. Läsaren visar rutan med citatstilarna.
+    var onCite: (() -> Void)?
 
     private let highlight: Highlight
     private var colorButtons: [HighlightColor: UIButton] = [:]
@@ -123,6 +125,12 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
             UIPasteboard.general.string = self.highlight.text
             self.dismiss(animated: true)
         }
+        let cite = actionButton("Citat", symbol: "text.quote", color: palette.ink) { [weak self] in
+            self?.dismiss(animated: true) {
+                self?.onCite?()
+            }
+        }
+        cite.accessibilityLabel = "Kopiera som citat"
         let lookUp = actionButton("Slå upp", symbol: "character.book.closed", color: palette.ink) { [weak self] in
             self?.dismiss(animated: true) {
                 self?.onLookUp?()
@@ -135,6 +143,9 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
         }
         trash.accessibilityLabel = "Ta bort markeringen"
         var actionViews = [note, copy]
+        if onCite != nil {
+            actionViews.append(cite)
+        }
         if onLookUp != nil {
             actionViews.append(lookUp)
         }
