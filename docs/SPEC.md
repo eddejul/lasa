@@ -235,7 +235,7 @@ Byggd 7 november 2026 på grenen `fas6`.
 
 ### 6.10 Våg 4 (8 november 2026)
 
-* **Biblioteket (B1, B2):** ett rutnät med omslag, riktiga titlar och författare ur filerna och en tunn stapel för hur långt man läst. Överst Fortsätt läsa med kapitel, sida och sidor kvar (ingen tid kvar). Filter (Alla, Pågående, Olästa, Utlästa) och Sortera (Senast läst, Titel, Tillagd). Håll fingret på ett omslag för Byt namn, Välj omslag (PDF), Lägg i kurs, Markera som läst och Ta bort.
+* **Biblioteket (B1, B2):** ett rutnät med omslag, riktiga titlar och författare ur filerna och en tunn stapel för hur långt man läst. Överst Fortsätt läsa med kapitel, sida och sidor kvar (ingen tid kvar). Filter (Alla, Pågående, Olästa, Utlästa) och Sortera (Senast läst, Titel, Tillagd). Håll fingret på ett omslag för Byt namn, Välj omslag (PDF), Lägg i kurs, Markera som läst och Ta bort. Ta bort behåller markeringarna och läspositionen, som på Windows, så samma fil som läggs in igen öppnas där man var (D3-5).
 * **Kurser (B3):** sidopanel med Alla böcker, Läser nu, kurserna (mappar i Böcker blir kurser av sig själva), Repetera med antalet ord som väntar, Sparade ord och Om ordboken, och ett sökfält. En kurs kan få en färg som syns som rand på omslagen. Kurserna synkas inte än.
 * **Första start (B5):** en ny installation utan böcker får en välkomstsida och en exempelbok som lär ut bläddring, ordet under fingret och markering, och kortet Gör mer med Sensus (Förklaring med AI). Ett tomt bibliotek har Välj filer, Öppna från Filer och Prova exempelboken.
 * **iPhone (U9) och rörelser (U10):** två kolumner och en flikrad längst ner på iPhone. Boken öppnas från omslaget och stängs in i det, omslaget trycks ner lite, och med Minska rörelse blir det toningar.

@@ -125,6 +125,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Kurser (B3, steg 5): `courses` och `course_books` (`CourseStore`, `CourseLogic` i `Courses.swift`). En översta undermapp i Böcker blir en kurs av sig själv, en borttagen kurs skapas inte igen. Ingen synk av kurserna (F1 bygger om synken). Sidopanelen (`LibrarySidebar.swift`) ligger fast i liggande på iPad, är en ruta i stående och ett ark från flikraden på iPhone (U9).
 * Första start (B5, `Onboarding.swift`): välkomstsidan bara när det inte finns böcker, markeringar, ord eller läspositioner. Exempelboken är Markdown i koden och skrivs till Böcker, och `OnboardingTips` bockar av stegen i läsaren. Öppningen från omslaget (U10) är `BookOpenTransition`, före och efter läsaren, aldrig i vikningen. `LibrarySelfTest` (i fas 6) provar biblioteket och fotograferar det i stående, liggande, iPhone-bredd, tomt och första start.
 * Säkerhetskopiorna (granskning 2): i dag sparas alla kopior (högst tio), tidigare dagar den nyaste av varje slag (automatisk, egen, före återställning). Synkens paus efter en återställning sparas (`sync.pausedAfterRestore`) och hävs bara i Inställningar. En platshållare eller borttagen bok på samma plats ger frågan Ny version, också vid import. Bokmärkesbandet tar bort med Ångra (`UndoBar`).
+* Ta bort (`LibraryStore.delete`, D3-5) tar bort filen men lämnar läspositionen och dess tid kvar, liksom markeringarna och registrets sida och andel, så att samma fil som läggs in igen öppnas där man var. Windows gör likadant.
 
 ## Ordboken (fas 2)
 

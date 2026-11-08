@@ -218,7 +218,17 @@ enum LibrarySelfTest {
             await pause(0.6)
             let title = library.allItems.first { Onboarding.isSample($0.book) }?.title ?? "saknas"
             SelfTest.log("Exempelboken i biblioteket: \(title)")
+            // D3-5: Ta bort lämnar läspositionen och dess tid kvar, så att samma fil som läggs in igen öppnas där.
+            func place() -> String {
+                guard let location = LibraryStore.shared.savedLocation(for: book) else { return "ingen" }
+                return "kapitel \(location.chapter), andel \(location.progression)"
+            }
+            let placeBefore = place()
+            let dateBefore = LibraryStore.shared.positionDate(for: book)
             try? LibraryStore.shared.delete(book)
+            let placeAfter = place()
+            let kept = placeAfter == placeBefore && LibraryStore.shared.positionDate(for: book) == dateBefore
+            SelfTest.log("Ta bort (D3-5): läsposition före \(placeBefore), efter \(placeAfter). " + (kept ? "Rätt" : "FEL"))
         } else {
             SelfTest.log("FEL: exempelboken finns inte i biblioteket")
             navigation.popToRootViewController(animated: false)
