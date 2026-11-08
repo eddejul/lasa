@@ -60,6 +60,38 @@ export function confirmDialog({ title, message, confirm = 'OK', cancel = 'Avbryt
   });
 }
 
+/** En fråga med flera svar (choices: { label, value, kind: 'primary' | 'danger' }). Ger svarets value, eller
+ *  null om rutan stängs med Esc eller ett klick utanför. Svaren står i den ordning de ges. */
+export function choiceDialog({ title, message, choices }) {
+  return new Promise((resolve) => {
+    const layer = document.getElementById('modal-layer');
+    const close = (answer) => {
+      dialog.remove();
+      document.removeEventListener('keydown', onKey, true);
+      resolve(answer);
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        close(null);
+      }
+    };
+    const buttons = choices.map((choice) => el('button', {
+      class: `button${choice.kind ? ` ${choice.kind}` : ''}`, onclick: () => close(choice.value),
+      dataset: { choice: String(choice.value) },
+    }, choice.label));
+    const dialog = el('div', { class: 'modal-backdrop', onclick: (event) => { if (event.target === dialog) close(null); } },
+      el('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': title, dataset: { testid: 'choice-dialog' } },
+        el('h2', {}, title),
+        message ? el('p', {}, message) : null,
+        el('div', { class: 'dialog-buttons dialog-choices' }, buttons)));
+    layer.append(dialog);
+    document.addEventListener('keydown', onKey, true);
+    (buttons.find((button, index) => choices[index].kind === 'primary') ?? buttons[0])?.focus();
+  });
+}
+
 /** En ruta med ett textfält. Ger texten, eller null om den avbryts. */
 export function promptDialog({ title, message, value = '', placeholder = '', confirm = 'OK' }) {
   return new Promise((resolve) => {

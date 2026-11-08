@@ -46,14 +46,27 @@ export async function setSetting(key, value) {
 // Biblioteket
 
 function bookFromRow(row) {
-  const [id, title, author, format, ext, fileName, size, added, opened, position, progress, cover, positionUpdated] = row;
+  const [id, title, author, format, ext, fileName, size, added, opened, position, progress, cover, positionUpdated,
+    sha256, missing, modified] = row;
   let parsed = null;
   try {
     parsed = position ? JSON.parse(position) : null;
   } catch {
     parsed = null;
   }
-  return { id, title, author, format, ext, fileName, size, added, opened, position: parsed, progress, cover, positionUpdated };
+  return { id, title, author, format, ext, fileName, size, added, opened, position: parsed, progress, cover, positionUpdated,
+    sha256: sha256 || '', missing: Boolean(missing), modified: modified ?? 0 };
+}
+
+// Bokens id och kontrollsumma (G3). id är ett eget id (UUID) som aldrig ändras, sha256 är SHA-256 av filens
+// innehåll. Bokfilen heter <sha256>.<ext> i Böcker, och synken skickar sha256 som book_id (docs/SYNK.md).
+// En bok från före G3 som inte flyttats har tom sha256, och då är id:t kontrollsumman.
+export const contentId = (book) => book.sha256 || book.id;
+
+/** Alla böcker, även de som tagits bort ur biblioteket (missing), för matchningen när en fil läggs till. */
+export async function bookRegistry() {
+  const rows = await read('books_registry');
+  return rows.map(bookFromRow);
 }
 
 export async function listBooks() {
@@ -67,11 +80,25 @@ export async function getBook(id) {
 }
 
 export async function addBook(book) {
-  await write('book_add', [book.id, book.title, book.author ?? '', book.format, book.ext, book.fileName, book.size, now(), book.cover ?? '']);
+  await write('book_add', [book.id, book.title, book.author ?? '', book.format, book.ext, book.fileName, book.size, now(),
+    book.cover ?? '', book.sha256, book.modified ?? 0]);
 }
 
-export async function removeBook(id) {
-  await write('book_remove', [id]);
+/** Boken tas bort ur biblioteket, men raden, markeringarna och läspositionen finns kvar (G3), så att de
+ *  kommer tillbaka om samma bok eller en ny version av den läggs till igen. */
+export async function markBookMissing(id) {
+  await write('book_missing', [id]);
+}
+
+/** En ny fil för en bok som behåller sitt id (Behåll markeringarna): ny kontrollsumma, titel och omslag. */
+export async function setBookFile(id, book) {
+  await write('book_new_file', [book.sha256, book.title, book.author ?? '', book.format, book.ext, book.fileName, book.size,
+    book.modified ?? 0, book.cover ?? '', id]);
+}
+
+/** Samma fil som en bok som tagits bort läggs till igen: boken kommer tillbaka med allt. */
+export async function restoreBook(id, fileName, modified) {
+  await write('book_restore', [fileName, modified ?? 0, id]);
 }
 
 export async function markOpened(id) {
@@ -89,7 +116,7 @@ export async function applySyncedPosition(id, position, updated) {
 }
 
 // Markeringar, anteckningar och bokmärken (W1). Samma tabeller och fält som markeringar.sqlite på iPaden
-// (App/Annotations/AnnotationStore.swift) och som synken i docs/SYNK.md: book är bokens id (SHA-256),
+// (App/Annotations/AnnotationStore.swift) och som synken i docs/SYNK.md: book är bokens id (G3, ett UUID),
 // section och ett teckenintervall (start, length) i UTF-16, och text. Inget raderas: borttaget får
 // deleted = 1 och ny ändringstid, så att en framtida synk kan föra borttagningen vidare.
 

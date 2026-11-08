@@ -1,13 +1,14 @@
 // Biblioteket: lista, lägg till (knapp eller dra in filer) och ta bort.
-// Filerna kopieras in i appens egen mapp. Varje bok får ett id som är SHA-256 av filens innehåll
-// (gemener, 64 tecken), samma id som iPaden använder för synken i fas 6.
+// Filerna kopieras in i appens egen mapp och heter efter SHA-256 av innehållet (gemener, 64 tecken), samma
+// kontrollsumma som iPaden använder för synken. Varje bok har dessutom ett eget id som aldrig ändras (G3).
 
 import { deleteBookFile, storeBookFile } from './backend.js';
 import { bookErrorMessage, isUnreadable, unreadable } from './bookerrors.js';
 import { closePdf, openPdf } from './pdfjs.js';
-import { addBook, getBook, listBooks, removeBook } from './store.js';
+import { matchFile, uniqueName } from './bookmatch.js';
+import { addBook, bookRegistry, contentId, listBooks, markBookMissing, restoreBook, setBookFile } from './store.js';
 import { htmlTitle } from './textbook.js';
-import { confirmDialog, el, replace, statusBox, toast } from './ui.js';
+import { choiceDialog, confirmDialog, el, replace, statusBox, toast } from './ui.js';
 
 // Samma filtyper som på iPaden: PDF, EPUB och text (txt, md, rtf, html).
 export const ACCEPTED = ['pdf', 'epub', 'txt', 'md', 'rtf', 'html'];
@@ -119,8 +120,41 @@ async function readMetadata(bytes, ext, fileName) {
   return result;
 }
 
-/** Lägger till filer i biblioteket. Ger antalet nya böcker. Medan filerna läses in visas hur långt det
- *  har kommit ("Lägger till 3 av 7"). */
+const sameName = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+
+/** Frågan när en annan bok i biblioteket heter likadant (som på iPaden, BookImporter.swift). */
+function askNameTaken(name) {
+  return choiceDialog({
+    title: `Det finns redan en bok som heter ${name}`,
+    message: 'Ersätt den, eller behåll båda? Ersätter du den kan markeringar, anteckningar och läsposition följa med till den nya filen.',
+    choices: [
+      { label: 'Ersätt och behåll markeringarna', value: 'keep', kind: 'primary' },
+      { label: 'Ersätt och börja om', value: 'startOver', kind: 'danger' },
+      { label: 'Behåll båda', value: 'both' },
+      { label: 'Avbryt', value: 'cancel' },
+    ],
+  });
+}
+
+/** Ny version av boken, behåll markeringarna? (som på iPaden, LibraryViewController.swift). */
+function askNewVersion(name, old) {
+  const message = sameName(name, old)
+    ? `${name} är en ny version av en bok som du tagit bort ur biblioteket. Ska markeringar, anteckningar och läsposition följa med?`
+    : `${name} liknar ${old}, som du tagit bort ur biblioteket. Ska markeringar, anteckningar och läsposition följa med?`;
+  return choiceDialog({
+    title: 'Ny version av boken',
+    message,
+    choices: [
+      { label: 'Behåll markeringarna', value: 'keep', kind: 'primary' },
+      { label: 'Nej, börja om', value: 'new' },
+    ],
+  });
+}
+
+/** Lägger till filer i biblioteket. Ger antalet nya (eller nya versioner av) böcker. Medan filerna läses in
+ *  visas hur långt det har kommit ("Lägger till 3 av 7"). Varje fil jämförs med bokregistret (G3,
+ *  bookmatch.js): samma innehåll läggs inte till igen, ett upptaget namn ger frågan Ersätt eller Behåll båda,
+ *  och en bok som tagits bort kommer tillbaka med markeringar och läsposition. */
 export async function importFiles(files, { ids = null } = {}) {
   let added = 0;
   const list = [...files];
@@ -136,18 +170,51 @@ export async function importFiles(files, { ids = null } = {}) {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const size = bytes.length;
-      const id = await sha256(bytes);
-      if (await getBook(id)) {
-        if (ids) ids.push(id);
-        else toast(`${file.name} finns redan i biblioteket.`);
+      const hash = await sha256(bytes);
+      const modified = Math.floor((file.lastModified || 0) / 1000);
+      const records = await bookRegistry();
+      const match = matchFile({ name: file.name, sha256: hash }, records);
+      if (match.kind === 'exists') {
+        if (ids) ids.push(match.book.id);
+        else toast(sameName(match.book.fileName, file.name) ? `${file.name} finns redan i biblioteket.`
+          : `${file.name} finns redan i biblioteket som ${match.book.fileName}.`);
         continue;
       }
-      // Filen sparas först, eftersom pdf.js tar över byten när titel och omslag läses.
-      await storeBookFile(id, ext, bytes);
-      stored = { id, ext };
-      const meta = await readMetadata(bytes, ext, file.name);
-      await addBook({ id, title: meta.title, author: meta.author, format: TEXT_FORMATS.includes(ext) ? 'text' : ext,
-        ext, fileName: file.name, size, cover: meta.cover });
+      let action = match.kind === 'restore' ? 'restore' : 'new';
+      let fileName = file.name;
+      if (match.kind === 'nameTaken') {
+        action = await askNameTaken(file.name);
+        if (!action || action === 'cancel') continue;
+        if (action === 'both') fileName = uniqueName(file.name, records);
+      } else if (match.kind === 'newVersion') {
+        action = await askNewVersion(file.name, match.book.fileName);
+        if (!action) continue;
+      }
+      // Filen sparas först, eftersom pdf.js tar över byten när titel och omslag läses. Den heter efter
+      // kontrollsumman (<sha256>.<ext>), bokens id står bara i databasen.
+      await storeBookFile(hash, ext, bytes);
+      stored = { id: hash, ext };
+      let id = match.book?.id;
+      if (action === 'restore') {
+        await restoreBook(id, file.name, modified);
+      } else {
+        const meta = await readMetadata(bytes, ext, fileName);
+        const book = { title: meta.title, author: meta.author, format: TEXT_FORMATS.includes(ext) ? 'text' : ext, ext,
+          fileName, size, cover: meta.cover, sha256: hash, modified };
+        if (action === 'keep') {
+          // Ny version med samma id: markeringar, anteckningar och läsposition följer med.
+          await setBookFile(id, book);
+          if (contentId(match.book) !== hash) await deleteBookFile(contentId(match.book), match.book.ext).catch(() => {});
+        } else {
+          id = crypto.randomUUID().toLowerCase();
+          await addBook({ id, ...book });
+          if (action === 'startOver') {
+            // Ersätt och börja om: den gamla boken tas bort ur biblioteket (raden och markeringarna finns kvar).
+            await markBookMissing(match.book.id);
+            await deleteBookFile(contentId(match.book), match.book.ext).catch(() => {});
+          }
+        }
+      }
       stored = null;
       added += 1;
       ids?.push(id);
@@ -180,7 +247,10 @@ export async function renderLibrary(container, { onOpen }) {
       el('p', {}, 'Klicka på Lägg till böcker (Ctrl och O), eller dra in PDF-, EPUB- eller textfiler (txt, md, rtf, html) i fönstret.')));
     return;
   }
-  const cards = books.map((book) => el('div', { class: 'book-card', dataset: { testid: 'book', id: book.id } },
+  // Två böcker med samma titel (Behåll båda) visar filnamnet under titeln.
+  const titles = books.map((book) => book.title);
+  const twice = new Set(titles.filter((title, index) => titles.indexOf(title) !== index));
+  const cards = books.map((book) => el('div', { class: 'book-card', dataset: { testid: 'book', id: book.id, sha256: contentId(book) } },
     el('button', { class: `book-cover format-${book.format}${book.cover ? ' has-image' : ''}`, onclick: () => onOpen(book.id),
       title: `Öppna ${book.title}` },
     book.cover ? el('img', { class: 'book-cover-image', src: book.cover, alt: '' }) : null,
@@ -189,16 +259,18 @@ export async function renderLibrary(container, { onOpen }) {
     el('div', { class: 'book-info' },
       el('button', { class: 'book-title', onclick: () => onOpen(book.id) }, book.title),
       book.author ? el('div', { class: 'book-author' }, book.author) : null,
+      twice.has(book.title) ? el('div', { class: 'book-file', dataset: { testid: 'book-file' } }, book.fileName) : null,
       el('div', { class: 'book-progress' },
         el('div', { class: 'progress-bar' }, el('div', { class: 'progress-fill', style: `width: ${Math.round((book.progress || 0) * 100)}%` })),
         el('span', {}, progressText(book))),
       el('button', { class: 'link-button danger', onclick: async () => {
         const ok = await confirmDialog({ title: `Ta bort ${book.title}?`,
-          message: 'Boken och läspositionen tas bort ur Sensus. Originalfilen där du hämtade den finns kvar, och sparade ord ligger kvar.',
+          message: 'Boken tas bort ur Sensus. Originalfilen där du hämtade den finns kvar, och sparade ord ligger kvar. '
+            + 'Lägger du till samma bok igen, eller en ny version av den, kommer markeringar och läsposition tillbaka.',
           confirm: 'Ta bort', danger: true });
         if (!ok) return;
-        await deleteBookFile(book.id, book.ext);
-        await removeBook(book.id);
+        await deleteBookFile(contentId(book), book.ext);
+        await markBookMissing(book.id);
         renderLibrary(container, { onOpen });
       } }, 'Ta bort'))));
   replace(container, el('div', { class: 'book-grid' }, cards));

@@ -2,13 +2,14 @@
 
 import { showWordPopup } from './popup.js';
 import { openReview, reviewCount } from './reviewview.js';
-import { deleteSavedWord, listBooks, savedWords } from './store.js';
+import { contentId, deleteSavedWord, listBooks, savedWords } from './store.js';
 import { el, formatDate, replace } from './ui.js';
 
 export async function renderSavedWords(container) {
   const words = await savedWords();
   // I PDF är sidan bokens sida, i EPUB och text en plats (ungefär 1 500 tecken).
-  const formats = new Map((await listBooks()).map((book) => [book.id, book.format]));
+  // book_id är bokens id, eller kontrollsumman för ord som sparades före G3.
+  const formats = new Map((await listBooks()).flatMap((book) => [[book.id, book.format], [contentId(book), book.format]]));
   const where = (word) => (formats.get(word.bookId) === 'pdf' || !formats.has(word.bookId)
     ? `s. ${word.page + 1}` : `plats ${word.page + 1}`);
   if (!words.length) {

@@ -3,7 +3,8 @@
     "Alla databasfrågor som Windows-appen får ställa mot användarens egna databaser (W12). Gränssnittet",
     "anropar dem med namn (db_read och db_write i src-tauri/src/main.rs), och kan aldrig skicka egen SQL.",
     "Rust-delen läser filen när den byggs (include_str), och dev/server.py läser samma fil.",
-    "schema körs och columns läggs till när appen startar, så att en databas från en äldre version fungerar."
+    "schema körs och columns läggs till när appen startar, så att en databas från en äldre version fungerar.",
+    "moves är engångsflyttar (G3): finns rader att flytta görs först en kopia av databasfilen i datamappen (backup plus tid), sedan körs steps i en transaktion. Stegen går att köra om utan skada."
   ],
   "databases": {
     "ord": {
@@ -113,7 +114,11 @@
         "  updated REAL NOT NULL,",
         "  deleted INTEGER NOT NULL DEFAULT 0",
         ");",
-        "CREATE INDEX IF NOT EXISTS bookmarks_book ON bookmarks (book, section);"
+        "CREATE INDEX IF NOT EXISTS bookmarks_book ON bookmarks (book, section);",
+        "CREATE TABLE IF NOT EXISTS meta (",
+        "  key TEXT PRIMARY KEY,",
+        "  value TEXT NOT NULL",
+        ");"
       ],
       "columns": {
         "books": [
@@ -124,9 +129,39 @@
           [
             "position_updated",
             "REAL"
+          ],
+          [
+            "sha256",
+            "TEXT NOT NULL DEFAULT ''"
+          ],
+          [
+            "missing",
+            "INTEGER NOT NULL DEFAULT 0"
+          ],
+          [
+            "modified",
+            "INTEGER NOT NULL DEFAULT 0"
           ]
         ]
-      }
+      },
+      "moves": [
+        {
+          "_om": [
+            "G3: varje bok får ett eget id (UUID i gemener) som aldrig ändras, och kontrollsumman flyttas till",
+            "kolumnen sha256. Förut var id:t kontrollsumman. book i markeringar och bokmärken flyttas till id:t utan",
+            "att ändringstiden rörs. Synken skickar fortfarande sha256 som book_id."
+          ],
+          "key": "legacy_book_keys_moved",
+          "pending": "SELECT COUNT(*) FROM books WHERE sha256 = ''",
+          "backup": "bibliotek före bokens id",
+          "steps": [
+            "UPDATE books SET sha256 = id, id = lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (random() & 3), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6))) WHERE sha256 = ''",
+            "UPDATE highlights SET book = (SELECT b.id FROM books b WHERE b.sha256 = highlights.book ORDER BY b.missing, b.added LIMIT 1) WHERE book IN (SELECT sha256 FROM books WHERE sha256 <> '') AND book NOT IN (SELECT id FROM books)",
+            "UPDATE bookmarks SET book = (SELECT b.id FROM books b WHERE b.sha256 = bookmarks.book ORDER BY b.missing, b.added LIMIT 1) WHERE book IN (SELECT sha256 FROM books WHERE sha256 <> '') AND book NOT IN (SELECT id FROM books)",
+            "INSERT INTO meta (key, value) VALUES ('legacy_book_keys_moved', '1') ON CONFLICT (key) DO UPDATE SET value = excluded.value"
+          ]
+        }
+      ]
     }
   },
   "read": {
@@ -136,11 +171,11 @@
     ],
     "books_list": [
       "bibliotek",
-      "SELECT id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated FROM books ORDER BY CASE WHEN opened > 0 THEN opened ELSE added END DESC"
+      "SELECT id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated, sha256, missing, modified FROM books WHERE missing = 0 ORDER BY CASE WHEN opened > 0 THEN opened ELSE added END DESC"
     ],
     "book_get": [
       "bibliotek",
-      "SELECT id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated FROM books WHERE id = ?"
+      "SELECT id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated, sha256, missing, modified FROM books WHERE id = ?"
     ],
     "highlights_of_book": [
       "bibliotek",
@@ -169,6 +204,10 @@
     "hidden_pairs_all": [
       "ord",
       "SELECT language, lemma, synonym FROM hidden_pairs ORDER BY lemma, synonym"
+    ],
+    "books_registry": [
+      "bibliotek",
+      "SELECT id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated, sha256, missing, modified FROM books"
     ]
   },
   "write": {
@@ -182,7 +221,7 @@
     ],
     "book_add": [
       "bibliotek",
-      "INSERT INTO books (id, title, author, format, ext, file_name, size, added, cover) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO books (id, title, author, format, ext, file_name, size, added, cover, sha256, modified, missing) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)"
     ],
     "book_remove": [
       "bibliotek",
@@ -243,6 +282,18 @@
     "hidden_pair_remove": [
       "ord",
       "DELETE FROM hidden_pairs WHERE language = ? AND lemma = ? AND synonym = ?"
+    ],
+    "book_missing": [
+      "bibliotek",
+      "UPDATE books SET missing = 1 WHERE id = ?"
+    ],
+    "book_new_file": [
+      "bibliotek",
+      "UPDATE books SET sha256 = ?, title = ?, author = ?, format = ?, ext = ?, file_name = ?, size = ?, modified = ?, cover = ?, missing = 0 WHERE id = ?"
+    ],
+    "book_restore": [
+      "bibliotek",
+      "UPDATE books SET missing = 0, file_name = ?, modified = ? WHERE id = ?"
     ]
   }
 }

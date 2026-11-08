@@ -28,7 +28,13 @@ Läsa behöver Microsoft Edge WebView2, som redan finns i Windows 11. Saknas den
 ## Använda
 
 * **Lägg till böcker:** knappen Lägg till böcker (Ctrl och O), eller dra in filer var som helst i fönstret.
-  Filen kopieras in i appens egen mapp, och originalet rörs inte. Samma fil två gånger läggs inte till igen.
+  Filen kopieras in i appens egen mapp, och originalet rörs inte. Samma fil två gånger läggs inte till igen,
+  inte heller med ett annat namn.
+* **Ny version av en bok** (G3): heter filen som en bok du redan har, men innehållet är nytt (till exempel efter
+  ny OCR), frågar Sensus: Ersätt och behåll markeringarna, Ersätt och börja om, Behåll båda (den nya heter då
+  `Bok 2.pdf`) eller Avbryt. **Ta bort** tar bort boken ur biblioteket, men markeringar och läsposition finns
+  kvar: lägger du till samma fil igen kommer allt tillbaka, och en fil med liknande namn (`Bok (OCR) 2.pdf`)
+  ger frågan Ny version av boken, behåll markeringarna?
   Medan filerna läses in visas hur långt det har kommit. Låsta (lösenord) och trasiga PDF:er läggs inte till,
   och appen säger varför.
 * **Bläddra:** högerpil och vänsterpil, PageDown och PageUp, mellanslag (Skift och mellanslag bakåt),
@@ -120,8 +126,14 @@ som börjar med `sync-` och slutar med `se.edvin.lasa`). Logga ut tar bort inlog
 
 I mappen `%APPDATA%\se.edvin.lasa`:
 
-* `Böcker\` med bokfilerna. Varje fil heter efter sitt id, som är SHA-256 av filens innehåll (64 tecken).
-  Samma id används på iPaden i fas 6, så att böckerna kan kännas igen mellan enheterna.
+* `Böcker\` med bokfilerna. Varje fil heter efter SHA-256 av filens innehåll (64 tecken). Samma
+  kontrollsumma är synkens `book_id`, så att böckerna känns igen mellan enheterna.
+* Varje bok har dessutom ett eget id (G3, ett UUID) som aldrig ändras, inte heller när en ny version ersätter
+  filen. Markeringar, bokmärken och läsposition hänger på det. Tabellen `books` har kolumnerna `sha256`,
+  `file_name` (namnet på filen som lades till, som `file` på iPaden), `missing` (borttagen ur biblioteket,
+  raden finns kvar) och `modified`. Böcker från före version 0.8.0 flyttas en gång när appen startar
+  (`moves` i `statements.json`): först en kopia, `bibliotek före bokens id <tid>.sqlite` i datamappen, sedan
+  flytten i en transaktion. Den går att köra om.
 * `bibliotek.sqlite`: biblioteket, läspositioner (med ändringstid för synken) och inställningar, även
   synkens adress och e-post. Tabellerna `highlights` och `bookmarks` har samma kolumner som iPadens
   `markeringar.sqlite` (book är bokens id): section, start, length (UTF-16) och text, som i docs/SYNK.md.
@@ -203,6 +215,10 @@ lägg den där och anropa `read('namn', [...])` eller `write(...)` i `src/js/sto
   `dev/server.py` med tom datamapp): tema och Följ systemet, förlopp och fel vid import, rtf och html,
   synkadressen, sök, genvägarna, markeringar och bokmärken i PDF och EPUB, minnestaket, repetitionen,
   uppslagen, de namngivna frågorna och AI-knappen (Gemini besvaras av testet).
+* `python windows/tests/e2e_fas8.py --dictionary <lasa-ordbok.sqlite> --books <mapp> --out <mapp>`: startar själv
+  `dev/server.py` (port 8963) med egna datamappar. G3: påhittade data från 0.7.0, flytten med kopian före, en
+  andra start, namnbyte, ny version, Behåll båda, Ersätt och börja om, Ta bort och tillbaka. W10: Rulla och
+  Bläddra med uppslagen, ordfunktionen, markeringar, sök och läspositionen.
 * `dev/server.py --open <fil> ...` gör som Öppna med: filerna läggs till och den första öppnas.
 
 **Bygget:** workflow `Windows build` (`.github/workflows/windows-build.yml`) körs vid push till `main`
