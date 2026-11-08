@@ -312,8 +312,8 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
                 let numbering = BookInfoStore.shared.numbering(for: book, pageCount: record?.pages ?? 0)
                 let title = record?.displayTitle ?? book.title
                 for highlight in highlights {
-                    let page = book.kind == .pdf
-                        ? numbering.citationPage(for: highlight.section, half: nil, pdfLabel: nil) : nil
+                    // D4-5: samma sidnumrering som läsaren, och ingen sida där den inte går att räkna fram.
+                    let page = numbering?.citationPage(for: highlight.section, half: nil, pdfLabel: nil)
                     result.append(NotebookEntry(highlight: highlight, bookID: book.id, bookTitle: title,
                                                 chapter: "", page: page))
                 }

@@ -293,11 +293,20 @@ final class BookInfoStore {
         return ok
     }
 
-    /// Sidnumreringen för en bok utan läsarens PDF-dokument, till anteckningsboken och exporten. PDF:ens
-    /// egna sidetiketter läses inte här, så en bok som bara har sådana får filens nummer.
-    func numbering(for book: Book, pageCount: Int) -> BookPageNumbering {
-        guard book.kind == .pdf else { return .file }
+    /// Sidnumreringen för en bok utan läsarens PDF-dokument, till anteckningsboken för alla böcker och Anki
+    /// (D4-5). Samma val som läsaren, eftersom läsaren sparar sitt val i `book_info` första gången boken öppnas.
+    /// Nil när sidnumren bara finns i PDF:en (sidetiketterna) och inte går att räkna fram här: då visas ingen
+    /// sida hellre än en annan än läsarens. Böcker med markeringar har alltid öppnats i läsaren.
+    func numbering(for book: Book, pageCount: Int) -> BookPageNumbering? {
+        guard book.kind == .pdf else { return nil }
         let info = info(book: book.id)
+        if info.pageFirst == BookPageNumbering.labelNumbers {
+            return nil
+        }
+        if info.pageFirst == BookPageNumbering.notChosen {
+            // Läsaren har inte hittat något säkert val (annars vore det sparat): filens nummer, ingen sida i citat.
+            return .file
+        }
         return BookPageNumbering.resolve(first: info.pageFirst, spread: info.pageSpread,
                                          fileName: book.url.lastPathComponent, pageCount: pageCount,
                                          hasPDFLabels: false)
