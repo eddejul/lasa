@@ -181,6 +181,9 @@ export async function importFiles(files, { ids = null } = {}) {
         continue;
       }
       let action = match.kind === 'restore' ? 'restore' : 'new';
+      // En bok som bara fanns kvar som markeringar (borttagen i version 0.7.0 eller äldre, fynd 5, se moves i
+      // statements.json) har ingen filtyp, titel eller filnamn. Den kommer tillbaka med sitt id och får filens.
+      if (action === 'restore' && !match.book.ext) action = 'keep';
       let fileName = file.name;
       if (match.kind === 'nameTaken') {
         action = await askNameTaken(file.name);

@@ -6,7 +6,9 @@ Testet startar själv dev/server.py (på --port, en process i taget, stoppas på
 datamappar under --out:
 * G3: en datamapp med påhittade data från version 0.7.0 (bok-id = SHA-256), flytten till bokens id med
   kopian före, en andra start, namnbyte, ny version, Behåll båda, Ersätt och börja om, Ta bort och
-  tillbaka, och liknande namn på en borttagen bok.
+  tillbaka, och liknande namn på en borttagen bok. Fynd 5: en bok
+  som togs bort i 0.7.0 (raden borta, markeringen kvar under kontrollsumman) läggs till igen, och
+  markeringen syns.
 * W10: Rulla och Bläddra, uppslaget, ordfunktionen, markeringar, sök och läspositionen i båda lägena.
 Testböckerna görs med make_testbooks.py. Skärmbilderna sparas i --out.
 """
@@ -169,9 +171,22 @@ def old_data(folder, books):
                   VALUES ('m1', ?, 1, 0, 17, 'Gatorna var smala', 'green', 'Gammal anteckning', 10, 20)""", (ids["test.pdf"],))
     db.execute("""INSERT INTO bookmarks (id, book, section, progression, label, created, updated)
                   VALUES ('b1', ?, 2, 0, 'Sida 3', 10, 30)""", (ids["test.pdf"],))
+    # Fynd 5: en bok som togs bort i 0.7.0. Den gamla Ta bort tog bort raden och filen men inte markeringen
+    # eller bokmärket, som står kvar under kontrollsumman. Filen finns kvar utanför appen.
+    removed_path = os.path.join(os.path.dirname(folder), "g3-borttagen", "Kurslitteratur.pdf")
+    os.makedirs(os.path.dirname(removed_path), exist_ok=True)
+    removed_bytes = open(os.path.join(books, "test.pdf"), "rb").read() + b"\n% borttagen i 0.7.0\n"
+    with open(removed_path, "wb") as file:
+        file.write(removed_bytes)
+    removed = {"path": removed_path, "sha": sha256(removed_bytes)}
+    db.execute("""INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated)
+                  VALUES ('m9', ?, 1, 0, 17, 'Gatorna var smala', 'yellow', 'Från den borttagna boken', 5, 25)""",
+               (removed["sha"],))
+    db.execute("""INSERT INTO bookmarks (id, book, section, progression, label, created, updated)
+                  VALUES ('b9', ?, 2, 0, 'Sida 3', 6, 26)""", (removed["sha"],))
     db.commit()
     db.close()
-    return ids
+    return ids, removed
 
 
 def backups(folder):
@@ -185,7 +200,7 @@ def book_files(folder):
 def g3(browser, args):
     data = os.path.join(args.out, "data-g3")
     shutil.rmtree(data, ignore_errors=True)
-    ids = old_data(data, args.books)
+    ids, removed = old_data(data, args.books)
     log = os.path.join(args.out, "server-g3.log")
     server = Server(args.dictionary, data, args.port, log)
     try:
@@ -199,14 +214,26 @@ def g3(browser, args):
                   and old.execute("SELECT COUNT(*) FROM highlights WHERE book = ?", (ids["test.pdf"],)).fetchone()[0] == 1,
                   'kopian har böckerna och markeringen som före flytten')
             old.close()
-        rows = server.sql("SELECT id, sha256, file_name, missing FROM books ORDER BY added")
+        rows = server.sql("SELECT id, sha256, file_name, missing FROM books WHERE missing = 0 ORDER BY added")
         check([row[1] for row in rows] == [ids["test.pdf"], ids["test.epub"]] and all(UUID.match(row[0]) for row in rows),
               f'böckerna har fått eget id och kontrollsumman i sha256: {rows}')
         pdf_id = rows[0][0] if rows else None
-        marks = server.sql("SELECT book, updated FROM highlights")
+        marks = server.sql("SELECT book, updated FROM highlights WHERE id = 'm1'")
         check(marks == [[pdf_id, 20]], f'markeringen flyttad till bokens id, ändringstiden orörd: {marks}')
-        check(server.sql("SELECT book, updated FROM bookmarks") == [[pdf_id, 30]], 'bokmärket flyttat')
+        check(server.sql("SELECT book, updated FROM bookmarks WHERE id = 'b1'") == [[pdf_id, 30]], 'bokmärket flyttat')
         check(server.sql("SELECT value FROM meta WHERE key = 'legacy_book_keys_moved'") == [['1']], 'klart-markeringen')
+        # Fynd 5: den borttagna boken har fått en borttagen bokrad med eget id, och raderna hänger på den.
+        gone = server.sql("SELECT id, sha256, missing, ext, file_name FROM books WHERE missing = 1")
+        check(len(gone) == 1 and gone[0][1:] == [removed["sha"], 1, '', ''] and UUID.match(gone[0][0]),
+              f'en borttagen bokrad för den borttagna boken: {gone}')
+        gone_id = gone[0][0] if gone else None
+        check(server.sql("SELECT book, updated FROM highlights WHERE id = 'm9'") == [[gone_id, 25]]
+              and server.sql("SELECT book, updated FROM bookmarks WHERE id = 'b9'") == [[gone_id, 26]],
+              'markeringen och bokmärket för den borttagna boken flyttade, ändringstiden orörd')
+        check(server.sql("SELECT value FROM meta WHERE key = 'legacy_removed_books_moved'") == [['1']],
+              'klart-markeringen för de borttagna böckerna')
+        removed_copies = glob.glob(os.path.join(data, "bibliotek före borttagna böcker *.sqlite"))
+        check(len(removed_copies) == 1, f'en kopia före steget för de borttagna böckerna: {removed_copies}')
         check(book_files(data) == sorted([f'{ids["test.pdf"]}.pdf', f'{ids["test.epub"]}.epub']),
               'bokfilerna heter fortfarande efter kontrollsumman')
 
@@ -214,7 +241,10 @@ def g3(browser, args):
         server.stop()
         server = Server(args.dictionary, data, args.port, log)
         check(len(backups(data)) == 1, 'ingen ny kopia vid andra starten')
-        check(server.sql("SELECT id, sha256, file_name, missing FROM books ORDER BY added") == rows, 'andra starten ändrar inget')
+        check(len(glob.glob(os.path.join(data, "bibliotek före borttagna böcker *.sqlite"))) == 1,
+              'ingen ny kopia av steget för de borttagna böckerna')
+        check(server.sql("SELECT id, sha256, file_name, missing FROM books WHERE missing = 0 ORDER BY added") == rows
+              and server.sql("SELECT id FROM books WHERE missing = 1") == [[gone_id]], 'andra starten ändrar inget')
 
         page = new_page(browser)
         page.goto(server.url)
@@ -264,7 +294,7 @@ def g3(browser, args):
               'Behåll markeringarna: samma id, ny kontrollsumma')
         check(wait_for(lambda: f'{v2_sha}.pdf' in book_files(data) and f'{ids["test.pdf"]}.pdf' not in book_files(data)),
               f'den nya filen sparad och den gamla borta: {book_files(data)}')
-        check(server.sql("SELECT book FROM highlights") == [[pdf_id]], 'markeringen hänger kvar på bokens id')
+        check(server.sql("SELECT book FROM highlights WHERE id = 'm1'") == [[pdf_id]], 'markeringen hänger kvar på bokens id')
         page.wait_for_selector('[data-testid="book"]')
         check(wait_for(lambda: book_count(page) == 2), 'fortfarande två böcker')
         open_book(page, 'Testbok i PDF')
@@ -306,7 +336,7 @@ def g3(browser, args):
         add_file(page, v5)
         answer(page, 'cancel')
         page.wait_for_timeout(500)
-        check(len(server.sql("SELECT id FROM books")) == 4 and book_count(page) == 3, 'Avbryt lägger inte till något')
+        check(len(server.sql("SELECT id FROM books")) == 5 and book_count(page) == 3, 'Avbryt lägger inte till något')
 
         # Ta bort, och samma fil tillbaka med ett annat namn
         card = page.locator('.book-card').filter(has=page.locator('[data-testid="book-file"]', has_text='test 2.pdf'))
@@ -347,6 +377,32 @@ def g3(browser, args):
                        == [[0, 'Anteckningar (OCR) 2.txt']]), 'Behåll markeringarna: samma id med det nya namnet')
         check(server.sql("SELECT book FROM bookmarks WHERE id = 'b3'") == [[txt_id]], 'bokmärket följer med')
         page.screenshot(path=os.path.join(args.out, "g3-03-bibliotek.png"))
+
+        # Fynd 5: boken som togs bort i 0.7.0 läggs till igen. Ingen fråga, den känns igen på innehållet och
+        # får tillbaka markeringen och bokmärket, med filens titel, filtyp och namn.
+        count = book_count(page)
+        add_file(page, removed["path"])
+        check(wait_for(lambda: server.sql("SELECT missing, file_name, ext, format FROM books WHERE id = ?", [gone_id])
+                       == [[0, 'Kurslitteratur.pdf', 'pdf', 'pdf']]), 'den borttagna boken kommer tillbaka med sitt id')
+        check(page.locator('[data-testid="choice-dialog"]').count() == 0, 'ingen fråga för den borttagna boken')
+        check(server.sql("SELECT title FROM books WHERE id = ?", [gone_id]) != [['Borttagen bok']], 'titeln kommer från filen')
+        check(f'{removed["sha"]}.pdf' in book_files(data), 'filen sparad under kontrollsumman')
+        check(wait_for(lambda: book_count(page) == count + 1), 'och syns i biblioteket')
+        check(len(server.sql("SELECT id FROM books WHERE sha256 = ?", [removed["sha"]])) == 1, 'ingen ny rad')
+        page.locator(f'.book-card[data-id="{gone_id}"] .book-cover').click()
+        page.wait_for_selector('.pdf-spread .pdf-page canvas')
+        page.keyboard.press('Home')
+        page.keyboard.press('ArrowRight')
+        check(wait_for(lambda: page.locator('.pdf-mark.color-yellow').count() >= 1),
+              'markeringen från den borttagna boken syns på sidan 2')
+        page.locator('[data-testid="marks-button"]').click()
+        check(wait_for(lambda: page.locator('[data-testid="bookmark-row"]').count() == 1
+                       and page.locator('[data-testid="highlight-row"]').count() == 1),
+              'listan visar bokmärket och markeringen från den borttagna boken')
+        check('Från den borttagna boken' in page.locator('[data-testid="highlight-row"]').inner_text(),
+              'anteckningen följer med')
+        page.screenshot(path=os.path.join(args.out, "g3-05-borttagen-tillbaka.png"))
+        page.keyboard.press('Escape')
         page.context.close()
     finally:
         server.stop()
