@@ -162,6 +162,8 @@ final class WordPopupViewController: UIViewController {
         let triedWord: String
         /// Bokens id i bokregistret (G3), sparas med ordet.
         var bookID: String? = nil
+        /// O4: ett tryck på ett streck visar ett ord som redan är sparat. Då sparas det inte igen.
+        var savesWord = true
     }
 
     private enum AIState {
@@ -237,7 +239,7 @@ final class WordPopupViewController: UIViewController {
         let popup = WordPopupViewController(lookup: lookup, context: context)
         popup.onReady = onReady
         // Ett ord som slagits upp i en bok sparas med meningen.
-        if context.book != nil, let lookup = lookup, let lemma = lookup.entries.first?.lemma {
+        if context.book != nil, context.savesWord, let lookup = lookup, let lemma = lookup.entries.first?.lemma {
             popup.pendingSave = (lookup.word, lemma, lookup.language)
         }
         let navigation = WordPopupNavigationController(rootViewController: popup)

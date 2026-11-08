@@ -224,6 +224,21 @@ final class PDFPageRenderer {
         queue.addOperation(operation)
     }
 
+    /// O4: sparade ord på en sida och deras rutor, räknade på renderingskön som markeringarnas (G6).
+    /// `forms` som `SavedWordMarks.forms`. `completion` kommer på huvudtråden.
+    func wordRects(onPage index: Int, forms: [String: String],
+                   completion: @escaping ([PDFPageViewController.WordMark]) -> Void) {
+        let worker = self.worker
+        let operation = BlockOperation {
+            let result = worker.wordRects(index: index, forms: forms)
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+        operation.queuePriority = .veryLow
+        queue.addOperation(operation)
+    }
+
     // MARK: Internt
 
     private func isValid(_ index: Int) -> Bool {
@@ -387,6 +402,14 @@ private final class PDFRenderWorker {
     func rects(index: Int, ranges: [NSRange]) -> [[CGRect]] {
         guard let page = document.page(at: index) else { return ranges.map { _ in [] } }
         return ranges.map { PDFTextRanges.rects(on: page, range: $0) }
+    }
+
+    func wordRects(index: Int, forms: [String: String]) -> [PDFPageViewController.WordMark] {
+        guard let page = document.page(at: index), let text = page.string else { return [] }
+        return SavedWordMatcher.matches(in: text, forms: forms).prefix(400).compactMap { match in
+            let rects = PDFTextRanges.rects(on: page, range: match.range)
+            return rects.isEmpty ? nil : PDFPageViewController.WordMark(value: match.value, rects: rects)
+        }
     }
 
     func render(index: Int, size: CGSize, scale: CGFloat, theme: ReaderTheme) -> UIImage? {

@@ -525,6 +525,35 @@ final class WordDictionary {
         return tag.flatMap { classes[$0] }
     }
 
+    // MARK: Dina ord i texten (O4)
+
+    /// Böjningsformerna för en grundform ur formtabellen. Tabellens nyckel börjar med formen, så formerna
+    /// letas i intervallet av former med samma två första bokstäver, och med omljud (bok och böcker).
+    /// Används av `SavedWordMarks` i bakgrunden, med en egen instans av ordboken.
+    func forms(ofLemma lemma: String, language: WordLanguage) -> [String] {
+        let chars = Array(Self.normalize(lemma))
+        guard !chars.isEmpty else { return [] }
+        let table = language == .swedish ? "sv_forms" : "en_forms"
+        var prefixes: Set<String> = []
+        if chars.count == 1 {
+            prefixes.insert(String(chars[0]))
+        } else {
+            prefixes.insert(String(chars[0...1]))
+            let umlaut: [Character: Character] = ["a": "ä", "o": "ö", "u": "y", "å": "ä"]
+            if let variant = umlaut[chars[1]] {
+                prefixes.insert(String([chars[0], variant]))
+            }
+        }
+        var result: [String] = []
+        for prefix in prefixes {
+            try? db.query("SELECT form FROM \(table) WHERE form >= ? AND form < ? AND lemma = ?",
+                          [prefix, prefix + "\u{FFFF}", lemma]) { row in
+                result.append(row.string(0))
+            }
+        }
+        return result
+    }
+
     // MARK: Om ordboken
 
     struct Counts {

@@ -62,6 +62,20 @@ final class PDFPageViewController: UIViewController {
         return CGRect(x: frame.maxX - 64, y: frame.minY - 4, width: 64, height: 60)
     }
     private var marks: [Mark] = []
+    /// O4: ett sparat ord på sidan. `value` som i `SavedWordMarks.forms` (`w:` övar, `k:` kan, plus id).
+    struct WordMark {
+        let value: String
+        let rects: [CGRect]
+
+        var id: String {
+            SavedWordMarks.idPrefix + String(value.dropFirst(2))
+        }
+
+        var isKnown: Bool {
+            value.hasPrefix("k")
+        }
+    }
+    private var wordMarks: [WordMark] = []
     private var darkMarks = false
     private let marksView = UIView()
     private let ribbon = UIImageView(image: UIImage(systemName: "bookmark.fill"))
@@ -157,6 +171,23 @@ final class PDFPageViewController: UIViewController {
         }
     }
 
+    /// O4: strecken under sparade ord. Ritas som vyer ovanpå sidbilden, som markeringarna.
+    func setWordMarks(_ marks: [WordMark]) {
+        guard marks.count != wordMarks.count || zip(marks, wordMarks).contains(where: { $0.value != $1.value }) else {
+            return
+        }
+        wordMarks = marks
+        overlaysDirty = true
+        if isViewLoaded {
+            view.setNeedsLayout()
+        }
+    }
+
+    /// Antalet streck på sidan, till självtestet.
+    var wordMarkCount: Int {
+        wordMarks.count
+    }
+
     /// En ruta i sidans koordinater omräknad till bladet, när sidbilden finns.
     func viewRect(forPageRect rect: CGRect) -> CGRect? {
         guard let frame = imageFrame, let page = pdfPage else { return nil }
@@ -166,13 +197,24 @@ final class PDFPageViewController: UIViewController {
     /// Markeringen under en punkt i bladet.
     /// Rutorna för en markering på sidan, i sidvyns koordinater (U5: markeringsraden pekar på dem).
     func markRects(id: String) -> [CGRect] {
-        marks.filter { $0.id == id }.flatMap { $0.rects }.compactMap { viewRect(forPageRect: $0) }
+        if SavedWordMarks.isWordID(id) {
+            return wordMarks.filter { $0.id == id }.flatMap { $0.rects }.compactMap { viewRect(forPageRect: $0) }
+        }
+        return marks.filter { $0.id == id }.flatMap { $0.rects }.compactMap { viewRect(forPageRect: $0) }
     }
 
     func markID(at point: CGPoint) -> String? {
         for mark in marks.reversed() {
             for rect in mark.rects {
                 if let shown = viewRect(forPageRect: rect), shown.insetBy(dx: -4, dy: -4).contains(point) {
+                    return mark.id
+                }
+            }
+        }
+        // O4: ett sparat ord. Markeringarna går före.
+        for mark in wordMarks {
+            for rect in mark.rects {
+                if let shown = viewRect(forPageRect: rect), shown.insetBy(dx: 0, dy: -3).contains(point) {
                     return mark.id
                 }
             }
@@ -231,6 +273,32 @@ final class PDFPageViewController: UIViewController {
                     line.backgroundColor = mark.color.solid
                     marksView.addSubview(line)
                 }
+            }
+        }
+        let practising = Theme.current.accent.withAlphaComponent(0.75)
+        let known = Theme.current.inkSoft.withAlphaComponent(0.7)
+        for mark in wordMarks {
+            for rect in mark.rects {
+                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: frame, page: page)
+                let line = UIView(frame: CGRect(x: shown.minX, y: shown.maxY + 1, width: shown.width, height: 2))
+                line.isUserInteractionEnabled = false
+                if mark.isKnown {
+                    // Kan: prickat streck.
+                    let shape = CAShapeLayer()
+                    let path = UIBezierPath()
+                    path.move(to: CGPoint(x: 0, y: 1))
+                    path.addLine(to: CGPoint(x: shown.width, y: 1))
+                    shape.path = path.cgPath
+                    shape.strokeColor = known.cgColor
+                    shape.lineWidth = 1.5
+                    shape.lineDashPattern = [2, 2.5]
+                    line.layer.addSublayer(shape)
+                } else {
+                    // Övar: helt streck i accentfärgen.
+                    line.frame.size.height = 1.5
+                    line.backgroundColor = practising
+                }
+                marksView.addSubview(line)
             }
         }
         ribbon.isHidden = !(isBookmarked || showsRibbonHint)

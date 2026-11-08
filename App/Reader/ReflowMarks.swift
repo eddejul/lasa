@@ -34,6 +34,22 @@ enum ReflowMarks {
         }
 
         """
+        // O4: dina ord i texten. Helt streck för ord man övar, prickat för ord man kan.
+        css += """
+        span.lasa-word {
+          text-decoration: underline !important;
+          text-decoration-color: rgba(70, 120, 170, 0.75) !important;
+          text-decoration-thickness: 1.5px !important;
+          text-underline-offset: 3px !important;
+          -webkit-text-decoration-skip: none;
+          text-decoration-skip-ink: none;
+        }
+        span.lasa-word.lasa-word-known {
+          text-decoration-style: dotted !important;
+          text-decoration-color: rgba(140, 130, 115, 0.8) !important;
+        }
+
+        """
         for color in HighlightColor.allCases {
             css += "span.lasa-mark.lasa-\(color.rawValue) { background-color: \(color.css) !important; }\n"
             css += "span.lasa-mark.lasa-note.lasa-\(color.rawValue) { text-decoration-color: \(color.cssStrong) !important; }\n"
@@ -86,13 +102,22 @@ enum ReflowMarks {
         "(function () {\n" + ReflowStyle.script + "\n})();\n" + script
     }
 
-    /// Delar kapitlet i sidor och lägger in markeringarna. Argument som `lasa.setup` plus `marks`.
+    /// Delar kapitlet i sidor och lägger in markeringarna och strecken under sparade ord (O4).
+    /// Argument som `lasa.setup` plus `marks` och `words`.
     static let setupBody = """
         var result = await lasa.setup(css, scale, w, h);
         if (window.lasaMarks) {
           lasaMarks.apply(marks || []);
+          lasaMarks.applyWords(words || null);
         }
         return result;
+        """
+
+    /// Lägger in markeringarna och strecken igen. Argument: `marks` och `words`.
+    static let reloadBody = """
+        lasaMarks.apply(marks || []);
+        lasaMarks.applyWords(words || null);
+        return true;
         """
 
     /// Läggs in efter `ReflowStyle.script`, en gång per kapitel. Argument: `css`.
@@ -532,12 +557,109 @@ enum ReflowMarks {
         return { applied: applied };
       }
 
+
+      // MARK: Dina ord i texten (O4)
+
+      // Sparade ord får ett streck: helt för ord man övar, prickat för ord man kan. words: form (gemener)
+      // till 'w:' eller 'k:' plus id. Ordmönstret är detsamma som SavedWordMatcher i Swift.
+      function unwrapWords() {
+        var spans = document.querySelectorAll('span.lasa-word');
+        var parents = [];
+        for (var i = 0; i < spans.length; i++) {
+          var span = spans[i];
+          var parent = span.parentNode;
+          if (!parent) {
+            continue;
+          }
+          while (span.firstChild) {
+            parent.insertBefore(span.firstChild, span);
+          }
+          parent.removeChild(span);
+          if (parents.indexOf(parent) < 0) {
+            parents.push(parent);
+          }
+        }
+        for (var k = 0; k < parents.length; k++) {
+          parents[k].normalize();
+        }
+        nodes = null;
+      }
+
+      function applyWords(words) {
+        unwrapWords();
+        if (!words || !Object.keys(words).length) {
+          return 0;
+        }
+        var list = [];
+        var walker = document.createTreeWalker(document.body || root, NodeFilter.SHOW_TEXT, null);
+        var node;
+        while ((node = walker.nextNode())) {
+          if (!skipped(node)) {
+            list.push(node);
+          }
+        }
+        var pattern = /[\p{L}\p{M}]+(?:['’\-‐‑][\p{L}\p{M}]+)*/gu;
+        var count = 0;
+        for (var i = 0; i < list.length && count < 4000; i++) {
+          var text = list[i];
+          var found = [];
+          var match;
+          pattern.lastIndex = 0;
+          while ((match = pattern.exec(text.data))) {
+            var value = words[match[0].toLowerCase().replace(/’/g, "'")];
+            if (value) {
+              found.push([match.index, match.index + match[0].length, value]);
+            }
+          }
+          // Bakifrån, så att platserna i textnoden stämmer när den delas.
+          for (var k = found.length - 1; k >= 0; k--) {
+            var item = found[k];
+            var piece = text;
+            if (item[1] < piece.data.length) {
+              piece.splitText(item[1]);
+            }
+            if (item[0] > 0) {
+              piece = piece.splitText(item[0]);
+            }
+            var span = document.createElementNS(XHTML, 'span');
+            span.setAttribute('class', item[2].charAt(0) === 'k' ? 'lasa-word lasa-word-known' : 'lasa-word');
+            span.setAttribute('data-lasa-word', item[2].slice(2));
+            piece.parentNode.insertBefore(span, piece);
+            span.appendChild(piece);
+            count++;
+          }
+        }
+        nodes = null;
+        return count;
+      }
+
+      function visibleWords(out, w, h) {
+        var spans = document.querySelectorAll('span.lasa-word');
+        for (var i = 0; i < spans.length && out.length < 300; i++) {
+          var id = 'ord:' + spans[i].getAttribute('data-lasa-word');
+          var rects = spans[i].getClientRects();
+          for (var k = 0; k < rects.length; k++) {
+            var r = rects[k];
+            if (r.width < 1 || r.height < 1 || r.right <= 0 || r.left >= w || r.bottom <= 0 || r.top >= h) {
+              continue;
+            }
+            out.push({ id: id, x: r.left, y: r.top, w: r.width, h: r.height });
+          }
+        }
+      }
+
       function visible() {
         var out = [];
         var w = lasa.pageWidth();
         var h = window.innerHeight;
+        // Strecken först, så att en markering över ett sparat ord går före när man trycker.
+        try {
+          visibleWords(out, w, h);
+        } catch (error) {
+          out = [];
+        }
         var spans = document.querySelectorAll('span.lasa-mark');
-        for (var i = 0; i < spans.length && out.length < 400; i++) {
+        for (var i = 0; i < spans.length && out.length < 700; i++) {
           var id = spans[i].getAttribute('data-lasa-id');
           var rects = spans[i].getClientRects();
           for (var k = 0; k < rects.length; k++) {
@@ -696,8 +818,8 @@ enum ReflowMarks {
         return result;
       };
 
-      return { installStyle: installStyle, apply: apply, select: select, text: text, find: find, reveal: reveal,
-               visible: visible, visibleRange: visibleRange };
+      return { installStyle: installStyle, apply: apply, applyWords: applyWords, select: select, text: text,
+               find: find, reveal: reveal, visible: visible, visibleRange: visibleRange };
     })();
     lasaMarks.installStyle(css);
     return true;

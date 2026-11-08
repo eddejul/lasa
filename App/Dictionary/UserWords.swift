@@ -30,6 +30,9 @@ final class UserWords {
 
     static let shared = UserWords()
 
+    /// Skickas när sparade ord eller deras repetition har ändrats (O4: strecken i texten ritas om).
+    static let didChange = Notification.Name("UserWordsDidChange")
+
     private let db: SQLiteDatabase?
     private(set) var hiddenPairs: Set<HiddenPair> = []
 
@@ -133,6 +136,14 @@ final class UserWords {
         try db.replaceContents(with: url)
         try db.migrate(Self.migrations)
         loadHiddenPairs()
+        changed()
+    }
+
+    /// Säger till att orden har ändrats, i nästa varv så att en skrivning hinner klart först.
+    fileprivate func changed() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: UserWords.didChange, object: nil)
+        }
     }
 
     /// Kör en skrivning i en transaktion: allt eller inget. Går det inte säger appen till.
@@ -178,6 +189,7 @@ final class UserWords {
                 """, [word, lemma, language.rawValue, sentence, book, pageIndex, now, now, bookID ?? ""])
             try db.execute("DELETE FROM deleted_words WHERE lemma = ? AND language = ?", [lemma, language.rawValue])
         }
+        changed()
     }
 
     /// De sparade orden, senast uppslaget först.
@@ -214,6 +226,7 @@ final class UserWords {
                 try Self.rememberDeleted(db, lemma: found.0, language: found.1)
             }
         }
+        changed()
     }
 
     func delete(lemma: String, language: WordLanguage) {
@@ -221,6 +234,7 @@ final class UserWords {
             try db.execute("DELETE FROM saved_words WHERE lemma = ? AND language = ?", [lemma, language.rawValue])
             try Self.rememberDeleted(db, lemma: lemma, language: language.rawValue)
         }
+        changed()
     }
 
     /// Ett borttaget ord minns med tiden, så att synken (fas 6) kan ta bort det på andra enheter.
@@ -398,6 +412,17 @@ extension UserWords {
         return Array(cards.prefix(limit))
     }
 
+    /// O4: repetitionens intervall i dagar per ord (nyckel språk|grundform).
+    func reviewIntervals() -> [String: Double] {
+        var result: [String: Double] = [:]
+        read("repetitionens intervall") { db in
+            try db.query("SELECT lemma, language, interval FROM reviews") { row in
+                result[row.string(1) + "|" + row.string(0)] = row.double(2)
+            }
+        }
+        return result
+    }
+
     /// Antalet ord på tur och nya ord som kan tas i dag, till knappen Repetera.
     func reviewCount(now: Date = Date()) -> Int {
         reviewQueue(now: now).count
@@ -418,6 +443,7 @@ extension UserWords {
                 """, [card.word.lemma, card.word.language.rawValue, current + next.interval * 86_400, next.interval,
                       next.ease, next.reps, card.lapses + (next.lapse ? 1 : 0), current, current])
         }
+        changed()
         return next.interval
     }
 }
@@ -538,5 +564,6 @@ extension UserWords {
                           word.lapses ?? 0, reviewUpdated, reviewUpdated])
             }
         }
+        changed()
     }
 }

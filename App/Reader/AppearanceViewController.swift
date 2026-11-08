@@ -60,6 +60,7 @@ final class AppearanceViewController: UIViewController {
         ])
 
         stack.addArrangedSubview(makeThemeRow())
+        stack.addArrangedSubview(makeSavedWordsRow())
         if typography != nil {
             stack.addArrangedSubview(section("Storlek", makeSizeRow()))
             stack.addArrangedSubview(section("Typsnitt", makeFontRow()))
@@ -237,6 +238,25 @@ final class AppearanceViewController: UIViewController {
             scroll.heightAnchor.constraint(equalToConstant: 40),
         ])
         return scroll
+    }
+
+    /// O4: strecken under sparade ord i texten, av och på. Gäller alla böcker.
+    private func makeSavedWordsRow() -> UIView {
+        let label = UILabel()
+        label.text = "Dina ord i texten"
+        label.font = .preferredFont(forTextStyle: .body)
+        label.numberOfLines = 0
+        let toggle = UISwitch()
+        toggle.isOn = SavedWordMarks.shared.isEnabled
+        toggle.accessibilityLabel = "Streck under sparade ord"
+        toggle.addAction(UIAction { action in
+            SavedWordMarks.shared.isEnabled = (action.sender as? UISwitch)?.isOn ?? true
+        }, for: .valueChanged)
+        let row = UIStackView(arrangedSubviews: [label, toggle])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 12
+        return row
     }
 
     private func makeJustifyRow() -> UIView {

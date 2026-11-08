@@ -66,6 +66,8 @@ final class ReflowRenderer {
     var onChapterMeasured: ((Int) -> Void)?
     /// Markeringarna i ett kapitel, som läggs in när kapitlet laddas (fas 4).
     var marksProvider: ((Int) -> [[String: Any]])?
+    /// O4: sparade ord som får ett streck (form till värde, se `SavedWordMarks.forms`).
+    var wordsProvider: (() -> [String: String])?
 
     /// Sant medan fingret viker en sida. Då görs bara bilder som syns just nu, ingen förritning.
     var isTurning = false {
@@ -565,6 +567,7 @@ final class ReflowRenderer {
             "w": Double(layout.pageSize.width),
             "h": Double(layout.pageSize.height),
             "marks": marksProvider?(chapter) ?? [],
+            "words": wordsProvider?() ?? [:],
         ]
         view.call(ReflowMarks.installScript, ["css": ReflowMarks.css]) { [weak self, weak view] _ in
             guard let self = self, let view = view, self.isCurrent(job, on: view) else { return }
@@ -899,7 +902,8 @@ extension ReflowRenderer {
             return
         }
         let marks = marksProvider?(chapter) ?? []
-        evaluate("return lasaMarks.apply(marks);", arguments: ["marks": marks], in: chapter) { [weak self] _ in
+        let words = wordsProvider?() ?? [:]
+        evaluate(ReflowMarks.reloadBody, arguments: ["marks": marks, "words": words], in: chapter) { [weak self] _ in
             self?.invalidate(chapter: chapter)
             completion()
         }

@@ -236,6 +236,7 @@ Byggd 7 november 2026 på grenen `fas6`.
 
 * **Ordkortet (U4):** ordet en gång, stort, med ordklass och SV eller EN. Svaret direkt under, synonymerna som knappar som slår upp ordet i samma ruta, meningen ur boken med ordet understruket och boken och sidan under. Förklara i meningen svarar i samma kort. Längst ner SO och SAOL, Sparat, Fel synonym och betydelserna. Ark i halv höjd på iPhone. Ingen uppläsning.
 * **Välj betydelse (O7):** ett tryck på en betydelse sparar den med ordet. Kortet visar den överst och repetitionen bara den. AI-knappen kan föreslå en betydelse, men man väljer själv.
+* **Dina ord i texten (O4):** sparade ord får ett streck under sig i alla böjningsformer, helt för ord man övar och prickat för ord man kan (repetitionens intervall minst tre veckor, ingen egen statusvy). Ett tryck på strecket mitt på sidan visar ordkortet med meningen ordet sparades i. Av och på i Aa (Dina ord i texten), från början på.
 
 ## 7. Bygge och installation
 
