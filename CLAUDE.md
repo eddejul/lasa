@@ -69,6 +69,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Håll minnet nere: högst 5 renderade sidbilder (även i uppslag), högst 3 webbvyer för EPUB.
 * Sidans placering och renderingsstorlek får bara bero på vyns storlek och läsarens fasta marginaler, aldrig på om menyraden eller statusfältet syns. Använd inte vyns `safeAreaInsets` för sidan, de ändras med menyraden.
 * Haptik går genom `Haptics.shared`. iPad har ingen vibrationsmotor, där händer inget, och det är förväntat.
+* Det som är lika i PDF- och EPUB-läsaren ligger på ett ställe (G12): menyraden i `ReaderChrome`, hållgestens tider, avbrytandet av vikningen och bubblan i `WordPressGesture` och `WordBubble`, markeringslägets gester och rad i `MarkMode`. Ändra där, inte i läsarna.
 
 ## EPUB och textfiler (fas 3)
 
@@ -87,6 +88,7 @@ windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tau
 * Markeringsläget (pennan): sidans vikning, menyn och ordfunktionen stängs av, och en `UILongPressGestureRecognizer` med tiden 0 följer fingret. Ett vanligt tryck på en markering öppnar `HighlightMenuViewController`.
 * PDF: markeringarna ritas som vyer ovanpå sidbilden i `PDFPageViewController` (ingen omritning av sidan). EPUB: `ReflowMarks.script` lägger span-element runt texten i den dolda webbvyn och sidan fotograferas om. `lasa.showPage` lämnar markeringarnas rutor, så att tryck på en markering hittas utan webbvyn.
 * Sökningen (`BookSearch`) går i bakgrunden: PDF med ett eget `PDFDocument`, EPUB i kapitelfilerna utan taggar. Sökträffen i EPUB letas upp i webbvyn med samma vikning (`FoldedText` i Swift, `fold` i skriptet), n:te träffen med texten runt som kontroll.
+* Sökregistret (G11, `SearchIndex`): bokens text per avsnitt i `sokregister.sqlite` (egen trappa, inte i säkerhetskopian), nyckel bokens id plus en version ur filen. FTS5 med trigram om SQLite har det, annars `instr`. Registret väljer bara avsnitten, träffarna räknas ur originaltexten med `BookSearch.find`, så platserna blir desamma. Saknas eller är det gammalt söks direkt i boken och det byggs om. Höj `SearchIndex.formatVersion` när texten tas fram på ett nytt sätt.
 * Bläddringsljudet räknas fram i appen (`PageTurnSound`), ingen ljudfil. Spelas när en vikning börjar.
 * Självtestet provar allt detta i alla testböcker, även en PDF (`test.pdf` från `make_books.py`).
 

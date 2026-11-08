@@ -216,6 +216,11 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Import (G10):** sker i bakgrunden med förlopp i biblioteket. Ett upptaget namn ger Ersätt och behåll markeringarna, Ersätt och börja om, Behåll båda eller Avbryt.
 * **Vikningen (G6) och fotade PDF:er (G5):** markeringarnas rutor sparas, och färdiga sidbilder sparas på disk (högst cirka 300 MB) så att en fotad sida inte behöver avkodas igen.
 
+### 6.8 Våg 2b (8 november 2026)
+
+* **Sökregister per bok (G11):** bokens text sparas en gång i bakgrunden när boken öppnats (PDF också när den lagts in), och sökningen letar där i stället för att läsa om hela boken. Träffarna och den orange ramen blir desamma som förut. Saknas registret söker appen direkt i boken som förut.
+* **Gemensam kod för läsarna (G12):** menyraden, bubblan och hållgesten och markeringsläget finns på ett ställe för både PDF och EPUB. Inget ändrat för den som läser.
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.
