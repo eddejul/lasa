@@ -638,6 +638,48 @@ final class ReflowReaderViewController: UIViewController {
         bottomBar.pageButton.accessibilityHint = "Öppnar innehållsförteckningen"
         bottomBar.pageButton.setTitle("Öppnar boken", for: .normal)
         bottomBar.pageButton.addTarget(self, action: #selector(showContents), for: .touchUpInside)
+        bottomBar.infoButton.addTarget(self, action: #selector(toggleRemaining), for: .touchUpInside)
+    }
+
+    /// V1: ett tryck på sidor kvar växlar mellan kapitlet och boken.
+    @objc private func toggleRemaining() {
+        PageInfo.toggle(hasChapters: true)
+        updatePageLabel()
+    }
+
+    /// V1: sidorna kvar efter den sista sidan som syns, i kapitlet eller i boken. Innan alla kapitel är mätta
+    /// uppskattas boken från kapitlens storlek, och texten säger cirka.
+    private func remainingText(renderer: ReflowRenderer) -> String {
+        let last = visiblePages.compactMap { $0.page }.max() ?? currentSlot
+        switch PageInfo.effectiveScope(hasChapters: true) {
+        case .chapter:
+            guard let count = currentCount else { return "" }
+            return PageInfo.text(left: PageInfo.pagesLeft(lastShown: last, end: count), scope: .chapter)
+        case .book:
+            if let all = renderer.allPageCounts() {
+                let before = all.prefix(currentChapter).reduce(0, +)
+                return PageInfo.text(left: PageInfo.pagesLeft(lastShown: before + last, end: all.reduce(0, +)),
+                                     scope: .book)
+            }
+            guard let total = estimatedBookPages() else { return "" }
+            let shown = bookPageIndex(chapter: currentChapter, page: last)
+            return PageInfo.text(left: PageInfo.pagesLeft(lastShown: shown, end: total), scope: .book, estimated: true)
+        }
+    }
+
+    /// Bokens sidantal uppskattat från de mätta kapitlen och kapitlens storlek, tills alla kapitel är mätta.
+    private func estimatedBookPages() -> Int? {
+        guard let content = content, let renderer = renderer else { return nil }
+        var measuredPages = 0
+        var measuredWeight = 0
+        for index in content.chapters.indices {
+            if let count = renderer.pageCount(of: index) {
+                measuredPages += count
+                measuredWeight += content.chapters[index].weight
+            }
+        }
+        guard measuredPages > 0, measuredWeight > 0 else { return nil }
+        return Int((Double(content.totalWeight) * Double(measuredPages) / Double(measuredWeight)).rounded())
     }
 
     private func setUpTaps() {
@@ -678,13 +720,15 @@ final class ReflowReaderViewController: UIViewController {
     private func updatePageLabel() {
         guard let content = content, let renderer = renderer, isShowingPages else { return }
         bottomBar.pageButton.setTitle(pageText(content: content, renderer: renderer), for: .normal)
+        bottomBar.infoButton.setTitle(remainingText(renderer: renderer), for: .normal)
         chrome.setSubtitle(chapterName(currentChapter))
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(content.fraction(at: currentLocation()))
         }
     }
 
-    /// "52 av 300" när hela boken är mätt, annars sidan i kapitlet och hur långt in i boken man är.
+    /// "s. 52 av 300" när hela boken är mätt, annars sidan i kapitlet: "s. 3 av 12 i kapitlet".
+    /// Sidor kvar står till höger (V1), så procenten av boken behövs inte här.
     private func pageText(content: ReflowableBook, renderer: ReflowRenderer) -> String {
         let pages = visiblePages.compactMap { $0.page }
         let shown = pages.isEmpty ? [currentSlot] : pages
@@ -692,14 +736,13 @@ final class ReflowReaderViewController: UIViewController {
             let before = all.prefix(currentChapter).reduce(0, +)
             let total = all.reduce(0, +)
             let numbers = shown.map { String(before + $0 + 1) }.joined(separator: " och ")
-            return "\(numbers) av \(total)"
+            return "s. \(numbers) av \(total)"
         }
         let numbers = shown.map { String($0 + 1) }.joined(separator: " och ")
-        let percent = Int((content.fraction(at: currentLocation()) * 100).rounded())
         guard let count = currentCount else {
-            return "Sida \(numbers) i kapitlet, \(percent) % av boken"
+            return "s. \(numbers) i kapitlet"
         }
-        return "Sida \(numbers) av \(count) i kapitlet, \(percent) % av boken"
+        return "s. \(numbers) av \(count) i kapitlet"
     }
 
     /// Sidan i hela boken, från 0, till Sparade ord. Uppskattad från kapitlens storlek tills alla kapitel är mätta.
@@ -1295,7 +1338,8 @@ extension ReflowReaderViewController {
         }
         let counts = (0..<(content?.chapters.count ?? 0)).map { renderer?.pageCount(of: $0).map(String.init) ?? "?" }
         let size = "\(Int(view.bounds.width))x\(Int(view.bounds.height))"
-        SelfTest.log("\(label): \(pages.joined(separator: ", ")). Etikett: \(bottomBar.pageButton.title(for: .normal) ?? ""). "
+        SelfTest.log("\(label): \(pages.joined(separator: ", ")). Etikett: \(bottomBar.pageButton.title(for: .normal) ?? ""), "
+                     + "\(bottomBar.infoButton.title(for: .normal) ?? ""). "
                      + "Sidantal per kapitel: \(counts.joined(separator: " ")). Vy \(size), \(mode == .spread ? "uppslag" : "en sida"), "
                      + "layout \(lastLayout?.key ?? "ingen")")
     }

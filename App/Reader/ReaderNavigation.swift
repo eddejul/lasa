@@ -233,3 +233,47 @@ final class ReaderBackStack<Place> {
         control.superview?.bringSubviewToFront(control)
     }
 }
+
+/// V1: sidor kvar i kapitlet eller i boken, till höger i nederkanten. Ett tryck växlar, och valet gäller alla böcker.
+/// Ingen tid kvar (Edvins beslut 8 november 2026), bara sidor.
+enum PageInfo {
+
+    enum Scope: String {
+        case chapter, book
+    }
+
+    private static let key = "reader.pageInfoScope"
+
+    /// Det som visas. En bok utan kapitel (en PDF utan innehållsförteckning) visar alltid boken.
+    static var scope: Scope {
+        get { Scope(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .chapter }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    }
+
+    /// Byter till det andra läget och sparar det. Utan kapitel finns bara boken.
+    static func toggle(hasChapters: Bool) {
+        guard hasChapters else { return }
+        scope = scope == .chapter ? .book : .chapter
+    }
+
+    /// Läget som gäller för en bok med eller utan kapitel.
+    static func effectiveScope(hasChapters: Bool) -> Scope {
+        hasChapters ? scope : .book
+    }
+
+    /// Sidorna kvar efter den sista sidan som syns, när avsnittet slutar före `end` (sidan efter avsnittets sista).
+    static func pagesLeft(lastShown: Int, end: Int) -> Int {
+        max(end - lastShown - 1, 0)
+    }
+
+    /// "9 sidor kvar i kapitlet", "1 sida kvar i boken", "Sista sidan i kapitlet".
+    /// `estimated`: sidantalet är uppskattat (EPUB innan alla kapitel är mätta).
+    static func text(left: Int, scope: Scope, estimated: Bool = false) -> String {
+        let place = scope == .chapter ? "kapitlet" : "boken"
+        if left <= 0 {
+            return "Sista sidan i \(place)"
+        }
+        let count = left == 1 ? "1 sida" : "\(left) sidor"
+        return (estimated ? "Cirka \(count)" : count) + " kvar i \(place)"
+    }
+}

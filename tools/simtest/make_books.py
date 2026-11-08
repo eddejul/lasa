@@ -288,7 +288,10 @@ def pdf_string(text):
 
 def make_pdf(path, rng):
     """En liten PDF med textlager: åtta A4-sidor med rubrik och stycken, svenska och engelska.
-    Sida 2 har ordet kunskap avstavat över en radbrytning, för sökningen."""
+    Sida 2 har ordet kunskap avstavat över en radbrytning, för sökningen.
+    Innehållet (bokmärkena) har tre kapitel på sidorna 1, 3 och 6, för sidor kvar i kapitlet (V1) och
+    kapitelstrecken i tidslinjen (V2). Sida 3 har en fotnotssiffra med en intern länk till noten nederst
+    på sida 8, för fotnoten i en ruta (V5)."""
     pages = []
     for number in range(1, 9):
         pool = ENGLISH if number == 6 else SWEDISH
@@ -297,7 +300,8 @@ def make_pdf(path, rng):
             lines += wrap(paragraph, 74) + [""]
         if number == 2:
             lines = ["Den som söker kun-", "skap måste läsa noga och pröva det hon läser.", ""] + lines
-        pages.append((f"Kapitel {number}", lines[:46]))
+        # Sida 8 slutar högre upp, så att fotnoten står ensam nederst.
+        pages.append((f"Kapitel {number}", lines[:40] if number == 8 else lines[:46]))
 
     objects = []
 
@@ -309,18 +313,42 @@ def make_pdf(path, rng):
     page_tree = add(None)
     regular = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
     bold = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
-    kids = []
-    for title, lines in pages:
+    # Sidornas objekt först, så att länken på sida 3 kan peka på sida 8.
+    kids = [add(None) for _ in pages]
+    for number, (title, lines) in enumerate(pages, start=1):
         content = [f"BT /F2 18 Tf 60 780 Td {pdf_string(title)} Tj ET", "BT /F1 12 Tf 15 TL 60 748 Td"]
         for line in lines:
             content.append(f"{pdf_string(line)} Tj T*")
         content.append("ET")
+        annots = ""
+        if number == 3:
+            # V5: en fotnotssiffra med en intern länk till noten nederst på sida 8.
+            content.append(f"BT /F1 12 Tf 60 763 Td {pdf_string('Det här stycket har en fotnot.')} Tj ET")
+            content.append(f"BT /F1 8 Tf 216 768 Td {pdf_string('1')} Tj ET")
+            annots = (" /Annots [<< /Type /Annot /Subtype /Link /Rect [212 762 226 778] /Border [0 0 0] "
+                      "/Dest [%d 0 R /XYZ 0 84 0] >>]" % kids[7])
+        if number == 8:
+            content.append(f"BT /F1 9 Tf 60 70 Td {pdf_string('1 Fotnoten i PDF:en. En kort förklaring som visas i en ruta vid siffran.')} Tj ET")
         stream = "\n".join(content).encode("latin-1")
         contents = add(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
-        kids.append(add(("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 595 842] "
-                         "/Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %d 0 R >>"
-                         % (page_tree, regular, bold, contents)).encode("ascii")))
-    objects[catalog - 1] = ("<< /Type /Catalog /Pages %d 0 R >>" % page_tree).encode("ascii")
+        objects[kids[number - 1] - 1] = ("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 595 842] "
+                                         "/Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %d 0 R%s >>"
+                                         % (page_tree, regular, bold, contents, annots)).encode("ascii")
+    # Innehållet: tre kapitel (V1, V2).
+    chapters = [("Kapitel 1", 0), ("Kapitel 3", 2), ("Kapitel 6", 5)]
+    outlines = add(None)
+    items = [add(None) for _ in chapters]
+    for position, (title, page) in enumerate(chapters):
+        links = ""
+        if position > 0:
+            links += " /Prev %d 0 R" % items[position - 1]
+        if position < len(chapters) - 1:
+            links += " /Next %d 0 R" % items[position + 1]
+        objects[items[position] - 1] = ("<< /Title %s /Parent %d 0 R /Dest [%d 0 R /XYZ 0 842 0]%s >>"
+                                        % (pdf_string(title), outlines, kids[page], links)).encode("latin-1")
+    objects[outlines - 1] = ("<< /Type /Outlines /First %d 0 R /Last %d 0 R /Count %d >>"
+                             % (items[0], items[-1], len(items))).encode("ascii")
+    objects[catalog - 1] = ("<< /Type /Catalog /Pages %d 0 R /Outlines %d 0 R >>" % (page_tree, outlines)).encode("ascii")
     objects[page_tree - 1] = ("<< /Type /Pages /Kids [%s] /Count %d >>"
                               % (" ".join(f"{kid} 0 R" for kid in kids), len(kids))).encode("ascii")
 

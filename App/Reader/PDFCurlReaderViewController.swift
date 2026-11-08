@@ -465,7 +465,29 @@ final class PDFCurlReaderViewController: UIViewController {
         slider.addTarget(self, action: #selector(sliderReleased), for: [.touchUpInside, .touchUpOutside])
 
         bottomBar.pageButton.addTarget(self, action: #selector(showGoToPage), for: .touchUpInside)
+        bottomBar.infoButton.addTarget(self, action: #selector(toggleRemaining), for: .touchUpInside)
+        if chapterStarts.isEmpty {
+            // V1: en PDF utan innehållsförteckning visar sidorna kvar i boken, och trycket växlar inget.
+            bottomBar.infoButton.accessibilityHint = nil
+        }
         updatePageLabel()
+    }
+
+    /// V1: ett tryck på sidor kvar växlar mellan kapitlet och boken.
+    @objc private func toggleRemaining() {
+        PageInfo.toggle(hasChapters: !chapterStarts.isEmpty)
+        updatePageLabel()
+    }
+
+    /// V1: sidorna kvar efter den sista sidan som syns, i kapitlet (ur PDF:ens innehåll) eller i boken.
+    private func remainingText(lastShown: Int) -> String {
+        switch PageInfo.effectiveScope(hasChapters: !chapterStarts.isEmpty) {
+        case .chapter:
+            let end = chapterStarts.first { $0.index > lastShown }?.index ?? renderer.pageCount
+            return PageInfo.text(left: PageInfo.pagesLeft(lastShown: lastShown, end: end), scope: .chapter)
+        case .book:
+            return PageInfo.text(left: PageInfo.pagesLeft(lastShown: lastShown, end: renderer.pageCount), scope: .book)
+        }
     }
 
     private func setUpTaps() {
@@ -508,6 +530,7 @@ final class PDFCurlReaderViewController: UIViewController {
     private func updatePageLabel() {
         let indices = visibleIndices.isEmpty ? [currentIndex] : visibleIndices
         bottomBar.pageButton.setTitle(pageText(for: indices), for: .normal)
+        bottomBar.infoButton.setTitle(remainingText(lastShown: indices.max() ?? currentIndex), for: .normal)
         chrome.setSubtitle(chapterTitle(for: indices.first ?? currentIndex))
         if !bottomBar.slider.isTracking {
             bottomBar.slider.value = Float(currentIndex)
@@ -542,14 +565,14 @@ final class PDFCurlReaderViewController: UIViewController {
         chapterStarts.last { $0.index <= index }?.title
     }
 
-    /// "52 av 300", eller med bokens egna sidnummer när de skiljer sig: "Sida 45, 52 av 300".
+    /// "s. 52 av 300", eller med bokens egna sidnummer när de skiljer sig: "s. 45 (52 av 300)".
     private func pageText(for indices: [Int]) -> String {
         let numbers = indices.map { String($0 + 1) }.joined(separator: " och ")
         let printed = indices.compactMap { printedLabel(for: $0) }
         if !printed.isEmpty, printed.count == indices.count {
-            return "Sida \(printed.joined(separator: " och ")), \(numbers) av \(renderer.pageCount)"
+            return "s. \(printed.joined(separator: " och ")) (\(numbers) av \(renderer.pageCount))"
         }
-        return "\(numbers) av \(renderer.pageCount)"
+        return "s. \(numbers) av \(renderer.pageCount)"
     }
 
     /// Sidnumret som står i boken, om det skiljer sig från sidans plats i filen.
@@ -1690,6 +1713,12 @@ extension PDFCurlReaderViewController {
         await pause(1.5)
         _ = await waitForImages()
         SelfTest.log("Efter en sida: \(bottomBar.pageButton.title(for: .normal) ?? "")")
+        // V1: sidor kvar, ett tryck växlar mellan kapitlet och boken (PDF:en har innehåll i testet).
+        let remaining = bottomBar.infoButton.title(for: .normal) ?? "inget"
+        toggleRemaining()
+        SelfTest.log("Sidor kvar (V1): \(remaining), efter ett tryck \(bottomBar.infoButton.title(for: .normal) ?? "inget"), "
+                     + "kapitel i innehållet \(chapterStarts.count)")
+        toggleRemaining()
 
         // Ordet under en punkt, som när fingret börjar markera.
         guard let page = visiblePages.first(where: { !$0.isBlank }),

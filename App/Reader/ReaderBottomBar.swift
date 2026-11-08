@@ -1,11 +1,16 @@
 import UIKit
 
-/// Menyns nederkant i läsaren: ett reglage för att hoppa i boken och sidnumret.
-/// Sidnumret är en knapp som öppnar Gå till sida.
+/// Menyns nederkant i läsaren: ett reglage för att hoppa i boken och under det en rad med sidan till vänster,
+/// kapitlets namn i mitten (V2) och sidor kvar till höger (V1). Sidan är en knapp som öppnar Gå till sida
+/// (PDF) eller Innehåll (EPUB), och sidor kvar växlar mellan kapitlet och boken när man trycker.
 final class ReaderBottomBar: UIView {
 
     let slider = UISlider()
     let pageButton = UIButton(type: .system)
+    /// V2: kapitlets namn under linjen.
+    let chapterLabel = UILabel()
+    /// V1: sidor kvar i kapitlet eller i boken. Ett tryck växlar.
+    let infoButton = UIButton(type: .system)
 
     private let background = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
 
@@ -21,9 +26,28 @@ final class ReaderBottomBar: UIView {
 
         pageButton.translatesAutoresizingMaskIntoConstraints = false
         pageButton.titleLabel?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        pageButton.titleLabel?.lineBreakMode = .byTruncatingTail
         pageButton.accessibilityHint = "Öppnar Gå till sida"
+        pageButton.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         background.contentView.addSubview(pageButton)
 
+        chapterLabel.translatesAutoresizingMaskIntoConstraints = false
+        chapterLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        chapterLabel.textAlignment = .center
+        chapterLabel.lineBreakMode = .byTruncatingTail
+        chapterLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        chapterLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        background.contentView.addSubview(chapterLabel)
+
+        infoButton.translatesAutoresizingMaskIntoConstraints = false
+        infoButton.titleLabel?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        infoButton.titleLabel?.lineBreakMode = .byTruncatingTail
+        infoButton.accessibilityHint = "Växlar mellan sidor kvar i kapitlet och i boken"
+        infoButton.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        background.contentView.addSubview(infoButton)
+
+        let centered = chapterLabel.centerXAnchor.constraint(equalTo: centerXAnchor)
+        centered.priority = .defaultHigh
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: leadingAnchor),
             background.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -35,8 +59,17 @@ final class ReaderBottomBar: UIView {
             slider.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -20),
 
             pageButton.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 2),
-            pageButton.centerXAnchor.constraint(equalTo: centerXAnchor),
-            pageButton.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -6)
+            pageButton.leadingAnchor.constraint(equalTo: slider.leadingAnchor),
+            pageButton.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -6),
+
+            infoButton.centerYAnchor.constraint(equalTo: pageButton.centerYAnchor),
+            infoButton.trailingAnchor.constraint(equalTo: slider.trailingAnchor),
+            infoButton.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.4),
+
+            chapterLabel.centerYAnchor.constraint(equalTo: pageButton.centerYAnchor),
+            centered,
+            chapterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: pageButton.trailingAnchor, constant: 12),
+            chapterLabel.trailingAnchor.constraint(lessThanOrEqualTo: infoButton.leadingAnchor, constant: -12),
         ])
     }
 
@@ -51,5 +84,7 @@ final class ReaderBottomBar: UIView {
         slider.minimumTrackTintColor = palette.accent
         slider.maximumTrackTintColor = palette.rule
         pageButton.tintColor = palette.inkSoft
+        chapterLabel.textColor = palette.ink
+        infoButton.tintColor = palette.accent
     }
 }

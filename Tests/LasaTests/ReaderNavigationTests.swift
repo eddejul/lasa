@@ -47,3 +47,26 @@ final class ReaderHistoryTests: XCTestCase {
         XCTAssertEqual(history.entries.first?.place, 30)
     }
 }
+
+/// V1: sidor kvar, utan tid.
+final class PageInfoTests: XCTestCase {
+
+    func testPagesLeftAfterLastShownPage() {
+        // Kapitlet är sidorna 10 till 19 (slutar före 20). På sidan 12 är 7 sidor kvar.
+        XCTAssertEqual(PageInfo.pagesLeft(lastShown: 12, end: 20), 7)
+        XCTAssertEqual(PageInfo.pagesLeft(lastShown: 19, end: 20), 0)
+        XCTAssertEqual(PageInfo.pagesLeft(lastShown: 25, end: 20), 0)
+    }
+
+    func testTextWithoutTime() {
+        XCTAssertEqual(PageInfo.text(left: 9, scope: .chapter), "9 sidor kvar i kapitlet")
+        XCTAssertEqual(PageInfo.text(left: 1, scope: .book), "1 sida kvar i boken")
+        XCTAssertEqual(PageInfo.text(left: 0, scope: .chapter), "Sista sidan i kapitlet")
+        XCTAssertEqual(PageInfo.text(left: 270, scope: .book, estimated: true), "Cirka 270 sidor kvar i boken")
+        XCTAssertFalse(PageInfo.text(left: 5, scope: .book).contains("min"))
+    }
+
+    func testBookWithoutChaptersShowsBook() {
+        XCTAssertEqual(PageInfo.effectiveScope(hasChapters: false), .book)
+    }
+}
