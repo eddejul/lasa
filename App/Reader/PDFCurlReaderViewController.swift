@@ -49,6 +49,8 @@ final class PDFCurlReaderViewController: UIViewController {
     private var zoomTap: UITapGestureRecognizer?
     private var wordPress: UILongPressGestureRecognizer?
     private var pressedWord: PressedWord?
+    /// Markeringsradens ruta senast den visades (U5), till självtestet.
+    private var lastMarkMenuAnchor: CGRect?
     /// Bubblan ovanför fingret när ett ord hålls (G12, gemensam med den andra läsaren).
     private lazy var wordBubble = WordBubble(host: view)
 
@@ -1165,8 +1167,17 @@ extension PDFCurlReaderViewController {
             AnnotationStore.shared.delete(current)
             self?.refreshMarks(onPage: current.section)
         }
-        HighlightMenuViewController.present(menu, from: self, sourceView: view,
-                                            sourceRect: CGRect(x: point.x - 1, y: point.y - 10, width: 2, height: 20))
+        let page = visiblePages.first { !$0.isBlank && !$0.markRects(id: id).isEmpty }
+        let anchor = page.map { HighlightMenuViewController.anchor(for: $0.markRects(id: id), in: view,
+                                                                   from: $0.view, fallback: point) }
+            ?? CGRect(x: point.x - 1, y: point.y - 10, width: 2, height: 20)
+        menu.onLookUp = { [weak self] in
+            guard let self = self else { return }
+            HighlightLookUp.present(highlight, book: self.book, pageIndex: highlight.section, from: self,
+                                    sourceView: self.view, sourceRect: anchor)
+        }
+        lastMarkMenuAnchor = anchor
+        HighlightMenuViewController.present(menu, from: self, sourceView: view, sourceRect: anchor)
     }
 
     fileprivate func editNote(highlightID id: String) {
@@ -1594,6 +1605,13 @@ extension PDFCurlReaderViewController {
                 SelfTest.log("Tryck på markeringen hittar: \(markHit(at: point)?.id == highlight.id ? "rätt markering" : "FEL")")
                 presentMarkMenu(id: highlight.id, at: point)
                 await pause(0.8)
+                if let shown = presentedViewController as? HighlightMenuViewController, let anchor = lastMarkMenuAnchor {
+                    let frame = view.convert(shown.view.bounds, from: shown.view)
+                    let covers = frame.intersects(anchor.insetBy(dx: 0, dy: 1))
+                    SelfTest.log("Markeringsraden (U5): \(HighlightMenuViewController.lastPlacement) markeringen, "
+                                 + "\(Int(frame.width)) x \(Int(frame.height)) punkter, täcker markeringen: "
+                                 + (covers ? "FEL, ja" : "nej"))
+                }
                 SelfTest.saveScreen(view.window ?? view, name: "09-markeringsmeny")
                 await dismissPresented()
             }

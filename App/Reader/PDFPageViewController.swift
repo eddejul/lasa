@@ -148,6 +148,11 @@ final class PDFPageViewController: UIViewController {
     }
 
     /// Markeringen under en punkt i bladet.
+    /// Rutorna för en markering på sidan, i sidvyns koordinater (U5: markeringsraden pekar på dem).
+    func markRects(id: String) -> [CGRect] {
+        marks.filter { $0.id == id }.flatMap { $0.rects }.compactMap { viewRect(forPageRect: $0) }
+    }
+
     func markID(at point: CGPoint) -> String? {
         for mark in marks.reversed() {
             for rect in mark.rects {

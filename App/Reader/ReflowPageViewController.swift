@@ -247,6 +247,11 @@ final class ReflowPageViewController: UIViewController {
     }
 
     /// Markeringen under en punkt i bladet.
+    /// Rutorna för en markering på sidan, i sidvyns koordinater (U5: markeringsraden pekar på dem).
+    func markRects(id: String) -> [CGRect] {
+        marks.filter { $0.id == id }.map { viewRect($0.rect) }
+    }
+
     func markID(at point: CGPoint) -> String? {
         guard hasImage else { return nil }
         let location = pagePoint(point)
