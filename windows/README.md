@@ -15,7 +15,7 @@ Appen är byggd med Tauri, pdf.js (PDF) och foliate-js (EPUB och text), och den 
 4. Dubbelklicka på `-setup.exe`. Läsa installeras för ditt konto, så det behövs ingen administratör.
 5. Installationsfilen är inte signerad, så Windows visar **Windows skyddade datorn**. Klicka på
    **Mer info** och sedan **Kör ändå**.
-6. Starta Läsa från Start-menyn. Fönstret öppnas i full storlek.
+6. Starta Läsa från Start-menyn (i fönstret heter appen Sensus). Fönstret öppnas i full storlek.
 
 Uppdatera: kör en nyare `-setup.exe` på samma sätt. Böcker, läspositioner och sparade ord finns kvar.
 
