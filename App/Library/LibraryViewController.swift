@@ -7,7 +7,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     UICollectionViewDelegate, UISearchResultsUpdating {
 
     private enum Section: Int, CaseIterable {
-        case banner, activity, continueReading, books
+        case banner, activity, continueReading, more, books
     }
 
     private var collectionView: UICollectionView!
@@ -74,6 +74,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         collectionView.register(BookCell.self, forCellWithReuseIdentifier: BookCell.id)
         collectionView.register(ContinueCell.self, forCellWithReuseIdentifier: ContinueCell.id)
         collectionView.register(MessageCell.self, forCellWithReuseIdentifier: MessageCell.id)
+        collectionView.register(MoreCell.self, forCellWithReuseIdentifier: MoreCell.id)
         collectionView.register(BooksHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
                                 withReuseIdentifier: BooksHeaderView.id)
         view.addSubview(collectionView)
@@ -330,6 +331,11 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // B5: välkomstsidan, bara för en ny installation utan böcker eller data.
+        if !SelfTest.isActive, presentedViewController == nil, Onboarding.shouldShowWelcome {
+            showWelcome()
+            return
+        }
         // Bara i simulatortestet i bygget: öppna testboken direkt.
         askNextQuestion()
         guard let name = SelfTest.bookName, !didStartSelfTest else { return }
@@ -353,6 +359,32 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             SelfTest.log("FEL: hittade inte \(name) i biblioteket")
             SelfTest.finish()
         }
+    }
+
+    // MARK: Första start (B5)
+
+    func showWelcome() {
+        let welcome = WelcomeViewController()
+        welcome.modalPresentationStyle = .fullScreen
+        welcome.onStart = { [weak self] in
+            self?.openSampleBook()
+        }
+        present(welcome, animated: false)
+    }
+
+    /// Lägger exempelboken i biblioteket och öppnar den.
+    func openSampleBook() {
+        guard let url = Onboarding.writeSampleBook() else { return }
+        reload()
+        if let book = books.first(where: { $0.path == Onboarding.sampleName }) ?? LibraryStore.shared.book(at: url) {
+            open(book)
+        }
+    }
+
+    private func explainFiles() {
+        showMessage(title: "Öppna från Filer",
+                    message: "I appen Filer: håll fingret på en bok, välj Dela och sedan Sensus. Du kan också lägga "
+                        + "filer i På min iPad, Sensus, Böcker. En mapp där blir en kurs.")
     }
 
     // MARK: Temat (U1)
@@ -658,10 +690,17 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             collectionView.backgroundView = nil
             return
         }
-        let label = UILabel()
         if allItems.isEmpty {
-            label.text = "Inga böcker än.\nTryck på + eller välj Öppna i Sensus från Filer."
-        } else if !searchText.isEmpty {
+            // B5: tre vägar in.
+            let empty = EmptyLibraryView(palette: palette)
+            empty.onChoose = { [weak self] in self?.addTapped() }
+            empty.onFiles = { [weak self] in self?.explainFiles() }
+            empty.onSample = { [weak self] in self?.openSampleBook() }
+            collectionView.backgroundView = empty
+            return
+        }
+        let label = UILabel()
+        if !searchText.isEmpty {
             label.text = "Inga böcker hittades för \(searchText)."
         } else {
             label.text = filter == .all ? "Inga böcker i \(scopeTitle) än.\nHåll fingret på en bok och välj Lägg i kurs."
@@ -698,6 +737,14 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
                 let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
                 let result = NSCollectionLayoutSection(group: group)
                 result.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: margin, bottom: 8, trailing: margin)
+                return result
+            case .more:
+                guard count > 0 else { return empty }
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1),
+                                                  heightDimension: .absolute(MoreCell.height + (narrow ? 30 : 0)))
+                let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
+                let result = NSCollectionLayoutSection(group: group)
+                result.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: margin, bottom: 16, trailing: margin)
                 return result
             case .continueReading:
                 guard count > 0 else { return empty }
@@ -745,6 +792,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         case .banner: return expiryText == nil ? 0 : 1
         case .activity: return activityLines.isEmpty ? 0 : 1
         case .continueReading: return continueItem == nil || scope != .all || !searchText.isEmpty ? 0 : 1
+        case .more: return Onboarding.showsMoreCard && scope == .all && searchText.isEmpty && !allItems.isEmpty ? 1 : 0
         case .books: return items.count
         case .none: return 0
         }
@@ -772,6 +820,17 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
                 cell.onContinue = { [weak self] in
                     self?.open(item.book)
                 }
+            }
+            return cell
+        case .more:
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: MoreCell.id, for: indexPath) as! MoreCell
+            cell.configure(palette: palette)
+            cell.onSetUp = { [weak self] in
+                self?.navigationController?.pushViewController(SettingsViewController(), animated: true)
+            }
+            cell.onLater = { [weak self] in
+                Onboarding.dismissMoreCard()
+                self?.collectionView.reloadData()
             }
             return cell
         case .books, .none:

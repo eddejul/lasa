@@ -178,6 +178,8 @@ final class ReflowReaderViewController: UIViewController {
         setUpNavigationBar()
         setUpBottomBar()
         setUpTaps()
+        // B5: stegen i exempelboken, en rad längst ner som inte tar tryck.
+        OnboardingTips.shared.attach(to: view, book: book)
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.hidesWhenStopped = true
@@ -995,6 +997,7 @@ final class ReflowReaderViewController: UIViewController {
             showMessage(title: "Ordboken saknas", message: "Den här versionen av appen byggdes utan ordboken.")
             return
         }
+        OnboardingTips.shared.record(.word, book: book)
         let (sentence, range) = ReflowValues.sentence(before: found.before, word: found.word, after: found.after)
         var candidates = [found.word]
         if found.word.contains("-") {
@@ -1195,6 +1198,7 @@ extension ReflowReaderViewController: UIPageViewControllerDataSource, UIPageView
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
         pagesChanged()
+        OnboardingTips.shared.record(.turn, book: book)
     }
 }
 
@@ -1273,7 +1277,8 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
 extension ReflowReaderViewController {
 
     private func startSelfTestIfNeeded() {
-        guard SelfTest.isActive, !selfTestStarted else { return }
+        // Bara boken som självtestet startades med. Exempelboken som fas 6 öppnar (B5) kör inget läsartest.
+        guard SelfTest.isActive, SelfTest.bookName == book.url.lastPathComponent, !selfTestStarted else { return }
         selfTestStarted = true
         Task { @MainActor [weak self] in
             await self?.runSelfTest()
@@ -1760,6 +1765,7 @@ extension ReflowReaderViewController {
 
     fileprivate func createHighlight(chapter: Int, range: ReflowTextRange) {
         guard !range.text.isEmpty else { return }
+        OnboardingTips.shared.record(.highlight, book: book)
         let highlight = AnnotationStore.shared.addHighlight(book: bookKey, section: chapter, start: range.start,
                                                             length: range.length, text: range.text,
                                                             color: ReaderSettings.highlightColor)

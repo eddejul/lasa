@@ -316,6 +316,183 @@ final class ContinueCell: UICollectionViewCell {
     }
 }
 
+/// Kortet Gör mer med Sensus (B5) efter första starten: Förklaring med AI, med Ställ in och Senare.
+/// Synken finns inte med, den byggs om till iCloud Drive.
+final class MoreCell: UICollectionViewCell {
+
+    static let id = "mer"
+
+    private let titleLabel = UILabel()
+    private let icon = UIImageView(image: UIImage(systemName: "sparkles"))
+    private let rowTitle = UILabel()
+    private let rowText = UILabel()
+    private let setUpButton = UIButton(type: .system)
+    private let laterButton = UIButton(type: .system)
+    var onSetUp: (() -> Void)?
+    var onLater: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.layer.cornerRadius = 14
+        contentView.layer.borderWidth = 1
+        titleLabel.text = "Gör mer med Sensus"
+        rowTitle.text = "Förklaring med AI"
+        rowText.text = "Ordkortet kan förklara vad ordet betyder just i meningen, med Googles Gemini. "
+            + "Det kräver en gratis nyckel, och meningen skickas då till Google."
+        rowText.numberOfLines = 0
+        setUpButton.setTitle("Ställ in", for: .normal)
+        setUpButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        setUpButton.layer.cornerRadius = 18
+        setUpButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        setUpButton.addTarget(self, action: #selector(setUpTapped), for: .touchUpInside)
+        laterButton.setTitle("Senare", for: .normal)
+        laterButton.titleLabel?.font = .systemFont(ofSize: 15)
+        laterButton.addTarget(self, action: #selector(laterTapped), for: .touchUpInside)
+        for view in [titleLabel, icon, rowTitle, rowText, setUpButton, laterButton] as [UIView] {
+            contentView.addSubview(view)
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) används inte")
+    }
+
+    @objc private func setUpTapped() {
+        onSetUp?()
+    }
+
+    @objc private func laterTapped() {
+        onLater?()
+    }
+
+    func configure(palette: Palette) {
+        contentView.backgroundColor = palette.surface
+        contentView.layer.borderColor = palette.rule.cgColor
+        titleLabel.font = Theme.serif(.headline, size: 18, weight: .semibold)
+        titleLabel.textColor = palette.ink
+        titleLabel.accessibilityTraits = .header
+        icon.tintColor = palette.accent
+        icon.contentMode = .scaleAspectFit
+        rowTitle.font = .systemFont(ofSize: 16, weight: .semibold)
+        rowTitle.textColor = palette.ink
+        rowText.font = .systemFont(ofSize: 14)
+        rowText.textColor = palette.inkSoft
+        setUpButton.backgroundColor = palette.accent
+        setUpButton.setTitleColor(palette.surface, for: .normal)
+        laterButton.tintColor = palette.accent
+        setNeedsLayout()
+    }
+
+    static let height: CGFloat = 156
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = contentView.bounds.width
+        titleLabel.frame = CGRect(x: 16, y: 14, width: width - 32, height: 24)
+        icon.frame = CGRect(x: 16, y: 52, width: 24, height: 24)
+        let x: CGFloat = 52
+        let buttonsWidth: CGFloat = width < 520 ? 0 : 200
+        let textWidth = width - x - 16 - buttonsWidth
+        rowTitle.frame = CGRect(x: x, y: 52, width: textWidth, height: 22)
+        let textHeight = min(rowText.sizeThatFits(CGSize(width: textWidth, height: 80)).height, 60)
+        rowText.frame = CGRect(x: x, y: 76, width: textWidth, height: textHeight)
+        let setUpWidth = setUpButton.sizeThatFits(CGSize(width: 160, height: 36)).width + 4
+        if buttonsWidth > 0 {
+            setUpButton.frame = CGRect(x: width - 16 - setUpWidth, y: 58, width: setUpWidth, height: 36)
+            laterButton.frame = CGRect(x: setUpButton.frame.minX - 84, y: 58, width: 76, height: 36)
+        } else {
+            setUpButton.frame = CGRect(x: x, y: contentView.bounds.height - 48, width: setUpWidth, height: 36)
+            laterButton.frame = CGRect(x: setUpButton.frame.maxX + 8, y: contentView.bounds.height - 48, width: 76,
+                                       height: 36)
+        }
+    }
+}
+
+/// Det tomma biblioteket (B5): tre vägar in, Välj filer, Öppna från Filer och Prova exempelboken.
+final class EmptyLibraryView: UIView {
+
+    var onChoose: (() -> Void)?
+    var onFiles: (() -> Void)?
+    var onSample: (() -> Void)?
+
+    init(palette: Palette) {
+        super.init(frame: .zero)
+        let title = UILabel()
+        title.text = "Inga böcker än"
+        title.font = Theme.serif(.title2, size: 26, weight: .semibold)
+        title.textColor = palette.ink
+        title.textAlignment = .center
+        let text = UILabel()
+        text.text = "Lägg in en PDF, en EPUB eller en textfil. Böcker i en mapp blir en kurs av sig själva."
+        text.font = .preferredFont(forTextStyle: .body)
+        text.textColor = palette.inkSoft
+        text.textAlignment = .center
+        text.numberOfLines = 0
+        let buttons = [
+            Self.button("Välj filer", symbol: "plus", filled: true, palette: palette, action: #selector(choose)),
+            Self.button("Öppna från Filer", symbol: "folder", filled: false, palette: palette, action: #selector(files)),
+            Self.button("Prova exempelboken", symbol: "book", filled: false, palette: palette, action: #selector(sample)),
+        ]
+        let stack = UIStackView(arrangedSubviews: [title, text] + buttons)
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 14
+        stack.setCustomSpacing(28, after: text)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        var constraints = [
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -20),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+            text.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
+        ]
+        for button in buttons {
+            constraints.append(button.widthAnchor.constraint(equalToConstant: 260))
+            constraints.append(button.heightAnchor.constraint(equalToConstant: 48))
+        }
+        NSLayoutConstraint.activate(constraints)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) används inte")
+    }
+
+    private static func button(_ title: String, symbol: String, filled: Bool, palette: Palette,
+                               action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setTitle("  " + title, for: .normal)
+        button.setImage(UIImage(systemName: symbol), for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        button.layer.cornerRadius = 24
+        if filled {
+            button.backgroundColor = palette.accent
+            button.tintColor = palette.surface
+            button.setTitleColor(palette.surface, for: .normal)
+        } else {
+            button.backgroundColor = palette.surface
+            button.layer.borderWidth = 1
+            button.layer.borderColor = palette.rule.cgColor
+            button.tintColor = palette.accent
+            button.setTitleColor(palette.accent, for: .normal)
+        }
+        button.addTarget(nil, action: action, for: .touchUpInside)
+        return button
+    }
+
+    @objc private func choose() {
+        onChoose?()
+    }
+
+    @objc private func files() {
+        onFiles?()
+    }
+
+    @objc private func sample() {
+        onSample?()
+    }
+}
+
 /// En rad med text och förlopp: utgångsvarningen (G1) och Lägger till Bok.pdf (G10, G3).
 final class MessageCell: UICollectionViewCell {
 

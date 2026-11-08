@@ -120,6 +120,8 @@ enum LibrarySelfTest {
         }
         SelfTest.log("Sidopanelen (B3): \(library.sidebar.rowsForSelfTest.joined(separator: " | "))")
 
+        await testFirstStart(library: library)
+
         // Bilder: stående, liggande, iPhone-storlek och tomt bibliotek.
         let container = navigation.view!
         let original = container.frame
@@ -159,6 +161,50 @@ enum LibrarySelfTest {
         library.showsEmptyForSelfTest = false
         if let course = ownCourse {
             CourseStore.shared.delete(course.id)
+        }
+        library.reload()
+        await pause(0.4)
+    }
+
+    /// B5: simulatorn har böcker och ska aldrig få välkomstsidan. Välkomstsidan, kortet Gör mer med Sensus och
+    /// exempelboken med stegen fotograferas, och exempelboken tas bort efteråt.
+    static func testFirstStart(library: LibraryViewController) async {
+        guard let navigation = library.navigationController else { return }
+        SelfTest.log("Första start (B5): befintlig data \(Onboarding.hasExistingData() ? "finns" : "FEL, saknas"), "
+                     + "välkomstsidan \(Onboarding.shouldShowWelcome ? "FEL, visas" : "visas inte (rätt)")")
+        let welcome = WelcomeViewController()
+        welcome.modalPresentationStyle = .fullScreen
+        library.present(welcome, animated: false)
+        await pause(0.8)
+        SelfTest.saveScreen(welcome.view, name: "21-forsta-start")
+        library.dismiss(animated: false)
+        await pause(0.4)
+
+        Onboarding.setNewInstallForSelfTest(true)
+        library.reload()
+        await pause(0.6)
+        SelfTest.saveScreen(navigation.view, name: "21a-gor-mer")
+        Onboarding.setNewInstallForSelfTest(false)
+
+        library.openSampleBook()
+        await pause(4.0)
+        let reader = navigation.topViewController
+        SelfTest.log("Exempelboken: \(reader is ReflowReaderViewController ? "öppnad" : "FEL, öppnades inte"), "
+                     + "raden: \(OnboardingTips.shared.text)")
+        SelfTest.saveScreen(navigation.view, name: "21b-exempelbok")
+        if let book = library.books.first(where: { Onboarding.isSample($0) }) {
+            for step in OnboardingTips.Step.allCases {
+                OnboardingTips.shared.record(step, book: book)
+            }
+            SelfTest.log("Exempelboken efter de tre stegen: \(OnboardingTips.shared.text)")
+            navigation.popToRootViewController(animated: false)
+            await pause(0.6)
+            let title = library.allItems.first { Onboarding.isSample($0.book) }?.title ?? "saknas"
+            SelfTest.log("Exempelboken i biblioteket: \(title)")
+            try? LibraryStore.shared.delete(book)
+        } else {
+            SelfTest.log("FEL: exempelboken finns inte i biblioteket")
+            navigation.popToRootViewController(animated: false)
         }
         library.reload()
         await pause(0.4)
