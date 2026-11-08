@@ -315,6 +315,19 @@ enum Fas6SelfTest {
         let after = LibraryStore.shared.allBooks().count
         SelfTest.log("Samma innehåll igen: \(again?.path ?? "ingen bok") och \(after - before) nya böcker "
                      + "\(after == before ? "(rätt)" : "FEL")")
+
+        // Granskningens fynd 7: Ersätt och börja om byter filen på en gång (replaceItemAt), och den gamla
+        // raden markeras som borta först efter bytet.
+        try? Data("# Importprov\n\nFjärde versionen, den längsta av dem alla hittills.\n".utf8).write(to: first)
+        BookImporter.selfTestAnswer = .replaceStartingOver
+        let fresh = await importing(first, move: true).first
+        let oldRow = replaced.flatMap { BookRegistry.shared.record(id: $0.id) }
+        let text = fresh.flatMap { try? String(contentsOf: $0.url, encoding: .utf8) } ?? ""
+        let freshOK = fresh != nil && fresh?.id != replaced?.id && oldRow?.missing == true && text.contains("Fjärde")
+        SelfTest.log("Ersätt och börja om (fynd 7): \(fresh?.path ?? "FEL, ingen bok") med "
+                     + "\(fresh?.id != replaced?.id ? "nytt id" : "samma id") och den gamla raden "
+                     + "\(oldRow?.missing == true ? "borta" : "kvar"), filen har nya texten: \(text.contains("Fjärde")). "
+                     + "\(freshOK ? "Rätt" : "FEL")")
         BookImporter.selfTestAnswer = nil
 
         for book in LibraryStore.shared.allBooks() where book.path.hasPrefix("Importprov") || book.path == "Storbok.txt" {
@@ -378,6 +391,86 @@ enum Fas6SelfTest {
         }
         UserDefaults.standard.removeObject(forKey: positionKey)
         UserWords.shared.delete(lemma: "kopieprov", language: .swedish)
+        await testBackupPruning()
+    }
+
+    /// Granskningens fynd 1 och 2: sju påhittade dagar med kopior och en kopia före uppdateringen. Återställ
+    /// från den äldsta ska lyckas och lämna den kvar, kopian före uppdateringen rensas aldrig, och flera kopior
+    /// samma dag ersätter varandra. Fynd 3: synken är avstängd efter en återställning tills nästa start.
+    private static func testBackupPruning() async {
+        let manager = FileManager.default
+        guard let latest = Backup.dailyCopies().first else {
+            SelfTest.log("FEL: ingen kopia att bygga provet av rensningen på")
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HHmmss"
+        var made: [URL] = []
+        for day in 1...7 {
+            let date = Date().addingTimeInterval(-Double(day) * 86_400)
+            let url = Backup.directory.appendingPathComponent(formatter.string(from: date), isDirectory: true)
+            try? manager.removeItem(at: url)
+            try? manager.copyItem(at: latest.url, to: url)
+            made.append(url)
+        }
+        let beforeUpdate = Backup.directory.appendingPathComponent(Backup.beforeUpdatePrefix + "2000-01-01 000000",
+                                                                    isDirectory: true)
+        try? manager.removeItem(at: beforeUpdate)
+        try? manager.copyItem(at: latest.url, to: beforeUpdate)
+        defer {
+            for url in made + [beforeUpdate] {
+                try? manager.removeItem(at: url)
+            }
+        }
+        let daysBefore = Set(Backup.dailyCopies().map { Calendar.current.startOfDay(for: $0.date) }).count
+        guard let oldest = Backup.dailyCopies().last else { return }
+        do {
+            try Backup.restore(oldest)
+            let kept = manager.fileExists(atPath: oldest.url.path)
+            let beforeKept = manager.fileExists(atPath: beforeUpdate.path)
+            let listed = Backup.copies().contains { $0.isBeforeUpdate && $0.url.lastPathComponent == beforeUpdate.lastPathComponent }
+            SelfTest.log("Återställ från den äldsta (fynd 1): kopior på \(daysBefore) dagar, återställningen lyckades, "
+                         + "den valda kopian \(kept ? "finns kvar" : "är borta"), Före uppdateringen "
+                         + "\(beforeKept && listed ? "kvar och i listan" : "borta") (fynd 2). "
+                         + "\(kept && beforeKept && listed ? "Rätt" : "FEL")")
+        } catch {
+            SelfTest.log("FEL: återställningen från den äldsta kopian: \(error.localizedDescription)")
+        }
+
+        // Två kopior till i dag: de ersätter varandra, och de sju dagarna räknas per dag.
+        for _ in 0..<2 {
+            let extra: Result<Backup.Copy, Error> = await withCheckedContinuation { continuation in
+                Backup.make { continuation.resume(returning: $0) }
+            }
+            if case .failure(let error) = extra {
+                SelfTest.log("FEL: en extra kopia gick inte att spara: \(error.localizedDescription)")
+            }
+        }
+        let daily = Backup.dailyCopies()
+        let today = Calendar.current.startOfDay(for: Date())
+        let todayCount = daily.filter { $0.date >= today }.count
+        let days = Set(daily.map { Calendar.current.startOfDay(for: $0.date) }).count
+        let beforeStill = manager.fileExists(atPath: beforeUpdate.path)
+        SelfTest.log("Rensningen per dag (fynd 2): \(daily.count) dagliga kopior på \(days) dagar, \(todayCount) i dag, "
+                     + "Före uppdateringen \(beforeStill ? "kvar" : "borta"). "
+                     + "\(todayCount == 1 && days == 7 && daily.count == 7 && beforeStill ? "Rätt" : "FEL")")
+
+        // Fynd 3: efter en återställning synkar appen inte förrän nästa start.
+        let engine = SyncEngine.shared
+        engine.pauseUntilRestart()
+        var paused = false
+        do {
+            _ = try await engine.sync()
+        } catch is SyncEngine.PausedError {
+            paused = true
+        } catch {
+            paused = false
+        }
+        engine.resumeForSelfTest()
+        // Återställningen av den påhittade kopian tog tillbaka provets läsposition, som tas bort igen.
+        UserDefaults.standard.removeObject(forKey: "position.kopieprov.pdf")
+        SelfTest.log("Synken efter återställning (fynd 3): \(paused ? "avstängd till nästa start. Rätt" : "FEL, körde")")
     }
 
     private static func testSync(navigation: UINavigationController) async {

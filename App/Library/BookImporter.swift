@@ -119,12 +119,12 @@ final class BookImporter {
         }
         if let keep = replaceKeeping {
             let old = library.scan().books.first { $0.path == name }
+            // Granskningens fynd 7: bytet görs på en gång, och misslyckas det ligger den gamla filen kvar.
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
             if !keep, let old = old {
                 // Den gamla bokens rad och markeringar finns kvar, men den nya filen blir en ny bok.
                 BookRegistry.shared.markMissing(id: old.id)
             }
-            try FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: temporary, to: destination)
             return library.registerFile(at: destination, hash: hash, asNew: !keep)
         }
         try FileManager.default.moveItem(at: temporary, to: destination)

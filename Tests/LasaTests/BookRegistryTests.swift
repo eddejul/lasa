@@ -43,11 +43,53 @@ final class BookMatcherTests: XCTestCase {
         XCTAssertEqual(BookMatcher.match(file, hash: "h1", records: records, present: ["Bok.pdf"]), .known(id: "a"))
     }
 
-    func testBookFromBeforeTheRegistryKeepsItsIdWhenItChanges() {
-        // Böcker från före G3 har ingen kontrollsumma än: ändras filen innan den räknats är det samma bok.
+    func testBookFromBeforeTheRegistryKeepsItsIdWhenSavedAgain() {
+        // Böcker från före G3 har ingen kontrollsumma än: samma storlek med ny ändringstid är samma bok.
+        let records = [record("a", file: "Bok.pdf", sha: "")]
+        let file = BookFile(path: "Bok.pdf", size: 100, modified: 9)
+        XCTAssertEqual(BookMatcher.match(file, hash: "h2", records: records, present: ["Bok.pdf"]), .known(id: "a"))
+    }
+
+    func testReplacedBookFromBeforeTheRegistryIsANewVersion() {
+        // Granskningens fynd 8: filen ersätts på samma plats innan kontrollsumman räknats (annan storlek).
         let records = [record("a", file: "Bok.pdf", sha: "")]
         let file = BookFile(path: "Bok.pdf", size: 120, modified: 9)
-        XCTAssertEqual(BookMatcher.match(file, hash: "h2", records: records, present: ["Bok.pdf"]), .known(id: "a"))
+        XCTAssertEqual(BookMatcher.match(file, hash: nil, records: records, present: ["Bok.pdf"]), .needsHash)
+        XCTAssertEqual(BookMatcher.match(file, hash: "h2", records: records, present: ["Bok.pdf"]),
+                       .newVersion(id: "a"))
+    }
+
+    func testRenamedBookFromBeforeTheRegistryIsFoundOnSizeAndDate() {
+        // Granskningens fynd 4: döps om i Filer innan kontrollsumman räknats. Storlek och ändringstid är kvar.
+        let records = [record("a", file: "Retorik.pdf", sha: "", size: 100, modified: 5)]
+        let file = BookFile(path: "RETA30/Retorik kap 1.pdf", size: 100, modified: 5)
+        let present: Set<String> = ["RETA30/Retorik kap 1.pdf"]
+        XCTAssertEqual(BookMatcher.match(file, hash: nil, records: records, present: present), .moved(id: "a"))
+        XCTAssertEqual(BookMatcher.match(file, hash: "h1", records: records, present: present), .moved(id: "a"))
+        // Annan storlek eller annan filtyp: inte samma bok.
+        let other = BookFile(path: "Annan.pdf", size: 101, modified: 5)
+        XCTAssertEqual(BookMatcher.match(other, hash: "h2", records: records, present: ["Annan.pdf"]), .new)
+        let epub = BookFile(path: "Annan.epub", size: 100, modified: 5)
+        XCTAssertEqual(BookMatcher.match(epub, hash: "h3", records: records, present: ["Annan.epub"]), .new)
+    }
+
+    func testBookWithoutFileAtFirstStartComesBack() {
+        // Granskningens fynd 5: raden från flytten (storlek 0, tom kontrollsumma, borta) och samma filnamn igen.
+        let records = [record("a", file: "Bok.pdf", sha: "", size: 0, modified: 0, missing: true)]
+        let file = BookFile(path: "Bok.pdf", size: 4000, modified: 9)
+        XCTAssertEqual(BookMatcher.match(file, hash: nil, records: records, present: ["Bok.pdf"]), .needsHash)
+        XCTAssertEqual(BookMatcher.match(file, hash: "h1", records: records, present: ["Bok.pdf"]), .known(id: "a"))
+    }
+
+    func testVersionQuestionShowsBothNames() {
+        // Granskningens fynd 12: Föreläsning 3 och Föreläsning 4 liknar varandra, och frågan visar båda.
+        let old = record("a", file: "Föreläsning 3.pdf", sha: "h1", missing: true)
+        let file = BookFile(path: "Föreläsning 4.pdf", size: 120, modified: 9)
+        XCTAssertEqual(BookMatcher.match(file, hash: "h2", records: [old], present: ["Föreläsning 4.pdf"]),
+                       .newVersion(id: "a"))
+        let question = BookRegistry.VersionQuestion(file: file, hash: "h2", record: old)
+        XCTAssertTrue(question.message.contains("Föreläsning 4.pdf"))
+        XCTAssertTrue(question.message.contains("Föreläsning 3.pdf"))
     }
 
     func testSimilarNameOfAbsentBookIsANewVersion() {
@@ -136,11 +178,16 @@ final class LegacyBookMigrationTests: XCTestCase {
         XCTAssertTrue(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
         XCTAssertFalse(try LegacyBookMigration.isDone(db))
         let result = try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
-        XCTAssertEqual(result, LegacyBookMigration.Result(highlights: 2, bookmarks: 1, keys: 3))
+        XCTAssertEqual(result, LegacyBookMigration.Result(highlights: 3, bookmarks: 1, keys: 3, placeholders: 1))
 
         XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM highlights WHERE book = 'p' AND section = 4"), 2)
         XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM bookmarks WHERE book = 'e' AND section = 2"), 1)
-        XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM highlights WHERE book = 'Borttagen.pdf'"), 1)
+        // Granskningens fynd 5: en bok som inte finns längre får en rad i registret, och markeringen följer med.
+        XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM highlights WHERE book = 'Borttagen.pdf'"), 0)
+        XCTAssertEqual(try count(db, """
+            SELECT COUNT(*) FROM highlights h JOIN books b ON b.id = h.book
+            WHERE b.file = 'Borttagen.pdf' AND b.missing = 1 AND b.sha256 = '' AND b.size = 0
+            """), 1)
         XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM highlights WHERE updated = 2"), 3, "Ändringstiden rörs inte")
         XCTAssertEqual(defaults.integer(forKey: "bookPosition.p"), 12)
         XCTAssertEqual(defaults.string(forKey: "bookLocation.e"), "2|0.5")
@@ -152,7 +199,8 @@ final class LegacyBookMigrationTests: XCTestCase {
 
         // En gång till: ingenting ändras.
         let again = try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
-        XCTAssertEqual(again, LegacyBookMigration.Result(highlights: 0, bookmarks: 0, keys: 0))
+        XCTAssertEqual(again, LegacyBookMigration.Result(highlights: 0, bookmarks: 0, keys: 0, placeholders: 0))
+        XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM books"), 1)
         XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM highlights WHERE book = 'p'"), 2)
         XCTAssertEqual(defaults.integer(forKey: "bookPosition.p"), 12)
     }
@@ -167,5 +215,88 @@ final class LegacyBookMigrationTests: XCTestCase {
         try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
         XCTAssertEqual(defaults.integer(forKey: "bookPosition.p"), 8)
         XCTAssertNil(defaults.object(forKey: "position.Bok.pdf"))
+    }
+
+    func testBookInSubfolderGetsItsOldData() throws {
+        // Granskningens fynd 5: boken flyttades till en undermapp före första starten.
+        let db = try SQLiteDatabase(path: ":memory:", readOnly: false)
+        try db.migrate(AnnotationStore.migrations)
+        try db.execute("""
+            INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+            VALUES ('h1', 'Bok.pdf', 3, 0, 5, 't', 'yellow', '', 1, 2, 0)
+            """)
+        defaults.set(17, forKey: "position.Bok.pdf")
+        let records = [BookRecord(id: "p", sha256: "", file: "RETA30/Bok.pdf", title: "Bok", size: 1, modified: 1,
+                                  added: 0, missing: false)]
+        XCTAssertTrue(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
+        let result = try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+        XCTAssertEqual(result, LegacyBookMigration.Result(highlights: 1, bookmarks: 0, keys: 1, placeholders: 0))
+        XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM highlights WHERE book = 'p'"), 1)
+        XCTAssertEqual(defaults.integer(forKey: "bookPosition.p"), 17)
+        XCTAssertFalse(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
+    }
+
+    func testNewerOldPositionWinsAfterDowngrade() throws {
+        // Granskningens fynd 6: en äldre version av appen har sparat en nyare läsposition och en ny markering
+        // under filnamnet efter att flytten redan gjorts. Flytten körs igen, och den nyaste platsen vinner.
+        let db = try SQLiteDatabase(path: ":memory:", readOnly: false)
+        try db.migrate(AnnotationStore.migrations)
+        let records = [BookRecord(id: "p", sha256: "", file: "Bok.pdf", title: "Bok", size: 1, modified: 1, added: 0,
+                                  missing: false)]
+        try BookRegistry.insert(records[0], into: db)
+        defaults.set(8, forKey: "bookPosition.p")
+        defaults.set(100.0, forKey: "bookPositionDate.p")
+        try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+        XCTAssertTrue(try LegacyBookMigration.isDone(db))
+
+        defaults.set(30, forKey: "position.Bok.pdf")
+        defaults.set(200.0, forKey: "positionDate.Bok.pdf")
+        try db.execute("""
+            INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+            VALUES ('ny', 'Bok.pdf', 3, 0, 5, 't', 'yellow', '', 1, 2, 0)
+            """)
+        XCTAssertTrue(LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults))
+        try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+        XCTAssertEqual(defaults.integer(forKey: "bookPosition.p"), 30)
+        XCTAssertEqual(defaults.double(forKey: "bookPositionDate.p"), 200.0)
+        XCTAssertEqual(try count(db, "SELECT COUNT(*) FROM highlights WHERE book = 'p'"), 1)
+        XCTAssertNil(defaults.object(forKey: "position.Bok.pdf"))
+
+        // En äldre plats under filnamnet vinner inte över en nyare under bokens id.
+        defaults.set(2, forKey: "position.Bok.pdf")
+        defaults.set(50.0, forKey: "positionDate.Bok.pdf")
+        try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
+        XCTAssertEqual(defaults.integer(forKey: "bookPosition.p"), 30)
+        XCTAssertNil(defaults.object(forKey: "position.Bok.pdf"))
+    }
+}
+
+/// Granskningens fynd 1 och 2: vilka säkerhetskopior som rensas.
+final class BackupPruneTests: XCTestCase {
+
+    private func copy(daysAgo: Double, hour: Double = 10, beforeUpdate: Bool = false, name: String? = nil) -> Backup.Copy {
+        let base = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000))
+        let date = base.addingTimeInterval(-daysAgo * 86_400 + hour * 3600)
+        let url = URL(fileURLWithPath: "/kopior/\(name ?? "\(daysAgo)-\(hour)")", isDirectory: true)
+        return Backup.Copy(url: url, date: date, isBeforeUpdate: beforeUpdate)
+    }
+
+    func testSevenDaysAreKeptAndTheNewestCopyPerDay() {
+        var copies = (0..<9).map { copy(daysAgo: Double($0)) }
+        copies.append(copy(daysAgo: 0, hour: 8))
+        copies.append(copy(daysAgo: 30, beforeUpdate: true, name: "fore"))
+        let removed = Backup.copiesToRemove(copies, keep: 7, protecting: nil)
+        let removedNames = Set(removed.map { $0.url.lastPathComponent })
+        // Dag 7 och 8 rensas, och den äldre kopian i dag ersätts av den nyare. Kopian före flytten rörs aldrig.
+        XCTAssertEqual(removedNames, ["7.0-10.0", "8.0-10.0", "0.0-8.0"])
+    }
+
+    func testRestoredCopyIsNeverRemoved() {
+        // Sju dagar, plus kopian före återställningen i dag: den äldsta (som återställts) får vara kvar.
+        var copies = (0..<7).map { copy(daysAgo: Double($0) + 1) }
+        copies.append(copy(daysAgo: 0))
+        let oldest = copies[6]
+        XCTAssertEqual(Backup.copiesToRemove(copies, keep: 7, protecting: nil).map(\.url), [oldest.url])
+        XCTAssertTrue(Backup.copiesToRemove(copies, keep: 7, protecting: oldest.url).isEmpty)
     }
 }

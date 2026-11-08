@@ -65,9 +65,17 @@ enum BookMatcher {
                 return .known(id: record.id)
             }
             guard let hash = hash else { return .needsHash }
-            if record.sha256.isEmpty || record.sha256 == hash {
-                // Samma innehåll, eller en bok från före G3 som inte hunnit räknas: samma bok.
+            if record.sha256 == hash {
                 return .known(id: record.id)
+            }
+            if record.sha256.isEmpty {
+                // En bok från före G3 som inte hunnit räknas. Samma storlek: samma bok (filen har sparats om).
+                // En rad för en bok som inte fanns i Böcker vid flytten (storlek 0) är också samma bok.
+                // Annan storlek: filen har ersatts, och frågan om en ny version ställs (granskningens fynd 8).
+                if record.size == file.size || record.size == 0 {
+                    return .known(id: record.id)
+                }
+                return .newVersion(id: record.id)
             }
             return .newVersion(id: record.id)
         }
@@ -75,6 +83,15 @@ enum BookMatcher {
         // Ny plats. Finns det böcker vars filer saknas kan filen vara en av dem med nytt namn.
         let absent = records.filter { !present.contains($0.file) }
         guard !absent.isEmpty else { return .new }
+        // En bok från före G3 vars kontrollsumma inte hunnit räknas: namnbyte och flytt i Filer behåller
+        // storlek och ändringstid (granskningens fynd 4).
+        if let same = absent.first(where: { record in
+            record.sha256.isEmpty && record.size > 0 && record.size == file.size
+                && record.modified == file.modified
+                && (record.file as NSString).pathExtension.lowercased() == file.fileExtension
+        }) {
+            return .moved(id: same.id)
+        }
         guard let hash = hash else { return .needsHash }
         if let same = absent.first(where: { $0.sha256 == hash }) {
             return .moved(id: same.id)
@@ -144,6 +161,17 @@ final class BookRegistry {
         records().first { $0.id == id }
     }
 
+    /// Falskt om markeringar.sqlite inte gick att öppna. Då får böckerna id efter platsen (som inte sparas),
+    /// och läspositionen sparas inte, eftersom den skulle hamna under ett id som aldrig kommer tillbaka.
+    var isAvailable: Bool {
+        store.database != nil
+    }
+
+    /// Id för en bok när registret inte går att läsa: samma för samma plats, så att det inte byts mellan anropen.
+    static func unregisteredID(for path: String) -> String {
+        "utan-register:" + path
+    }
+
     // MARK: Skriva
 
     /// Sparar rader i en transaktion. Nya rader läggs till, befintliga skrivs över.
@@ -173,9 +201,16 @@ final class BookRegistry {
                    size: file.size, modified: file.modified, added: Date().timeIntervalSince1970, missing: false)
     }
 
-    /// Kontrollsumman för en bok, när den räknats (för synken och böcker från före G3).
-    func setHash(_ hash: String, for id: String) {
+    /// Kontrollsumman för en bok, när den räknats (för synken och böcker från före G3). Med `size` och
+    /// `modified` sätts den bara om filen fortfarande har radens storlek och ändringstid: en fil som ersatts
+    /// medan den räknades ska ge frågan om en ny version, inte bli samma bok (granskningens fynd 8).
+    func setHash(_ hash: String, for id: String, size: Int? = nil, modified: Int? = nil) {
         guard var record = self.record(id: id), record.sha256 != hash else { return }
+        if let size = size, let modified = modified, record.sha256.isEmpty,
+           record.size != size || record.modified != modified {
+            AppLog.shared.write("Kontrollsumman sparades inte: \(record.file) har ändrats medan den räknades")
+            return
+        }
         record.sha256 = hash
         save([record])
     }
@@ -207,6 +242,11 @@ final class BookRegistry {
                 }
                 books.append(Book(url: url, id: id, path: file.path))
             case .new:
+                guard isAvailable else {
+                    // Granskningens fynd 9: inget slumpat id per anrop när registret inte går att läsa.
+                    books.append(Book(url: url, id: Self.unregisteredID(for: file.path), path: file.path))
+                    continue
+                }
                 let record = Self.makeRecord(for: file, hash: "")
                 records.append(record)
                 changed.append(record)
@@ -232,6 +272,19 @@ final class BookRegistry {
         let file: BookFile
         let hash: String
         let record: BookRecord
+
+        /// Frågans text. Båda filnamnen syns, så att till exempel Föreläsning 3 och 4 går att skilja
+        /// (granskningens fynd 12).
+        var message: String {
+            let old = record.file
+            let new = file.path
+            if old == new {
+                return "Filen \(new) har ändrats. Ska markeringar, anteckningar och läsposition följa med till den "
+                    + "nya versionen?"
+            }
+            return "Ny fil: \(new)\nTidigare fil: \(old) (finns inte längre)\n\nÄr det samma bok? Då kan "
+                + "markeringar, anteckningar och läsposition följa med till den nya filen."
+        }
     }
 
     /// Räknar kontrollsumman för filerna som behöver den (i bakgrunden) och lägger in dem: flyttade och
@@ -372,32 +425,37 @@ final class BookRegistry {
 
     // MARK: Flytten av gamla nycklar (G3)
 
-    /// Första gången efter uppdateringen: läsposition, markeringar och bokmärken som sparats under filnamnet
-    /// flyttas till bokens id, och sparade ord får bokens id. Precis innan görs en säkerhetskopia.
-    /// Flytten går att köra om utan skada.
+    private var didBackUpBeforeMigration = false
+
+    /// Läsposition, markeringar och bokmärken som sparats under filnamnet (före G3) flyttas till bokens id,
+    /// och sparade ord får bokens id. Precis innan görs en säkerhetskopia (Före uppdateringen). Körs vid varje
+    /// inläsning när det finns något att flytta, inte bara första gången, så att det en äldre version av appen
+    /// sparat efter en nedgradering också flyttas (granskningens fynd 6). Flytten går att köra om utan skada.
     func migrateLegacyIfNeeded() {
         guard let db = store.database else { return }
-        let records = self.records().filter { !$0.missing }
-        // Utan böcker finns inget att flytta till. Klart-markeringen sätts först när böckerna lästs in.
-        guard !records.isEmpty else { return }
+        let records = self.records()
+        // Utan böcker finns inget att flytta till. Flytten görs när böckerna lästs in.
+        guard records.contains(where: { !$0.missing }) else { return }
         let defaults = UserDefaults.standard
         do {
-            if try LegacyBookMigration.isDone(db) {
-                LegacyBookMigration.removeLeftovers(records: records, defaults: defaults)
-                return
-            }
-            if LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults) {
-                // Säkerhetskopian före flytten. Går den inte att göra flyttas ingenting den här gången.
+            guard LegacyBookMigration.hasWork(db: db, records: records, defaults: defaults) else { return }
+            // Säkerhetskopian före flytten, en gång per start (kopiorna före en flytt rensas aldrig). Går den
+            // inte att göra flyttas ingenting den här gången.
+            if !didBackUpBeforeMigration {
                 guard Backup.makeBeforeMigration() else {
                     AppLog.shared.write("Flytten till bokens id väntar: säkerhetskopian gick inte att spara")
                     return
                 }
+                didBackUpBeforeMigration = true
             }
             let result = try LegacyBookMigration.run(db: db, records: records, defaults: defaults)
-            UserWords.shared.linkBooks(records.map { (id: $0.id, title: $0.title) })
+            cache = nil
+            let linked = self.records().filter { !$0.missing }
+            UserWords.shared.linkBooks(linked.map { (id: $0.id, title: $0.title) })
             lastMigrationSummary = result.summary
             AppLog.shared.write("Flytten till bokens id: \(result.summary)")
         } catch {
+            cache = nil
             SaveProblems.report("Markeringarna", detail: "flytten till bokens id: \(error)")
         }
     }
@@ -420,9 +478,12 @@ enum LegacyBookMigration {
         var highlights = 0
         var bookmarks = 0
         var keys = 0
+        /// Rader i registret för böcker som inte fanns i Böcker men hade markeringar (granskningens fynd 5).
+        var placeholders = 0
 
         var summary: String {
-            "\(highlights) markeringar, \(bookmarks) bokmärken och \(keys) läspositionsnycklar flyttade"
+            "\(highlights) markeringar, \(bookmarks) bokmärken och \(keys) läspositionsnycklar flyttade, "
+                + "\(placeholders) böcker utan fil sparade i registret"
         }
     }
 
@@ -434,68 +495,128 @@ enum LegacyBookMigration {
         return done
     }
 
-    /// Sant om något finns att flytta.
-    static func hasWork(db: SQLiteDatabase, records: [BookRecord], defaults: UserDefaults) -> Bool {
-        for record in records {
-            for pair in keyPairs where defaults.object(forKey: pair.old + record.file) != nil {
-                return true
+    /// Filnamnen i gamla nycklar (`position.Bok.pdf` och så vidare). Längsta prefixet först, eftersom
+    /// `positionDate.` också börjar med `position.`.
+    static func legacyKeyNames(_ defaults: UserDefaults) -> Set<String> {
+        let prefixes = keyPairs.map { $0.old }.sorted { $0.count > $1.count }
+        var names = Set<String>()
+        for key in defaults.dictionaryRepresentation().keys {
+            guard let prefix = prefixes.first(where: { key.hasPrefix($0) }) else { continue }
+            let name = String(key.dropFirst(prefix.count))
+            if !(name as NSString).pathExtension.isEmpty {
+                names.insert(name)
             }
         }
-        var count = 0
-        for record in records {
-            for table in ["highlights", "bookmarks"] {
-                try? db.query("SELECT COUNT(*) FROM \(table) WHERE book = ?", [record.file]) { row in
-                    count += row.int(0)
-                }
-            }
-        }
-        return count > 0
+        return names
     }
 
-    /// Flyttar allt för böckerna i `records`. Värden i UserDefaults kopieras först (ett nytt värde som redan
-    /// finns skrivs inte över), sedan flyttas raderna i databasen och klart-markeringen sätts i samma
-    /// transaktion, sist tas de gamla nycklarna bort. Avbryts flytten någonstans går den att köra om.
-    @discardableResult
-    static func run(db: SQLiteDatabase, records: [BookRecord], defaults: UserDefaults) throws -> Result {
-        var result = Result()
-        for record in records {
-            for pair in keyPairs {
-                let oldKey = pair.old + record.file
-                guard let value = defaults.object(forKey: oldKey) else { continue }
-                let newKey = pair.new + record.id
-                if defaults.object(forKey: newKey) == nil {
-                    defaults.set(value, forKey: newKey)
+    /// `book` i markeringar och bokmärken som inte är id:t för någon bok i registret (eller i `records`):
+    /// gamla filnamn.
+    static func orphanBooks(_ db: SQLiteDatabase, records: [BookRecord]) throws -> Set<String> {
+        let known = Set(records.map { $0.id })
+        var names = Set<String>()
+        for table in ["highlights", "bookmarks"] {
+            try db.query("SELECT DISTINCT book FROM \(table) WHERE book NOT IN (SELECT id FROM books)") { row in
+                let book = row.string(0)
+                // Ett id (UUID) som saknas i registret är inget filnamn.
+                if !known.contains(book), UUID(uuidString: book) == nil,
+                   !book.hasPrefix(BookRegistry.unregisteredID(for: "")) {
+                    names.insert(book)
                 }
-                result.keys += 1
             }
         }
+        return names
+    }
+
+    /// Boken som ett gammalt filnamn hör till: en bok som finns med samma plats, annars den enda bok som finns
+    /// med samma filnamn i en undermapp (en bok som flyttats till en mapp före första starten), annars den
+    /// senast tillagda saknade boken med samma plats.
+    static func target(forLegacyName name: String, records: [BookRecord]) -> BookRecord? {
+        let present = records.filter { !$0.missing }
+        if let exact = present.first(where: { $0.file == name }) {
+            return exact
+        }
+        let sameName = present.filter { ($0.file as NSString).lastPathComponent == name }
+        if sameName.count == 1 {
+            return sameName[0]
+        }
+        return records.filter { $0.missing && $0.file == name }.max { $0.added < $1.added }
+    }
+
+    /// Sant om något finns att flytta: markeringar eller bokmärken under ett filnamn, eller gamla nycklar
+    /// för en bok som finns i registret.
+    static func hasWork(db: SQLiteDatabase, records: [BookRecord], defaults: UserDefaults) -> Bool {
+        if let orphans = try? orphanBooks(db, records: records), !orphans.isEmpty {
+            return true
+        }
+        return legacyKeyNames(defaults).contains { target(forLegacyName: $0, records: records) != nil }
+    }
+
+    /// Flyttar allt som hör till ett gammalt filnamn till bokens id. Markeringar och bokmärken för ett filnamn
+    /// som ingen bok har får en rad i registret med `missing = 1`, tom kontrollsumma och det gamla filnamnet,
+    /// så att de kommer tillbaka om filen läggs in igen (granskningens fynd 5). Läspositionen: den nyaste vinner
+    /// (`positionDate`), så att det en äldre version av appen sparat efter en nedgradering inte kastas
+    /// (fynd 6). Värdena i UserDefaults kopieras först, sedan flyttas raderna i databasen i en transaktion
+    /// tillsammans med klart-markeringen, sist tas de gamla nycklarna bort. Går att köra om.
+    @discardableResult
+    static func run(db: SQLiteDatabase, records: [BookRecord], defaults: UserDefaults,
+                    now: Date = Date()) throws -> Result {
+        var result = Result()
+        var records = records
+        let rowNames = try orphanBooks(db, records: records)
+        var mapping: [String: BookRecord] = [:]
+        var placeholders: [BookRecord] = []
+        for name in rowNames.union(legacyKeyNames(defaults)).sorted() {
+            if let record = target(forLegacyName: name, records: records) {
+                mapping[name] = record
+            } else if rowNames.contains(name) {
+                let title = ((name as NSString).lastPathComponent as NSString).deletingPathExtension
+                let placeholder = BookRecord(id: UUID().uuidString.lowercased(), sha256: "", file: name, title: title,
+                                             size: 0, modified: 0, added: now.timeIntervalSince1970, missing: true)
+                placeholders.append(placeholder)
+                records.append(placeholder)
+                mapping[name] = placeholder
+            }
+        }
+
+        for (name, record) in mapping {
+            let oldDate = defaults.double(forKey: "positionDate." + name)
+            let newDate = defaults.double(forKey: "bookPositionDate." + record.id)
+            let hasNew = keyPairs.contains { defaults.object(forKey: $0.new + record.id) != nil }
+            // Den gamla läspositionen vinner om bokens id inte har någon, eller om den gamla är nyare.
+            let oldWins = !hasNew || oldDate > newDate
+            for pair in keyPairs {
+                guard let value = defaults.object(forKey: pair.old + name) else { continue }
+                result.keys += 1
+                if oldWins {
+                    defaults.set(value, forKey: pair.new + record.id)
+                }
+            }
+        }
+
         try db.transaction { () throws -> Void in
-            for record in records {
+            for placeholder in placeholders {
+                try BookRegistry.insert(placeholder, into: db)
+            }
+            for (name, record) in mapping {
                 var highlights = 0
                 var bookmarks = 0
-                try db.query("SELECT COUNT(*) FROM highlights WHERE book = ?", [record.file]) { highlights = $0.int(0) }
-                try db.query("SELECT COUNT(*) FROM bookmarks WHERE book = ?", [record.file]) { bookmarks = $0.int(0) }
+                try db.query("SELECT COUNT(*) FROM highlights WHERE book = ?", [name]) { highlights = $0.int(0) }
+                try db.query("SELECT COUNT(*) FROM bookmarks WHERE book = ?", [name]) { bookmarks = $0.int(0) }
                 // Ändringstiden rörs inte: synken ser samma rader som förut, nu via id:t.
-                try db.execute("UPDATE highlights SET book = ? WHERE book = ?", [record.id, record.file])
-                try db.execute("UPDATE bookmarks SET book = ? WHERE book = ?", [record.id, record.file])
+                try db.execute("UPDATE highlights SET book = ? WHERE book = ?", [record.id, name])
+                try db.execute("UPDATE bookmarks SET book = ? WHERE book = ?", [record.id, name])
                 result.highlights += highlights
                 result.bookmarks += bookmarks
             }
             try db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, '1')", [doneKey])
         }
-        removeLeftovers(records: records, defaults: defaults)
-        return result
-    }
-
-    /// Tar bort gamla nycklar som redan finns under bokens id.
-    static func removeLeftovers(records: [BookRecord], defaults: UserDefaults) {
-        for record in records {
+        result.placeholders = placeholders.count
+        for name in mapping.keys {
             for pair in keyPairs {
-                let oldKey = pair.old + record.file
-                if defaults.object(forKey: oldKey) != nil, defaults.object(forKey: pair.new + record.id) != nil {
-                    defaults.removeObject(forKey: oldKey)
-                }
+                defaults.removeObject(forKey: pair.old + name)
             }
         }
+        return result
     }
 }

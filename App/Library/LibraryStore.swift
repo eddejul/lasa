@@ -147,6 +147,8 @@ final class LibraryStore {
     }
 
     func savePageIndex(_ index: Int, for book: Book) {
+        // Granskningens fynd 9: utan registret är bokens id tillfälligt, och platsen skulle aldrig hittas igen.
+        guard BookRegistry.shared.isAvailable else { return }
         defaults.set(index, forKey: positionKey(for: book))
         markPositionChanged(for: book)
     }
@@ -166,6 +168,7 @@ final class LibraryStore {
     }
 
     func saveLocation(_ location: ReflowLocation, for book: Book) {
+        guard BookRegistry.shared.isAvailable else { return }
         defaults.set("\(location.chapter)|\(location.progression)", forKey: locationKey(for: book))
         markPositionChanged(for: book)
     }

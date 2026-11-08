@@ -3,7 +3,9 @@ import SQLite3
 
 /// Säkerhetskopior i Filer (G1): Documents/Säkerhetskopia/<datum och tid>/ med markeringar och anteckningar
 /// (`markeringar.sqlite`), sparade ord med repetitionen (`anvandarord.sqlite`) och läspositionerna
-/// (`lasepositioner.json`, de ligger annars i UserDefaults). En kopia per dag, de sju senaste sparas.
+/// (`lasepositioner.json`, de ligger annars i UserDefaults). En kopia per dag, de sju senaste dagarna sparas
+/// (flera kopior samma dag ersätter varandra). Kopian före flytten till bokens id ligger i en egen mapp,
+/// Före uppdateringen <datum tid>, som aldrig rensas.
 ///
 /// Databaserna kopieras med SQLite:s backup, som ger en hel och riktig kopia även medan appen skriver.
 /// Kopian görs med egna anslutningar i en egen kö, så att huvudtråden inte väntar.
@@ -11,10 +13,15 @@ enum Backup {
 
     static let keep = 7
 
-    struct Copy {
+    struct Copy: Equatable {
         let url: URL
         let date: Date
+        /// Kopian före en flytt av data (Före uppdateringen). Den rensas aldrig.
+        var isBeforeUpdate = false
     }
+
+    /// Början på namnet för kopior före en flytt av data. Mappar med det namnet rensas aldrig.
+    static let beforeUpdatePrefix = "Före uppdateringen "
 
     enum Failure: LocalizedError {
         case missing(String)
@@ -63,10 +70,20 @@ enum Backup {
                     || manager.fileExists(atPath: url.appendingPathComponent(wordsName).path) else {
                 return nil
             }
-            let date = folderFormatter.date(from: url.lastPathComponent) ?? values?.contentModificationDate ?? .distantPast
-            return Copy(url: url, date: date)
+            let name = url.lastPathComponent
+            let beforeUpdate = name.hasPrefix(beforeUpdatePrefix)
+            let stamp = beforeUpdate ? String(name.dropFirst(beforeUpdatePrefix.count)) : name
+            // "2026-11-08 101500 2" (en andra kopia samma sekund) läses på de första 17 tecknen.
+            let date = folderFormatter.date(from: String(stamp.prefix(17)))
+                ?? values?.contentModificationDate ?? .distantPast
+            return Copy(url: url, date: date, isBeforeUpdate: beforeUpdate)
         }
         .sorted { $0.date > $1.date }
+    }
+
+    /// De dagliga kopiorna, nyast först (utan kopiorna före en flytt).
+    static func dailyCopies() -> [Copy] {
+        copies().filter { !$0.isBeforeUpdate }
     }
 
     /// Gör en kopia om ingen har gjorts i dag. Körs i bakgrunden, `completion` på huvudtråden.
@@ -74,7 +91,7 @@ enum Backup {
         queue.async {
             let today = Calendar.current.startOfDay(for: Date())
             var made: Copy?
-            if !copies().contains(where: { $0.date >= today }) {
+            if !dailyCopies().contains(where: { $0.date >= today }) {
                 made = try? makeNow()
             }
             if let completion = completion {
@@ -93,11 +110,12 @@ enum Backup {
     }
 
     /// G3: en kopia precis innan läspositioner och markeringar flyttas från filnamnet till bokens id.
+    /// Den ligger i en egen mapp (Före uppdateringen <datum tid>) som aldrig rensas.
     /// Körs på huvudtråden och väntar tills kopian är klar. Falskt om den inte gick att spara.
     static func makeBeforeMigration() -> Bool {
         let positions = positionSnapshot()
         do {
-            let copy = try queue.sync { try makeNow(positions: positions) }
+            let copy = try queue.sync { try makeNow(positions: positions, prefix: beforeUpdatePrefix, prune: false) }
             AppLog.shared.write("Säkerhetskopia före flytten till bokens id: \(copy.url.lastPathComponent)")
             return true
         } catch {
@@ -105,16 +123,16 @@ enum Backup {
         }
     }
 
-    /// Körs i kön.
-    private static func makeNow(positions: [String: Any]? = nil) throws -> Copy {
+    /// Körs i kön. `prune` falskt: inga kopior tas bort (före en återställning och en flytt).
+    private static func makeNow(positions: [String: Any]? = nil, prefix: String = "", prune shouldPrune: Bool = true) throws -> Copy {
         let manager = FileManager.default
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         let date = Date()
-        var name = folderFormatter.string(from: date)
+        var name = prefix + folderFormatter.string(from: date)
         var final = directory.appendingPathComponent(name, isDirectory: true)
         var suffix = 2
         while manager.fileExists(atPath: final.path) {
-            name = folderFormatter.string(from: date) + " \(suffix)"
+            name = prefix + folderFormatter.string(from: date) + " \(suffix)"
             final = directory.appendingPathComponent(name, isDirectory: true)
             suffix += 1
         }
@@ -136,35 +154,65 @@ enum Backup {
             AppLog.shared.write("Säkerhetskopian misslyckades: \(error.localizedDescription)")
             throw error
         }
-        prune()
+        if shouldPrune {
+            prune()
+        }
         AppLog.shared.write("Säkerhetskopia sparad: \(name)")
-        return Copy(url: final, date: date)
+        return Copy(url: final, date: date, isBeforeUpdate: !prefix.isEmpty)
     }
 
-    /// Behåller de sju senaste.
-    private static func prune() {
-        for old in copies().dropFirst(keep) {
-            try? FileManager.default.removeItem(at: old.url)
+    /// Behåller den nyaste kopian för var och en av de sju senaste dagarna. Kopiorna före en flytt och
+    /// `protecting` (kopian som just återställts) tas aldrig bort. Avbrutna kopior (.tmp) städas bort.
+    private static func prune(protecting: URL? = nil) {
+        let manager = FileManager.default
+        for old in copiesToRemove(dailyCopies(), keep: keep, protecting: protecting) {
+            try? manager.removeItem(at: old.url)
+            AppLog.shared.write("Säkerhetskopia rensad: \(old.url.lastPathComponent)")
         }
+        let leftovers = (try? manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for url in leftovers where url.pathExtension == "tmp" {
+            try? manager.removeItem(at: url)
+        }
+    }
+
+    /// Vilka dagliga kopior som ska bort: allt utom den nyaste kopian per dag för de `keep` senaste dagarna,
+    /// och aldrig `protecting` eller en kopia före en flytt. Ren logik, testad i XCTest.
+    static func copiesToRemove(_ copies: [Copy], keep: Int, protecting: URL?,
+                               calendar: Calendar = .current) -> [Copy] {
+        var keptDays: [Date] = []
+        var remove: [Copy] = []
+        for copy in copies.sorted(by: { $0.date > $1.date }) where !copy.isBeforeUpdate {
+            let day = calendar.startOfDay(for: copy.date)
+            if !keptDays.contains(day), keptDays.count < keep {
+                keptDays.append(day)
+                continue
+            }
+            if let protecting = protecting, copy.url.standardizedFileURL == protecting.standardizedFileURL {
+                continue
+            }
+            remove.append(copy)
+        }
+        return remove
     }
 
     // MARK: Återställ
 
     /// Ersätter markeringar, anteckningar, sparade ord och läspositioner med kopians.
-    /// Först sparas en kopia av det som finns nu, så att återställningen går att ångra.
+    /// Först sparas en kopia av det som finns nu, så att återställningen går att ångra. Den kopian rensar
+    /// ingenting, och rensningen efteråt rör aldrig kopian som återställts (granskningens fynd 1).
     /// Körs på huvudtråden, eftersom databaserna används där.
     static func restore(_ copy: Copy) throws {
-        // Vänta ut en kopia som pågår.
-        queue.sync {}
-        let current = positionSnapshot()
-        try queue.sync {
-            _ = try makeNow(positions: current)
-        }
         let annotations = copy.url.appendingPathComponent(annotationsName)
         let words = copy.url.appendingPathComponent(wordsName)
         let manager = FileManager.default
         guard manager.fileExists(atPath: annotations.path) || manager.fileExists(atPath: words.path) else {
             throw Failure.missing("Databaserna")
+        }
+        // Vänta ut en kopia som pågår.
+        queue.sync {}
+        let current = positionSnapshot()
+        try queue.sync {
+            _ = try makeNow(positions: current, prune: false)
         }
         if manager.fileExists(atPath: annotations.path) {
             try AnnotationStore.shared.restore(from: annotations)
@@ -178,6 +226,9 @@ enum Backup {
             restorePositions(values)
         }
         AppLog.shared.write("Återställt från säkerhetskopian \(copy.url.lastPathComponent)")
+        queue.sync {
+            prune(protecting: copy.url)
+        }
     }
 
     // MARK: Läspositionerna

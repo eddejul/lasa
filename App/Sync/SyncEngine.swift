@@ -22,7 +22,8 @@ enum BookIdentity {
             let signature = Self.signature(of: book)
             if let id = cache[signature] {
                 result[book.id] = id
-                BookRegistry.shared.setHash(id, for: book.id)
+                let file = Self.sizeAndDate(of: book)
+                BookRegistry.shared.setHash(id, for: book.id, size: file.size, modified: file.modified)
             } else {
                 missing.append((book, signature))
             }
@@ -34,9 +35,12 @@ enum BookIdentity {
             }.value
             for (item, id) in zip(missing, computed) {
                 guard let id = id else { continue }
+                // Filen kan ha ersatts medan den räknades: då stämmer inte signaturen längre.
+                guard Self.signature(of: item.book) == item.signature else { continue }
                 cache[item.signature] = id
                 result[item.book.id] = id
-                BookRegistry.shared.setHash(id, for: item.book.id)
+                let file = Self.sizeAndDate(of: item.book)
+                BookRegistry.shared.setHash(id, for: item.book.id, size: file.size, modified: file.modified)
             }
             // Bara böcker som finns kvar sparas.
             let current = Set(books.map { Self.signature(of: $0) })
@@ -47,10 +51,17 @@ enum BookIdentity {
     }
 
     private static func signature(of book: Book) -> String {
-        let values = try? book.url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        let size = values?.fileSize ?? 0
-        let date = Int(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)
-        return "\(book.url.lastPathComponent)|\(size)|\(date)"
+        let file = sizeAndDate(of: book)
+        return "\(book.url.lastPathComponent)|\(file.size)|\(file.modified)"
+    }
+
+    /// Filens storlek och ändringstid i hela sekunder, som i bokregistret.
+    private static func sizeAndDate(of book: Book) -> (size: Int, modified: Int) {
+        // Läses på nytt varje gång (resourceValues sparar annars värdena i URL:en).
+        var url = book.url
+        url.removeAllCachedResourceValues()
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        return (values?.fileSize ?? 0, Int(values?.contentModificationDate?.timeIntervalSince1970 ?? 0))
     }
 
     /// SHA-256 av filen, läst i bitar om en megabyte.
@@ -145,6 +156,26 @@ final class SyncEngine {
     private(set) var lastReport: SyncReport?
     private var lastAttempt: Date?
     private static let lastSyncKey = "sync.last"
+    /// Sant efter en återställning från säkerhetskopian, tills appen startas om (granskningens fynd 3):
+    /// annars tar synken tillbaka nyare rader från servern och gör återställningen ogjord. Sparas inte.
+    private(set) var isPausedUntilRestart = false
+
+    /// Stänger av synken tills appen startas om.
+    func pauseUntilRestart() {
+        isPausedUntilRestart = true
+        AppLog.shared.write("Synken avstängd tills nästa start (återställning från säkerhetskopian)")
+    }
+
+    /// Till självtestet: slår på synken igen.
+    func resumeForSelfTest() {
+        isPausedUntilRestart = false
+    }
+
+    struct PausedError: LocalizedError {
+        var errorDescription: String? {
+            "Synken är avstängd efter återställningen från säkerhetskopian. Den startar igen när appen startas om."
+        }
+    }
 
     private init() {}
 
@@ -156,7 +187,7 @@ final class SyncEngine {
     /// Synkar i bakgrunden om man är inloggad, högst en gång i minuten. Används när appen öppnas och
     /// när man stänger en bok.
     func syncSoon() {
-        guard SyncClient.shared.isSignedIn, !isRunning else { return }
+        guard SyncClient.shared.isSignedIn, !isRunning, !isPausedUntilRestart else { return }
         if let last = lastAttempt, Date().timeIntervalSince(last) < 60 {
             return
         }
@@ -167,6 +198,7 @@ final class SyncEngine {
 
     @discardableResult
     func sync() async throws -> SyncReport {
+        guard !isPausedUntilRestart else { throw PausedError() }
         guard !isRunning else { return lastReport ?? SyncReport() }
         isRunning = true
         lastAttempt = Date()

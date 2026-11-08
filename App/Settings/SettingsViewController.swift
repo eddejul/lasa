@@ -78,7 +78,7 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
                         + "förbättra sina tjänster. Utan nyckel syns ingen AI-knapp."),
             Section(title: "Säkerhetskopia", rows: [.backupStatus, .backupNow, .backupRestore],
                     footer: "En kopia sparas varje dag i Filer under \(Self.filesLocation), Säkerhetskopia, och de "
-                        + "sju senaste sparas. Den har markeringar, anteckningar, sparade ord och läspositioner. "
+                        + "sju senaste dagarna sparas. Kopian från före en uppdatering (Före uppdateringen) sparas alltid. Den har markeringar, anteckningar, sparade ord och läspositioner. "
                         + "Kopiorna försvinner om appen tas bort, så flytta gärna en till iCloud Drive."),
             Section(title: "Synk med Windows-appen", rows: syncRows,
                     footer: "Läsposition, markeringar, bokmärken och sparade ord synkas via ditt eget Supabase-projekt "
@@ -191,7 +191,7 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         case .backupStatus:
             content = UIListContentConfiguration.subtitleCell()
             content.text = "Senaste kopian"
-            if let latest = Backup.copies().first {
+            if let latest = Backup.dailyCopies().first {
                 content.secondaryText = Self.backupDate(latest.date)
             } else {
                 content.secondaryText = "Ingen kopia än."
@@ -297,7 +297,7 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
                                       message: "Välj vilken kopia du vill gå tillbaka till.",
                                       preferredStyle: .actionSheet)
         for copy in copies {
-            sheet.addAction(UIAlertAction(title: Self.backupDate(copy.date), style: .default) { [weak self] _ in
+            sheet.addAction(UIAlertAction(title: Self.backupTitle(copy), style: .default) { [weak self] _ in
                 self?.confirmRestore(copy)
             })
         }
@@ -309,11 +309,22 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         present(sheet, animated: true)
     }
 
+    /// Kopians namn i listan. Kopian före flytten till bokens id heter Före uppdateringen.
+    static func backupTitle(_ copy: Backup.Copy) -> String {
+        copy.isBeforeUpdate ? "Före uppdateringen, \(backupDate(copy.date))" : backupDate(copy.date)
+    }
+
     private func confirmRestore(_ copy: Backup.Copy) {
+        var message = "Markeringar, anteckningar, sparade ord och läspositioner ersätts med kopians. Det du har nu "
+            + "sparas först som en ny kopia, så att du kan gå tillbaka."
+        if SyncClient.shared.isSignedIn {
+            // Granskningens fynd 3: synken skulle annars ta tillbaka nyare ändringar från servern.
+            message += " Synken är avstängd efter återställningen tills du startar om appen, så att den inte "
+                + "tar tillbaka nyare ändringar från servern."
+        }
         let alert = UIAlertController(
-            title: "Återställ från \(Self.backupDate(copy.date))?",
-            message: "Markeringar, anteckningar, sparade ord och läspositioner ersätts med kopians. Det du har nu "
-                + "sparas först som en ny kopia, så att du kan gå tillbaka.",
+            title: "Återställ från \(Self.backupTitle(copy))?",
+            message: message,
             preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
         alert.addAction(UIAlertAction(title: "Återställ", style: .destructive) { [weak self] _ in
@@ -325,7 +336,8 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     private func restore(_ copy: Backup.Copy) {
         do {
             try Backup.restore(copy)
-            backupMessage = "Återställt från \(Self.backupDate(copy.date))."
+            SyncEngine.shared.pauseUntilRestart()
+            backupMessage = "Återställt från \(Self.backupTitle(copy))."
             rebuild()
         } catch {
             showAlert(title: "Kunde inte återställa", message: error.localizedDescription)

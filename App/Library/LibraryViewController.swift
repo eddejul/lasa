@@ -204,12 +204,7 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
     private func askNextQuestion() {
         guard presentedViewController == nil, navigationController?.topViewController === self,
               let question = questions.first else { return }
-        let old = question.record.file
-        let new = question.file.path
-        let message = old == new
-            ? "\(new) har ändrats. Ska markeringar, anteckningar och läsposition följa med till den nya versionen?"
-            : "\(new) liknar \(old), som inte finns längre. Ska markeringar, anteckningar och läsposition följa med?"
-        let alert = UIAlertController(title: "Ny version av boken", message: message, preferredStyle: .alert)
+        let alert = UIAlertController(title: "Ny version av boken", message: question.message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Behåll markeringarna", style: .default) { [weak self] _ in
             self?.answer(question, keep: true)
         })
