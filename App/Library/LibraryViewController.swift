@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 /// Startskärmen (B1, B2): Fortsätt läsa överst och böckerna som ett rutnät med omslag, titel, författare och
 /// hur långt man läst. Håll fingret på ett omslag för Byt namn, Välj omslag, Markera som läst och Ta bort.
 final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, UICollectionViewDataSource,
-    UICollectionViewDelegate, UISearchResultsUpdating {
+    UICollectionViewDelegate, UISearchResultsUpdating, UITabBarDelegate, UINavigationControllerDelegate {
 
     private enum Section: Int, CaseIterable {
         case banner, activity, continueReading, more, books
@@ -29,6 +29,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     private var searchText = ""
     private var reviewCount = 0
     private var savedCount = 0
+    /// U9: på iPhone en flikrad längst ner i stället för sidopanelen.
+    let phoneBar = UITabBar()
 
     private static let filterKey = "library.filter"
     private static let sortKey = "library.sort"
@@ -82,6 +84,15 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         addChild(sidebar)
         view.addSubview(sidebar.view)
         sidebar.didMove(toParent: self)
+        phoneBar.items = [
+            UITabBarItem(title: "Bibliotek", image: UIImage(systemName: "books.vertical"), tag: 0),
+            UITabBarItem(title: "Kurser", image: UIImage(systemName: "graduationcap"), tag: 1),
+            UITabBarItem(title: "Ord", image: UIImage(systemName: "character.book.closed"), tag: 2),
+        ]
+        phoneBar.selectedItem = phoneBar.items?.first
+        phoneBar.delegate = self
+        phoneBar.isHidden = true
+        view.addSubview(phoneBar)
 
         BookImporter.shared.onChange = { [weak self] in
             self?.updateActivity()
@@ -122,10 +133,33 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         } else {
             sidebar.view.isHidden = true
             collectionView.frame = bounds
-            if navigationItem.leftBarButtonItem !== sidebarButton {
-                navigationItem.leftBarButtonItem = sidebarButton
+            // U9: på iPhone nås kurserna och orden med flikraden längst ner.
+            let item: UIBarButtonItem? = isNarrow ? nil : sidebarButton
+            if navigationItem.leftBarButtonItem !== item {
+                navigationItem.leftBarButtonItem = item
             }
         }
+        phoneBar.isHidden = !isNarrow
+        if isNarrow {
+            let height = 49 + view.safeAreaInsets.bottom
+            phoneBar.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+            view.bringSubviewToFront(phoneBar)
+        }
+        let bottom: CGFloat = isNarrow ? 49 : 0
+        if collectionView.contentInset.bottom != bottom {
+            collectionView.contentInset.bottom = bottom
+            collectionView.verticalScrollIndicatorInsets.bottom = bottom
+        }
+    }
+
+    /// U9: Kurser och Ord i flikraden öppnar sidopanelen som ett ark i halv höjd.
+    func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
+        if item.tag == 0 {
+            setScope(.all)
+        } else {
+            showSidebar()
+        }
+        tabBar.selectedItem = tabBar.items?.first
     }
 
     private func configureSidebar(_ panel: LibrarySidebarViewController) {
@@ -169,10 +203,19 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         let panel = LibrarySidebarViewController()
         configureSidebar(panel)
         panel.update(courses: courses, counts: sidebarCounts, selected: scope)
-        panel.preferredContentSize = CGSize(width: 320, height: 600)
-        panel.modalPresentationStyle = .popover
-        panel.popoverPresentationController?.barButtonItem = sidebarButton
-        panel.popoverPresentationController?.backgroundColor = Theme.current.surfaceSunk
+        if isNarrow {
+            // U9: ett ark i halv höjd som kan dras upp, inga rutor i smala vyer.
+            panel.modalPresentationStyle = .pageSheet
+            if let sheet = panel.sheetPresentationController {
+                sheet.detents = [.medium(), .large()]
+                sheet.prefersGrabberVisible = true
+            }
+        } else {
+            panel.preferredContentSize = CGSize(width: 320, height: 600)
+            panel.modalPresentationStyle = .popover
+            panel.popoverPresentationController?.barButtonItem = sidebarButton
+            panel.popoverPresentationController?.backgroundColor = Theme.current.surfaceSunk
+        }
         present(panel, animated: true)
     }
 
@@ -325,8 +368,59 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        navigationController?.delegate = self
         applyTheme()
         reload()
+    }
+
+    // MARK: Öppningen från omslaget (U10)
+
+    /// Omslaget som boken öppnas från, och boken som är öppen (för vägen tillbaka).
+    private var openingCover: (image: UIImage?, frame: CGRect)?
+    private var openedBookID: String?
+
+    /// Omslagets bild och ruta i fönstret för en bok som syns: kortet Fortsätt läsa först, sedan rutnätet.
+    private func visibleCover(for id: String) -> (image: UIImage?, frame: CGRect)? {
+        collectionView.layoutIfNeeded()
+        var paths: [IndexPath] = []
+        if collectionView.numberOfItems(inSection: Section.continueReading.rawValue) > 0, continueItem?.book.id == id {
+            paths.append(IndexPath(item: 0, section: Section.continueReading.rawValue))
+        }
+        if let index = items.firstIndex(where: { $0.book.id == id }) {
+            paths.append(IndexPath(item: index, section: Section.books.rawValue))
+        }
+        for path in paths {
+            let cell = collectionView.cellForItem(at: path)
+            let cover = (cell as? BookCell)?.cover ?? (cell as? ContinueCell)?.cover
+            guard let view = cover, view.window != nil else { continue }
+            let frame = view.convert(view.bounds, to: nil)
+            guard frame.intersects(collectionView.convert(collectionView.bounds, to: nil)) else { continue }
+            return (view.snapshotImage(), frame)
+        }
+        return nil
+    }
+
+    func navigationController(_ navigationController: UINavigationController,
+                              animationControllerFor operation: UINavigationController.Operation,
+                              from fromVC: UIViewController,
+                              to toVC: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        func isReader(_ controller: UIViewController) -> Bool {
+            controller is PDFCurlReaderViewController || controller is ReflowReaderViewController
+        }
+        if operation == .push, fromVC === self, isReader(toVC) {
+            let cover = openingCover
+            openingCover = nil
+            SelfTest.log("Öppningen (U10): \(cover == nil ? "toning" : "från omslaget")")
+            return BookOpenTransition(opening: true, cover: cover?.image, coverFrame: cover?.frame)
+        }
+        if operation == .pop, toVC === self, isReader(fromVC), let id = openedBookID {
+            return BookOpenTransition(opening: false, cover: nil, coverFrame: nil) { [weak self] in
+                let found = self?.visibleCover(for: id)
+                SelfTest.log("Tillbaka (U10): \(found == nil ? "toning" : "in i omslaget")")
+                return (found?.image, found?.frame)
+            }
+        }
+        return nil
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -402,6 +496,16 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         collectionView.backgroundColor = palette.canvas
         Theme.style(navigationController?.navigationBar)
         sidebar.applyTheme()
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = palette.canvas
+        appearance.shadowColor = palette.rule
+        phoneBar.standardAppearance = appearance
+        if #available(iOS 15.0, *) {
+            phoneBar.scrollEdgeAppearance = appearance
+        }
+        phoneBar.tintColor = palette.accent
+        phoneBar.unselectedItemTintColor = palette.inkSoft
     }
 
     @objc private func memoryWarning() {
@@ -621,6 +725,10 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     // MARK: Öppna
 
     func open(_ book: Book) {
+        openedBookID = book.id
+        if openingCover == nil {
+            openingCover = visibleCover(for: book.id)
+        }
         switch book.kind {
         case .pdf:
             guard let reader = PDFCurlReaderViewController(book: book) else {

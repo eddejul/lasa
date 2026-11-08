@@ -97,6 +97,19 @@ enum LibrarySelfTest {
                          + (finished.contains("test.epub") ? "Rätt" : "FEL"))
         }
 
+        // U10: ett tryck trycker ner omslaget till 97 procent, och det går tillbaka när fingret släpper.
+        library.collectionViewForSelfTest.layoutIfNeeded()
+        if let cell = library.collectionViewForSelfTest.visibleCells.compactMap({ $0 as? BookCell }).first {
+            cell.isHighlighted = true
+            await pause(0.3)
+            let pressed = cell.cover.transform.a
+            cell.isHighlighted = false
+            await pause(0.4)
+            let back = cell.cover.transform.a
+            SelfTest.log("Tryck på omslaget (U10): skala \(String(format: "%.2f", pressed)) nere, "
+                         + "\(String(format: "%.2f", back)) efteråt. \(abs(pressed - 0.97) < 0.005 && back == 1 ? "Rätt" : "FEL")")
+        }
+
         // B3: kurser. Mappen Kurs blir en kurs av sig själv, en egen kurs får test.pdf och en färg.
         if let folderCourse = CourseStore.shared.courses().first(where: { $0.folder == "Kurs" }) {
             let members = library.allItems.filter { $0.courses.contains(folderCourse.id) }.map(\.book.path)
@@ -150,6 +163,9 @@ enum LibrarySelfTest {
         container.layoutIfNeeded()
         library.reload()
         await pause(1.0)
+        SelfTest.log("iPhone-bredd (U9): flikraden \(library.phoneBar.isHidden ? "FEL, syns inte" : "syns"), "
+                     + "knappen för sidopanelen \(library.navigationItem.leftBarButtonItem == nil ? "borta (rätt)" : "FEL, kvar"), "
+                     + "\(LibraryLogic.columns(width: 390, landscape: false)) kolumner")
         SelfTest.saveScreen(container, name: "20c-bibliotek-iphone")
 
         container.frame = original

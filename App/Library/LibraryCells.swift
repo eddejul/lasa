@@ -135,8 +135,30 @@ final class ProgressLine: UIView {
     }
 }
 
+/// U10: ett tryck på ett omslag trycker ner det lite (97 procent). Med Minska rörelse tonas det i stället.
+enum CoverPress {
+    static func apply(_ pressed: Bool, to view: UIView) {
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        UIView.animate(withDuration: pressed ? 0.12 : 0.22, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState],
+                       animations: {
+            if reduce {
+                view.alpha = pressed ? 0.75 : 1
+            } else {
+                view.transform = pressed ? CGAffineTransform(scaleX: 0.97, y: 0.97) : .identity
+            }
+        })
+    }
+}
+
 /// En bok i rutnätet (B1): omslag, titel, författare och en tunn stapel för hur långt man läst.
 final class BookCell: UICollectionViewCell {
+
+    override var isHighlighted: Bool {
+        didSet {
+            guard isHighlighted != oldValue else { return }
+            CoverPress.apply(isHighlighted, to: cover)
+        }
+    }
 
     static let id = "bok"
 
@@ -164,6 +186,12 @@ final class BookCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) används inte")
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        cover.transform = .identity
+        cover.alpha = 1
     }
 
     func configure(_ item: ShelfItem, cover content: CoverView.Content, stripe: UIColor?, palette: Palette) {
@@ -205,7 +233,8 @@ final class BookCell: UICollectionViewCell {
         super.layoutSubviews()
         let width = contentView.bounds.width
         let coverHeight = contentView.bounds.height - Self.textHeight
-        cover.frame = CGRect(x: 0, y: 0, width: width, height: max(coverHeight, 10))
+        cover.bounds = CGRect(x: 0, y: 0, width: width, height: max(coverHeight, 10))
+        cover.center = CGPoint(x: width / 2, y: max(coverHeight, 10) / 2)
         var y = cover.frame.maxY + 8
         let titleHeight = min(titleLabel.sizeThatFits(CGSize(width: width, height: 60)).height, 40)
         titleLabel.frame = CGRect(x: 0, y: y, width: width, height: titleHeight)
