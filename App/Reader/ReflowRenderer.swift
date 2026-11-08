@@ -206,9 +206,17 @@ final class ReflowRenderer {
         pump()
     }
 
-    /// Självtestet: nästa `count` mätningar av kapitlet misslyckas.
+    /// Självtestet: nästa `count` mätningar av kapitlet misslyckas. Är kapitlet redan laddat (som granne
+    /// till ett kapitel man läst) glöms det, så att det verkligen laddas och mäts igen.
     func simulateFailures(_ count: Int, inChapter chapter: Int) {
         simulatedFailures[chapter] = count
+        for view in views where view.chapter == chapter && view.state != .idle {
+            jobs[ObjectIdentifier(view)] = nil
+            jobAborts.removeValue(forKey: ObjectIdentifier(view))?()
+            view.markFailed()
+        }
+        counts[chapter] = nil
+        invalidate(chapter: chapter)
     }
 
     /// Självtestet: som när iOS stänger webbvyns process för ett laddat kapitel. Sant om kapitlet var laddat.
