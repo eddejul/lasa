@@ -154,8 +154,7 @@ export class ReflowReader {
     // Lyssnar på sidornas egen händelse (den kommer efter vyns), som har andelen av kapitlet.
     renderer.addEventListener('relocate', (event) => this.onRelocateEvent(event.detail));
     renderer.setAttribute('flow', 'paginated');
-    renderer.setAttribute('max-inline-size', '620px');
-    renderer.setAttribute('max-column-count', '2');
+    this.applyLayout();
     renderer.setAttribute('gap', '6%');
     renderer.setAttribute('margin', '40px');
     renderer.setAttribute('animated', '');
@@ -462,8 +461,20 @@ export class ReflowReader {
     return this.view?.goTo(href);
   }
 
+  /** Uppslag: Automatiskt (två spalter när fönstret är brett), En sida eller Två sidor. */
+  applyLayout() {
+    const renderer = this.view?.renderer;
+    if (!renderer) return;
+    const spread = this.settings.spread ?? 'auto';
+    renderer.setAttribute('max-column-count', spread === 'one' ? '1' : '2');
+    // Två sidor: smalare spalter, så att två ryms även i ett lägre eller smalare fönster.
+    renderer.setAttribute('max-inline-size', spread === 'two' ? '360px' : '620px');
+  }
+
   setSettings(settings) {
+    const layoutChanged = 'spread' in settings && settings.spread !== this.settings.spread;
     this.settings = { ...this.settings, ...settings };
+    if (layoutChanged) this.applyLayout();
     this.applyStyles();
     for (const { doc } of this.view?.renderer?.getContents() ?? []) this.applyFontSize(doc);
   }

@@ -562,7 +562,40 @@ def review(page, books, out):
     page.wait_for_selector('[data-testid="book"]')
 
 
-STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review]
+def spreads(page, books, out):
+    open_book(page, 'Testbok i PDF')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    page.keyboard.press('Home')
+    page.keyboard.press('ArrowRight')
+    page.locator('[data-testid="zoom-button"]').click()
+    page.locator('[data-testid="spread-two"]').click()
+    check(wait_for(lambda: page.locator('.pdf-spread.two').count() == 1), 'Två sidor ger uppslag även i det låga fönstret')
+    check(wait_for(lambda: page.locator('.page-label').inner_text().startswith('Sidorna 2 och 3')), f'uppslaget 2 och 3: {page.locator(".page-label").inner_text()}')
+    page.screenshot(path=os.path.join(out, "f10-tva-sidor.png"))
+    page.locator('[data-testid="spread-one"]').click()
+    page.locator('[data-testid="fit-page"]').click()
+    check(wait_for(lambda: page.locator('.pdf-spread.two').count() == 0 and page.locator('.page-label').inner_text().startswith('Sida ')),
+          f'En sida: inget uppslag fast hela sidan ryms: {page.locator(".page-label").inner_text()}')
+    page.locator('[data-testid="spread-auto"]').click()
+    page.locator('[data-testid="fit-auto"]').click()
+    page.keyboard.press('Escape')
+    check(page.evaluate("JSON.parse(localStorage.getItem('x') ?? 'null')") is None, 'inställningen sparas i databasen, inte i webbvyn')
+    back_to_library(page)
+
+    open_book(page, 'Testbok för Läsa')
+    check(wait_for(lambda: any(f.url.startswith('blob:') for f in page.frames), 15), 'EPUB-kapitel laddat')
+    page.locator('.toolbar-button', has_text='Aa').click()
+    page.locator('[data-testid="spread-one"]').click()
+    check(wait_for(lambda: page.evaluate("lasaTest.reader.view.renderer.getAttribute('max-column-count')") == '1'), 'En sida i EPUB')
+    page.wait_for_timeout(500)
+    page.screenshot(path=os.path.join(out, "f11-epub-en-sida.png"))
+    page.locator('[data-testid="spread-auto"]').click()
+    check(wait_for(lambda: page.evaluate("lasaTest.reader.view.renderer.getAttribute('max-column-count')") == '2'), 'Automatiskt i EPUB')
+    page.keyboard.press('Escape')
+    back_to_library(page)
+
+
+STEPS = [search_in_books, shortcuts, highlights_and_bookmarks, memory, review, spreads]
 
 
 def main():

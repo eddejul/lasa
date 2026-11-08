@@ -31,8 +31,10 @@ export const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2, 2.5];
 const MAX_CANVAS_PIXELS = 8e6;
 
 export class PdfReader {
-  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, getMarks = null, onSelect = null, onMarkClick = null }) {
+  constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, spread = 'auto', getMarks = null, onSelect = null,
+    onMarkClick = null }) {
     this.kind = 'pdf';
+    this.spread = ['auto', 'one', 'two'].includes(spread) ? spread : 'auto';
     this.stage = stage;
     this.onRelocate = onRelocate;
     this.onWord = onWord;
@@ -95,15 +97,21 @@ export class PdfReader {
     return this.effectiveFit !== 'page' || this.zoom > 1;
   }
 
+  /** Uppslag (två sidor bredvid varandra). spread: 'auto' (när fönstret är brett och sidan ryms),
+   *  'one' (aldrig) eller 'two' (alltid, utom när man zoomar in). */
   get spreadMode() {
+    if (this.count < 2 || this.spread === 'one') return false;
+    if (this.spread === 'two') return this.zoom === 1;
     const { width, height } = this.stage.getBoundingClientRect();
-    return !this.scrollMode && this.count > 1 && width > height * SPREAD_RATIO;
+    return !this.scrollMode && width > height * SPREAD_RATIO;
   }
 
   /** Hela sidan eller Sidbredd. Automatiskt: hela sidan om den blir läsbar, annars 'readable', en
    *  sida i läsbar storlek (sidbredd, men högst AUTO_MAX_SCALE) som man rullar i. */
   async resolveFit(index) {
     if (this.fit !== 'auto') return this.fit;
+    // Två sidor valt: uppslaget ryms i fönstret, även om sidorna blir små.
+    if (this.spread === 'two' && this.zoom === 1 && this.count > 1) return 'page';
     const { width, height } = this.stage.getBoundingClientRect();
     const size = await this.size(index);
     const whole = Math.min((width - 2 * PADDING) / size.width, (height - 2 * PADDING) / size.height);
@@ -118,8 +126,9 @@ export class PdfReader {
     return [left, left + 1 < this.count ? left + 1 : null];
   }
 
-  async setView({ fit = this.fit, zoom = this.zoom }) {
+  async setView({ fit = this.fit, zoom = this.zoom, spread = this.spread }) {
     this.fit = fit;
+    this.spread = ['auto', 'one', 'two'].includes(spread) ? spread : 'auto';
     this.zoom = ZOOM_STEPS.includes(zoom) ? zoom : 1;
     await this.show(this.current[0], { keepScroll: true });
   }

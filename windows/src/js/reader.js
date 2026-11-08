@@ -304,7 +304,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
 
   const reader = book.format === 'pdf'
     ? new PdfReader(stage, { onRelocate, onWord, onMessage: (message) => toast(message),
-      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, getMarks, onSelect, onMarkClick })
+      fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, spread: settings.pdfSpread ?? 'auto', getMarks, onSelect, onMarkClick })
     : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks, onSelect, onMarkClick });
 
   document.addEventListener('keydown', onKey);
@@ -341,6 +341,18 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   }
 
   const searchState = newSearchState();
+
+  /** Valet av uppslag: Automatiskt, En sida eller Två sidor. */
+  function spreadChoices(current, onChoose) {
+    const choices = [
+      { id: 'auto', title: 'Automatiskt', note: 'Två sidor bredvid varandra när fönstret är brett nog.' },
+      { id: 'one', title: 'En sida', note: 'Alltid en sida åt gången.' },
+      { id: 'two', title: 'Två sidor', note: 'Alltid två sidor bredvid varandra, som en uppslagen bok.' },
+    ];
+    return el('div', { class: 'font-list' }, choices.map((choice) => el('button', {
+      class: `font-choice${current === choice.id ? ' selected' : ''}`, dataset: { testid: `spread-${choice.id}` },
+      onclick: () => onChoose(choice.id) }, el('div', {}, choice.title), el('div', { class: 'choice-note' }, choice.note))));
+  }
 
   async function togglePanel(name) {
     if (panel.dataset.name === 'search' && name !== 'search') reader.clearSearchHit?.();
@@ -398,6 +410,13 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
           togglePanel(null);
           togglePanel('zoom');
         } }, el('div', {}, fit.title), el('div', { class: 'choice-note' }, fit.note)))),
+      el('h3', { class: 'panel-subhead' }, 'Uppslag'),
+      spreadChoices(reader.spread, async (spread) => {
+        await reader.setView({ spread });
+        await setSetting('pdfSpread', spread);
+        togglePanel(null);
+        togglePanel('zoom');
+      }),
       el('h3', { class: 'panel-subhead' }, 'Zoom'),
       el('div', { class: 'size-row' },
         el('button', { class: 'button', onclick: async () => { await zoom(-1); zoomLabel.textContent = `${Math.round(reader.zoom * 100)} %`; },
@@ -416,6 +435,14 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
       };
       replace(panel, el('div', { class: 'panel-head' }, el('h2', {}, 'Typsnitt och storlek'),
         el('button', { class: 'popup-close', onclick: () => togglePanel(null), 'aria-label': 'Stäng' }, '×')),
+      el('h3', { class: 'panel-subhead' }, 'Uppslag'),
+      spreadChoices(settings.reflowSpread ?? 'auto', async (spread) => {
+        await setSetting('reflowSpread', spread);
+        reader.setSettings({ spread });
+        togglePanel(null);
+        togglePanel('type');
+      }),
+      el('h3', { class: 'panel-subhead' }, 'Textstorlek'),
       el('div', { class: 'size-row' },
         el('button', { class: 'button', onclick: () => setSize(settings.size - 1), 'aria-label': 'Mindre text' }, 'A−'),
         sizeLabel,
@@ -452,7 +479,10 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     // Bokfilen läses först nu, så att läsaren och Öppnar boken syns direkt.
     const bytes = await readBookFile(book.id, book.ext);
     if (book.format === 'pdf') await reader.open(bytes, book.position);
-    else await reader.open(bytes, book.position, { ext: book.ext, title: book.title, settings: { ...settings, theme: resolvedTheme() } });
+    else {
+      await reader.open(bytes, book.position, { ext: book.ext, title: book.title,
+        settings: { ...settings, theme: resolvedTheme(), spread: settings.reflowSpread ?? 'auto' } });
+    }
   } catch (error) {
     console.error(error);
     replace(stage, el('div', { class: 'empty', dataset: { testid: 'open-error' } },
