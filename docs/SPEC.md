@@ -58,6 +58,7 @@ Så blev den (7 november 2026, detaljer i `windows/README.md`):
 * **Böcker** identifieras med SHA-256 av filens innehåll (gemener hex), samma id som synken i fas 6 ska använda. Sparade ord har kolumnerna `uuid` och `book_id` utöver iPadens.
 * **Bygget:** workflow `Windows build`, ordboken med samma cache som iOS-bygget, installationsfiler (NSIS och MSI) i artefakten `Lasa-windows`. Osignerade.
 * **Synk (fas 6):** läspositioner (PDF och EPUB, inte textfiler) och sparade ord enligt `docs/SYNK.md`, i `windows/src/js/sync.js`. Publik nyckel och förnyelsetoken i Windows Autentiseringshanteraren (crate keyring). Markeringar och bokmärken synkas inte till Windows.
+* **Natten 8 november 2026 (version 0.7.0):** markeringar i fyra färger med anteckningar och bokmärken (i `bibliotek.sqlite`, ingen synk ännu), sök i boken (Ctrl+F), repetition av sparade ord, AI-knappen, Öppna med i Utforskaren, valet Två sidor under Visning, en lista över kortkommandon (?), tema som följer systemet och stora PDF:er som läses i bitar. Detaljer i `windows/README.md`.
 
 ## 4. Funktioner, i prioritetsordning
 

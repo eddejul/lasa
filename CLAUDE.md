@@ -25,6 +25,11 @@ Pusha inte flera orelaterade ändringar i samma commit. Varje runda tar flera mi
 3. Följ bygget: `gh run list --workflow "Windows build" --limit 1`, fel med `gh run view <id> --log-failed`. Samma regel om tre fel som ovan.
 4. När bygget är grönt: Edvin laddar ner artefakten `Lasa-windows` och kör filen som slutar på `-setup.exe` (osignerad: Mer info och Kör ändå).
 5. Synken på Windows (`windows/src/js/sync.js`) följer `docs/SYNK.md` och iPadens `App/Sync/SyncEngine.swift`. Ändras protokollet ska båda ändras. Provas med `windows/tests/e2e_sync.py` mot `windows/tests/mock_supabase.py`.
+6. Användarens databaser nås bara via namngivna frågor i `windows/src-tauri/statements.json` (`db_read`, `db_write`). En ny fråga eller kolumn läggs där, aldrig som SQL i JavaScript. Tabellerna skapas och kolumner läggs till när appen startar (bara `IF NOT EXISTS` och `ADD COLUMN`). `statements.test.mjs` kontrollerar.
+7. Kopior som ska följas åt: repetitionen (`App/Dictionary/UserWords.swift` och `windows/src/js/review.js`, där `review.test.mjs` läser Swift-koden och går sönder om schemat ändras), AI-knappen (`GeminiClient.swift` och `windows/src/js/gemini.js`) och sökningens vikning (`FoldedText` och `windows/src/js/search.js`). Ändras den ena ändras den andra i samma commit.
+8. Markeringar och bokmärken på Windows ligger i `bibliotek.sqlite` med samma kolumner som `markeringar.sqlite`, och `book` är bokens SHA-256. PDF räknar tecken i pdf.js text (inte PDFKit), EPUB i kapitlets text som på iPaden. Ingen synk av markeringar ännu.
+9. `windows/tests/e2e_fas7.py` provar markeringar, sök, repetition, AI-knappen och uppslag. `node --test windows/tests/*.test.mjs` körs i bygget. En ändring i `.github/workflows/windows-build.yml` startar också iOS-bygget.
+10. Namnet är Sensus i fönstret och texterna, men `productName` ("Läsa"), `identifier` (`se.edvin.lasa`) och datamappen är oförändrade, så att installationen ersätter den gamla. Byt inte `productName` utan Edvins ja, det kan ge en andra installation.
 
 ## Projektet
 
