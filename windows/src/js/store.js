@@ -4,6 +4,7 @@
 
 import { userDb } from './backend.js';
 import { hiddenKey } from './lookup.js';
+import { isStopWord } from './review.js';
 
 // Frågorna har namn: SQL:en finns i src-tauri/statements.json och körs bara av Rust-delen (W12). Tabellerna
 // skapas och nya kolumner läggs till när appen startar. Samma kolumner som saved_words i
@@ -165,8 +166,10 @@ export async function deleteBookmark(id) {
 // Sparade ord
 
 /** Sparar ett uppslaget ord. Har det slagits upp förut räknas det upp, och meningen, boken och sidan
- *  byts mot de senaste. uuid sätts första gången och ändras aldrig. Ett borttaget ord blir sparat igen. */
+ *  byts mot de senaste. uuid sätts första gången och ändras aldrig. Ett borttaget ord blir sparat igen.
+ *  U6: småord (att, det, och, the, of) sparas aldrig, som på iPaden. */
 export async function saveWord({ word, lemma, language, sentence, book, page, bookId }) {
+  if (isStopWord(word, lemma, language)) return;
   const time = now();
   await write('word_save', [word, lemma, language, sentence, book, page, time, time, crypto.randomUUID(), bookId ?? '']);
 }

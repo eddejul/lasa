@@ -21,6 +21,8 @@ struct SavedWord {
     let date: Date
     /// O7: betydelsen som valts när ordet sparades (id ur ordboken), tom om ingen valts.
     var senseID = ""
+    /// G3: bokens id i bokregistret, tomt för ord från före bokregistret (U6 filtrerar repetitionen på det).
+    var bookID = ""
 }
 
 /// D3-1: allt som sparas om ett ord, raden i `saved_words` och i `reviews`, så att en borttagning kan
@@ -208,8 +210,10 @@ final class UserWords {
     // MARK: Sparade ord
 
     /// Sparar ett uppslaget ord. Har det slagits upp förut räknas det upp, och meningen byts mot den senaste.
+    /// U6: småord (att, det, och, the, of) sparas aldrig.
     func save(word: String, lemma: String, language: WordLanguage, sentence: String, book: String, pageIndex: Int,
               bookID: String? = nil) {
+        guard !ReviewStopWords.contains(word: word, lemma: lemma, language: language) else { return }
         let now = Date().timeIntervalSince1970
         write("ordet") { db in
             try db.execute("""
@@ -230,7 +234,7 @@ final class UserWords {
         var words: [SavedWord] = []
         read("orden") { db in
             try db.query("""
-                SELECT id, word, lemma, language, sentence, book, page, lookups, updated, sense_id
+                SELECT id, word, lemma, language, sentence, book, page, lookups, updated, sense_id, book_id
                 FROM saved_words ORDER BY updated DESC
                 """) { row in
                 words.append(SavedWord(id: row.int(0),
@@ -242,7 +246,8 @@ final class UserWords {
                                        pageIndex: row.int(6),
                                        lookups: row.int(7),
                                        date: Date(timeIntervalSince1970: row.double(8)),
-                                       senseID: row.string(9)))
+                                       senseID: row.string(9),
+                                       bookID: row.string(10)))
             }
         }
         return words
@@ -412,6 +417,7 @@ final class UserWords {
                            [pair.language.rawValue, pair.lemma, pair.synonym, Date().timeIntervalSince1970])
         }
         hiddenPairs.insert(pair)
+        ReviewAnswers.forget()
     }
 
     func unhide(_ pair: HiddenPair) {
@@ -420,6 +426,7 @@ final class UserWords {
                            [pair.language.rawValue, pair.lemma, pair.synonym])
         }
         hiddenPairs.remove(pair)
+        ReviewAnswers.forget()
     }
 
     /// Läser om de dolda paren, till exempel efter en återställning.
@@ -463,7 +470,8 @@ struct ReviewCard {
 }
 
 /// Nästa intervall i ett enkelt schema i stil med Anki: ett ord man kan kommer tillbaka allt mer sällan,
-/// ett ord man glömt kommer tillbaka om tio minuter.
+/// ett ord man glömt kommer tillbaka om tio minuter. U6: Igen, Svårt, Bra och Lätt ger alltid allt längre
+/// tid, också för ett nytt ord (10 min, 6 tim, 1 dag, 4 dagar).
 enum ReviewSchedule {
 
     static let newPerDay = 20
@@ -471,24 +479,28 @@ enum ReviewSchedule {
 
     static func next(_ grade: ReviewGrade, interval: Double, ease: Double, reps: Int)
         -> (interval: Double, ease: Double, reps: Int, lapse: Bool) {
+        let good: Double = reps == 0 ? 1 : (reps == 1 ? max(3, interval * ease) : max(interval * ease, interval + 1))
         switch grade {
         case .again:
             return (10.0 / 1440.0, max(minimumEase, ease - 0.2), 0, reps > 0)
         case .hard:
-            return (reps == 0 ? 1 : max(1, interval * 1.2), max(minimumEase, ease - 0.15), reps + 1, false)
+            if reps == 0 {
+                return (0.25, max(minimumEase, ease - 0.15), 0, false)
+            }
+            return (max(1, interval * 1.2), max(minimumEase, ease - 0.15), reps + 1, false)
         case .good:
-            let days: Double = reps == 0 ? 1 : (reps == 1 ? 3 : max(interval * ease, interval + 1))
-            return (days, ease, reps + 1, false)
+            return (good, ease, reps + 1, false)
         case .easy:
-            let days: Double = reps == 0 ? 4 : max(interval * ease * 1.3, interval + 2)
+            let days: Double = reps == 0 ? 4 : max(good * 1.3, interval + 2)
             return (days, ease + 0.15, reps + 1, false)
         }
     }
 
-    /// "10 min", "1 dag", "3 dagar", "2 veckor", "4 mån".
+    /// "10 min", "6 tim", "1 dag", "3 dagar", "2 veckor", "4 mån".
     static func label(days: Double) -> String {
         if days < 1 {
-            return "\(max(1, Int((days * 1440).rounded()))) min"
+            let minutes = max(1, Int((days * 1440).rounded()))
+            return minutes < 60 ? "\(minutes) min" : "\(Int((days * 24).rounded())) tim"
         }
         let whole = Int(days.rounded())
         if whole < 14 {
@@ -505,11 +517,119 @@ enum ReviewSchedule {
     }
 }
 
+/// U6: småord (funktionsord) som aldrig sparas och aldrig repeteras. De hamnar i Sparade ord när fingret råkar
+/// landa på dem, och ordboken har sällan något svar. Ord som också är vanliga innehållsord (min, mitt, vara,
+/// under, vid, era, will, may, can, just) är inte med. Samma listor finns i `windows/src/js/review.js`, och
+/// `review.test.mjs` jämför dem.
+enum ReviewStopWords {
+
+    static let swedish: Set<String> = [
+        "att", "och", "i", "på", "som", "är", "en", "ett", "det", "den", "de", "dem", "av", "för", "med", "till",
+        "från", "om", "men", "eller", "så", "inte", "också", "har", "hade", "haft", "ha", "var", "varit", "blir",
+        "bli", "blev", "blivit", "kan", "kunde", "ska", "skall", "skulle", "vill", "ville", "måste", "jag", "du",
+        "han", "hon", "hen", "vi", "ni", "sig", "sin", "sitt", "sina", "din", "ditt", "dina", "hans", "hennes",
+        "deras", "vår", "vårt", "våra", "er", "ert", "mig", "dig", "honom", "henne", "oss", "denna", "detta",
+        "dessa", "där", "här", "nu", "då", "när", "vad", "vem", "vilken", "vilket", "vilka", "hur", "varför", "än",
+        "efter", "mot", "utan", "genom", "hos", "mellan", "ut", "upp", "in", "ner", "ju", "nog", "bara", "mycket",
+        "många", "alla", "allt", "något", "någon", "några", "inget", "ingen", "inga", "eftersom", "medan", "både",
+        "samt", "ej", "ens", "väl", "redan", "dock",
+    ]
+
+    static let english: Set<String> = [
+        "the", "a", "an", "of", "to", "in", "on", "at", "by", "for", "with", "from", "into", "onto", "about", "and",
+        "or", "but", "nor", "if", "as", "than", "then", "so", "not", "no", "is", "are", "was", "were", "be", "been",
+        "being", "am", "do", "does", "did", "have", "has", "had", "could", "would", "should", "might", "shall", "it",
+        "its", "this", "that", "these", "those", "i", "you", "he", "she", "we", "they", "me", "him", "her", "us",
+        "them", "my", "your", "his", "our", "their", "there", "here", "what", "which", "who", "whom", "whose",
+        "when", "where", "why", "how", "up", "out", "all", "any", "some", "each", "also", "very", "too", "because",
+        "while",
+    ]
+
+    /// Sant om ordet som det stod i texten, eller dess grundform, är ett småord på ordets språk.
+    static func contains(word: String, lemma: String, language: WordLanguage) -> Bool {
+        let list = language == .english ? english : swedish
+        return list.contains(WordDictionary.normalize(word)) || list.contains(WordDictionary.normalize(lemma))
+    }
+}
+
+/// U6: vilka ord repetitionen visar. Sparas i UserDefaults som text.
+enum ReviewFilter: Equatable {
+    case all
+    /// Ord ur en bok (bokens id i bokregistret).
+    case book(String)
+    /// Ord ur böckerna i en kurs (kursens id).
+    case course(String)
+
+    init(storage: String) {
+        if storage.hasPrefix("bok:"), storage.count > 4 {
+            self = .book(String(storage.dropFirst(4)))
+        } else if storage.hasPrefix("kurs:"), storage.count > 5 {
+            self = .course(String(storage.dropFirst(5)))
+        } else {
+            self = .all
+        }
+    }
+
+    var storage: String {
+        switch self {
+        case .all: return "alla"
+        case .book(let id): return "bok:" + id
+        case .course(let id): return "kurs:" + id
+        }
+    }
+}
+
+/// U6: repetitionens logik utan databas och ordbok, så att den går att testa (XCTest).
+enum ReviewLogic {
+
+    /// Om ordet hör till böckerna. nil är alla ord, också ord utan bokens id.
+    static func belongs(_ word: SavedWord, to books: Set<String>?) -> Bool {
+        guard let books = books else { return true }
+        return !word.bookID.isEmpty && books.contains(word.bookID)
+    }
+
+    /// Böckerna (id) som filtret visar ord ur, nil för alla ord. `records` är bokregistrets id och sökväg
+    /// i Böcker, `courses` och `explicit` kurserna och de böcker man lagt i dem själv.
+    static func books(for filter: ReviewFilter, records: [(id: String, path: String)], courses: [Course],
+                      explicit: [String: Set<String>]) -> Set<String>? {
+        switch filter {
+        case .all:
+            return nil
+        case .book(let id):
+            return [id]
+        case .course(let id):
+            return Set(records.filter { record in
+                CourseLogic.courses(forPath: record.path, bookID: record.id, courses: courses, explicit: explicit)
+                    .contains(id)
+            }.map(\.id))
+        }
+    }
+
+    /// Texten under framstegslinjen: "12 kvar", aldrig någon tid (Edvins beslut).
+    static func remainingText(_ count: Int) -> String {
+        "\(count) kvar"
+    }
+
+    /// Kortet i biblioteket: "14 ord att repetera", "1 ord att repetera", aldrig någon tid.
+    static func cardText(_ count: Int) -> String {
+        count == 0 ? "Inga ord väntar just nu" : "\(count) ord att repetera"
+    }
+}
+
 extension UserWords {
 
     /// Orden att repetera nu: först de som är på tur, sedan nya ord (äldst först), högst 20 nya per dag.
-    func reviewQueue(now: Date = Date(), limit: Int = 200) -> [ReviewCard] {
-        let all = savedWords()
+    /// U6: småord och ord som ordboken inte har något svar för kommer inte med (de ligger kvar bland de
+    /// sparade orden). `books`: bara ord ur de här böckerna (bokens id), nil för alla ord. `hasAnswer`
+    /// byts ut i testerna, appen frågar ordboken (`ReviewAnswers`).
+    func reviewQueue(now: Date = Date(), limit: Int = 200, books: Set<String>? = nil,
+                     hasAnswer: ((SavedWord) -> Bool)? = nil) -> [ReviewCard] {
+        let answers = hasAnswer ?? { ReviewAnswers.exists(for: $0) }
+        let all = savedWords().filter { word in
+            ReviewLogic.belongs(word, to: books)
+                && !ReviewStopWords.contains(word: word.word, lemma: word.lemma, language: word.language)
+                && answers(word)
+        }
         var states: [String: (due: Double, interval: Double, ease: Double, reps: Int, lapses: Int)] = [:]
         var introducedToday = 0
         let startOfDay = Calendar.current.startOfDay(for: now).timeIntervalSince1970
@@ -551,9 +671,9 @@ extension UserWords {
         return result
     }
 
-    /// Antalet ord på tur och nya ord som kan tas i dag, till knappen Repetera.
-    func reviewCount(now: Date = Date()) -> Int {
-        reviewQueue(now: now).count
+    /// Antalet ord på tur och nya ord som kan tas i dag, till knappen Repetera och kortet i biblioteket.
+    func reviewCount(now: Date = Date(), books: Set<String>? = nil) -> Int {
+        reviewQueue(now: now, books: books).count
     }
 
     /// Sparar hur det gick och räknar ut nästa gång. Svarar med antalet dagar till nästa gång.
