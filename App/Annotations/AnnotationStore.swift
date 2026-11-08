@@ -68,6 +68,9 @@ struct Highlight: Equatable {
     var note: String
     let created: Date
     var updated: Date
+    /// Rutorna på en PDF-sida i sidans koordinater, sparade när markeringen skapas (G6), så att sidan kan
+    /// vikas fram utan att PDFKit räknar fram dem. Tomt i EPUB och för markeringar som inte räknats än.
+    var rects: [CGRect] = []
 
     var end: Int {
         start + length
@@ -156,6 +159,10 @@ final class AnnotationStore {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            """,
+        // Steg 3 (G6): markeringens rutor på PDF-sidan, som JSON. Synken skickar dem inte.
+        """
+            ALTER TABLE highlights ADD COLUMN rects TEXT NOT NULL DEFAULT '';
             """,
     ]
 
@@ -257,7 +264,7 @@ final class AnnotationStore {
         var result: [Highlight] = []
         read("bokens markeringar") { db in
             try db.query("""
-                SELECT id, book, section, start, length, text, color, note, created, updated
+                SELECT id, book, section, start, length, text, color, note, created, updated, rects
                 FROM highlights WHERE book = ? AND deleted = 0 ORDER BY section, start
                 """, [book]) { row in
                 result.append(Self.highlight(from: row))
@@ -270,7 +277,7 @@ final class AnnotationStore {
         var result: [Highlight] = []
         read("sidans markeringar") { db in
             try db.query("""
-                SELECT id, book, section, start, length, text, color, note, created, updated
+                SELECT id, book, section, start, length, text, color, note, created, updated, rects
                 FROM highlights WHERE book = ? AND section = ? AND deleted = 0 ORDER BY start
                 """, [book, section]) { row in
                 result.append(Self.highlight(from: row))
@@ -283,7 +290,7 @@ final class AnnotationStore {
         var result: Highlight?
         read("en markering") { db in
             try db.query("""
-                SELECT id, book, section, start, length, text, color, note, created, updated
+                SELECT id, book, section, start, length, text, color, note, created, updated, rects
                 FROM highlights WHERE id = ? AND deleted = 0
                 """, [id]) { row in
                 result = Self.highlight(from: row)
@@ -296,7 +303,8 @@ final class AnnotationStore {
     /// med den nya färgen och alla anteckningar kvar.
     @discardableResult
     func addHighlight(book: String, section: Int, start: Int, length: Int, text: String,
-                      color: HighlightColor, textProvider: ((Int, Int) -> String?)? = nil) -> Highlight {
+                      color: HighlightColor, textProvider: ((Int, Int) -> String?)? = nil,
+                      rectsProvider: ((Int, Int) -> [CGRect])? = nil) -> Highlight {
         let now = Date()
         var newStart = start
         var newEnd = start + length
@@ -322,7 +330,8 @@ final class AnnotationStore {
                                   color: color,
                                   note: notes.joined(separator: "\n\n"),
                                   created: now,
-                                  updated: now)
+                                  updated: now,
+                                  rects: rectsProvider?(newStart, newEnd - newStart) ?? [])
         // De gamla markeringarna tas bort och den nya läggs till i samma transaktion, så att en krasch
         // emellan inte tappar markeringen med dess anteckningar.
         write("markeringen") { db in
@@ -353,11 +362,19 @@ final class AnnotationStore {
 
     private static func insert(_ highlight: Highlight, into db: SQLiteDatabase) throws {
         try db.execute("""
-            INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated,
+                                               deleted, rects)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
             """, [highlight.id, highlight.book, highlight.section, highlight.start, highlight.length, highlight.text,
                   highlight.color.rawValue, highlight.note, highlight.created.timeIntervalSince1970,
-                  highlight.updated.timeIntervalSince1970])
+                  highlight.updated.timeIntervalSince1970, RectsJSON.encode(highlight.rects)])
+    }
+
+    /// Sparar rutor som räknats fram efteråt (G6). Ändringstiden rörs inte, så synken skickar inget nytt.
+    func setRects(_ rects: [CGRect], forHighlight id: String) {
+        write("markeringens rutor") { db in
+            try db.execute("UPDATE highlights SET rects = ? WHERE id = ?", [RectsJSON.encode(rects), id])
+        }
     }
 
     private static func highlight(from row: SQLiteDatabase.Row) -> Highlight {
@@ -370,7 +387,8 @@ final class AnnotationStore {
                   color: HighlightColor(rawValue: row.string(6)) ?? .yellow,
                   note: row.string(7),
                   created: Date(timeIntervalSince1970: row.double(8)),
-                  updated: Date(timeIntervalSince1970: row.double(9)))
+                  updated: Date(timeIntervalSince1970: row.double(9)),
+                  rects: RectsJSON.decode(row.string(10)))
     }
 
     // MARK: Bokmärken
@@ -523,5 +541,26 @@ extension AnnotationStore {
         Highlight(id: row.string(0), book: row.string(1), section: row.int(2), start: row.int(3), length: row.int(4),
                   text: row.string(5), color: HighlightColor(rawValue: row.string(6)) ?? .yellow, note: row.string(7),
                   created: Date(timeIntervalSince1970: row.double(8)), updated: Date(timeIntervalSince1970: row.double(9)))
+    }
+}
+
+/// Rutor som kort JSON, `[[x,y,b,h],...]` med två decimaler (G6).
+enum RectsJSON {
+
+    static func encode(_ rects: [CGRect]) -> String {
+        guard !rects.isEmpty else { return "" }
+        func number(_ value: CGFloat) -> String {
+            String(format: "%.2f", Double(value))
+        }
+        return "[" + rects.map { "[\(number($0.minX)),\(number($0.minY)),\(number($0.width)),\(number($0.height))]" }
+            .joined(separator: ",") + "]"
+    }
+
+    static func decode(_ text: String) -> [CGRect] {
+        guard !text.isEmpty, let data = text.data(using: .utf8),
+              let list = try? JSONSerialization.jsonObject(with: data) as? [[Double]] else { return [] }
+        return list.compactMap { values in
+            values.count == 4 ? CGRect(x: values[0], y: values[1], width: values[2], height: values[3]) : nil
+        }
     }
 }

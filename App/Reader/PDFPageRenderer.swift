@@ -147,6 +147,20 @@ final class PDFPageRenderer {
         trim()
     }
 
+    /// Markeringarnas rutor på en sida, räknade på renderingskön med renderarens eget dokument (G6), så att
+    /// huvudtråden aldrig tar fram sidans text under en vikning. `completion` kommer på huvudtråden.
+    func rects(onPage index: Int, ranges: [NSRange], completion: @escaping ([[CGRect]]) -> Void) {
+        let worker = self.worker
+        let operation = BlockOperation {
+            let result = worker.rects(index: index, ranges: ranges)
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+        operation.queuePriority = .low
+        queue.addOperation(operation)
+    }
+
     // MARK: Internt
 
     private func isValid(_ index: Int) -> Bool {
@@ -259,6 +273,11 @@ private final class PDFRenderWorker {
     init?(url: URL) {
         guard let document = PDFDocument(url: url) else { return nil }
         self.document = document
+    }
+
+    func rects(index: Int, ranges: [NSRange]) -> [[CGRect]] {
+        guard let page = document.page(at: index) else { return ranges.map { _ in [] } }
+        return ranges.map { PDFTextRanges.rects(on: page, range: $0) }
     }
 
     func render(index: Int, size: CGSize, scale: CGFloat, theme: ReaderTheme) -> UIImage? {

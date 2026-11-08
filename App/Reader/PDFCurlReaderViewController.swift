@@ -50,6 +50,19 @@ final class PDFCurlReaderViewController: UIViewController {
     private var markBar: HighlightModeBar?
     private var markSelection: PDFMarkSelection?
     private var marksCache: [Int: [PDFPageViewController.Mark]] = [:]
+    /// Bokens markeringar per sida, inlästa en gång (G6), så att en sida som viks fram inte frågar databasen.
+    private var highlightsByPage: [Int: [Highlight]]?
+    /// Sidor vars saknade rutor räknas på renderingskön just nu.
+    private var rectsInFlight = Set<Int>()
+    /// Markeringar vars text inte gick att hitta på sidan. De räknas inte om igen under besöket.
+    private var unplaceable = Set<String>()
+    /// Hur lång tid det tog att förbereda markeringarna när en sida viktes fram, till självtestet (G6).
+    private(set) var markSetupTimes: [Double] = []
+    /// Punkten i sidans koordinater där ordet under fingret senast togs fram (G6).
+    private var lastWordProbe: CGPoint?
+    /// Hur många gånger ordet under fingret togs fram och hur många gånger det kunde hoppas över (G6).
+    private(set) var wordProbes = 0
+    private(set) var skippedWordProbes = 0
     private var bookmarks: [Bookmark] = []
     private var bookmarkedPages: Set<Int> = []
     private var searchItem: UIBarButtonItem?
@@ -596,6 +609,7 @@ final class PDFCurlReaderViewController: UIViewController {
         switch press.state {
         case .began:
             guard presentedViewController == nil else { return }
+            lastWordProbe = nil
             // Trycket ska inte också vika sidan eller visa menyn när fingret lyfts.
             cancelPageGestures()
             if !updatePressedWord(at: point),
@@ -636,6 +650,19 @@ final class PDFCurlReaderViewController: UIViewController {
         guard let pagePoint = PDFPageGeometry.pagePoint(for: local, imageFrame: imageFrame, page: pdfPage) else {
             return false
         }
+        // Fingret ligger kvar på samma ord, eller har knappt rört sig: inget behöver räknas om (G6).
+        if let current = pressedWord, current.page === page {
+            let stillOnWord = current.found.pageRects.contains { $0.insetBy(dx: -1, dy: -1).contains(pagePoint) }
+            let barelyMoved = lastWordProbe.map { hypot($0.x - pagePoint.x, $0.y - pagePoint.y) < 1.5 } ?? false
+            if stillOnWord || barelyMoved {
+                pressedWord = PressedWord(found: current.found, page: page, rects: current.rects, finger: local)
+                moveWordBubble(to: point)
+                skippedWordProbes += 1
+                return true
+            }
+        }
+        lastWordProbe = pagePoint
+        wordProbes += 1
         let tolerance = Self.fingerTolerance * PDFPageGeometry.pageUnitsPerPoint(imageFrame: imageFrame, page: pdfPage)
         guard let found = PDFWordFinder.word(on: pdfPage, at: pagePoint, tolerance: tolerance) else {
             if pressedWord != nil {
@@ -954,31 +981,70 @@ extension PDFCurlReaderViewController {
 
     // MARK: Markeringarna på sidorna
 
+    /// Markeringarna på en sida. Rutorna är sparade sedan markeringen skapades (G6), så här räknas inget
+    /// med PDFKit. Saknas de (markeringar från före G6 eller från synken) räknas de på renderingskön och
+    /// sparas, och sidan får dem när de är klara.
     fileprivate func marks(forPage index: Int) -> [PDFPageViewController.Mark] {
         if let cached = marksCache[index] {
             return cached
         }
-        guard let page = document.page(at: index) else { return [] }
-        let marks = AnnotationStore.shared.highlights(book: bookKey, section: index).map { highlight in
-            PDFPageViewController.Mark(id: highlight.id,
-                                       rects: PDFTextRanges.rects(on: page, range: NSRange(location: highlight.start,
-                                                                                            length: highlight.length)),
-                                       color: highlight.color,
+        if highlightsByPage == nil {
+            highlightsByPage = Dictionary(grouping: AnnotationStore.shared.highlights(book: bookKey), by: \.section)
+        }
+        let highlights = highlightsByPage?[index] ?? []
+        let missing = highlights.filter { $0.rects.isEmpty && !unplaceable.contains($0.id) }
+        let marks = highlights.filter { !$0.rects.isEmpty }.map { highlight in
+            PDFPageViewController.Mark(id: highlight.id, rects: highlight.rects, color: highlight.color,
                                        hasNote: highlight.hasNote)
         }
-        marksCache[index] = marks
+        if !missing.isEmpty {
+            computeRects(for: missing, onPage: index)
+        } else {
+            marksCache[index] = marks
+        }
         return marks
+    }
+
+    private func computeRects(for highlights: [Highlight], onPage index: Int) {
+        guard rectsInFlight.insert(index).inserted else { return }
+        let ranges = highlights.map { NSRange(location: $0.start, length: $0.length) }
+        renderer.rects(onPage: index, ranges: ranges) { [weak self] result in
+            guard let self = self, self.rectsInFlight.remove(index) != nil else { return }
+            var updated = self.highlightsByPage?[index] ?? []
+            for (highlight, rects) in zip(highlights, result) {
+                guard !rects.isEmpty else {
+                    // Texten finns inte på sidan längre (till exempel en ny version av boken).
+                    self.unplaceable.insert(highlight.id)
+                    continue
+                }
+                AnnotationStore.shared.setRects(rects, forHighlight: highlight.id)
+                if let position = updated.firstIndex(where: { $0.id == highlight.id }) {
+                    updated[position].rects = rects
+                }
+            }
+            self.highlightsByPage?[index] = updated
+            self.marksCache[index] = nil
+            for page in self.visiblePages where page.pageIndex == index {
+                page.setMarks(self.marks(forPage: index), dark: self.theme.isDark)
+            }
+        }
     }
 
     fileprivate func configureAnnotations(_ page: PDFPageViewController) {
         guard !page.isBlank else { return }
+        let started = CACurrentMediaTime()
         page.pdfPage = document.page(at: page.pageIndex)
         page.setMarks(marks(forPage: page.pageIndex), dark: theme.isDark)
         page.isBookmarked = bookmarkedPages.contains(page.pageIndex)
+        if marksCache[page.pageIndex]?.isEmpty == false {
+            markSetupTimes = Array((markSetupTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(200))
+        }
     }
 
+    /// Markeringarna på en sida har ändrats: läs om dem ur databasen.
     fileprivate func refreshMarks(onPage index: Int) {
         marksCache[index] = nil
+        highlightsByPage?[index] = AnnotationStore.shared.highlights(book: bookKey, section: index)
         for page in visiblePages where page.pageIndex == index {
             page.setMarks(marks(forPage: index), dark: theme.isDark)
         }
@@ -986,6 +1052,7 @@ extension PDFCurlReaderViewController {
 
     fileprivate func refreshAllMarks() {
         marksCache.removeAll()
+        rectsInFlight.removeAll()
         for page in visiblePages where !page.isBlank {
             page.setMarks(marks(forPage: page.pageIndex), dark: theme.isDark)
         }
@@ -1073,11 +1140,15 @@ extension PDFCurlReaderViewController {
             var local = selection.page.view.convert(point, from: view)
             local.x = min(max(local.x, frame.minX + 1), frame.maxX - 1)
             local.y = min(max(local.y, frame.minY + 1), frame.maxY - 1)
+            let previous = selection.current
             if let word = PDFCurlReaderViewController.word(on: selection.pdfPage, at: local, imageFrame: frame) {
                 selection.current = word
             }
             markSelection = selection
-            showMarkPreview()
+            // Förhandsvisningen byggs bara om när fingret nått ett nytt ord (G6).
+            if selection.current != previous {
+                showMarkPreview()
+            }
 
         case .ended:
             guard let selection = markSelection else { return }
@@ -1114,11 +1185,15 @@ extension PDFCurlReaderViewController {
     fileprivate func createHighlight(onPage index: Int, pdfPage: PDFPage, range: NSRange) -> Highlight? {
         let text = PDFTextRanges.text(on: pdfPage, range: range)
         guard !text.isEmpty else { return nil }
+        // Rutorna sparas med markeringen (G6), så att sidan senare kan vikas fram utan att de räknas.
         let highlight = AnnotationStore.shared.addHighlight(book: bookKey, section: index, start: range.location,
                                                             length: range.length, text: text,
-                                                            color: ReaderSettings.highlightColor) { start, length in
+                                                            color: ReaderSettings.highlightColor,
+                                                            textProvider: { start, length in
             PDFTextRanges.text(on: pdfPage, range: NSRange(location: start, length: length))
-        }
+        }, rectsProvider: { start, length in
+            PDFTextRanges.rects(on: pdfPage, range: NSRange(location: start, length: length))
+        })
         refreshMarks(onPage: index)
         Haptics.shared.wordTapped()
         return highlight
@@ -1536,8 +1611,65 @@ extension PDFCurlReaderViewController {
         SelfTest.saveScreen(view, name: "10-morkt")
         setTheme(savedTheme)
 
+        await selfTestFoldWork()
+
         let after = AnnotationStore.shared.totalCounts()
         SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
         SelfTest.finish()
+    }
+
+    /// G6: markeringarnas rutor är sparade, saknade rutor räknas på renderingskön, sidor med markeringar
+    /// förbereds utan PDFKit, och ordet under fingret räknas bara om när fingret lämnat ordet.
+    fileprivate func selfTestFoldWork() async {
+        let all = AnnotationStore.shared.highlights(book: bookKey)
+        SelfTest.log("Markeringar med sparade rutor: \(all.filter { !$0.rects.isEmpty }.count) av \(all.count)")
+        if let first = all.first {
+            // Som en markering från före G6: rutorna saknas och räknas fram på renderingskön.
+            AnnotationStore.shared.setRects([], forHighlight: first.id)
+            highlightsByPage = nil
+            marksCache.removeAll()
+            _ = marks(forPage: first.section)
+            for _ in 0..<30 where !rectsInFlight.isEmpty {
+                await pause(0.1)
+            }
+            let stored = AnnotationStore.shared.highlight(id: first.id)?.rects.count ?? 0
+            SelfTest.log("Saknade rutor räknades på renderingskön: \(stored > 0 ? "\(stored) rutor sparade" : "FEL, inga")")
+
+            // Bläddra fram och tillbaka över sidan med markeringen.
+            markSetupTimes.removeAll()
+            jump(to: max(first.section - 2, 0))
+            _ = await waitForImages()
+            for forward in [true, true, true, false, false, false] {
+                turnPage(forward: forward)
+                await pause(0.9)
+            }
+            let longest = markSetupTimes.max() ?? -1
+            SelfTest.log("Sidor med markeringar förbereddes \(markSetupTimes.count) gånger, längsta "
+                         + String(format: "%.2f", longest) + " ms" + (longest > 5 ? " FEL, för långsamt" : ""))
+            jump(to: first.section)
+            _ = await waitForImages()
+        }
+
+        // Ordet under fingret: ett första uppslag, sedan små rörelser på samma ord.
+        guard let page = visiblePages.first(where: { !$0.isBlank }),
+              let pdfPage = document.page(at: page.pageIndex),
+              let text = pdfPage.string.map({ $0 as NSString }) else { return }
+        let target = text.range(of: "kunskap", options: [.caseInsensitive])
+        guard target.location != NSNotFound, let rect = PDFTextRanges.rects(on: pdfPage, range: target).first,
+              let shown = page.viewRect(forPageRect: rect) else {
+            SelfTest.log("FEL: hittade inte ordet för fingerprovet")
+            return
+        }
+        wordProbes = 0
+        skippedWordProbes = 0
+        lastWordProbe = nil
+        for step in 0..<12 {
+            let local = CGPoint(x: shown.midX + CGFloat(step % 4) - 1.5, y: shown.midY + CGFloat(step % 3) * 0.5)
+            updatePressedWord(at: view.convert(local, from: page.view))
+        }
+        SelfTest.log("Ordet under fingret: \(pressedWord?.found.candidates.first ?? "inget"), \(wordProbes) uppslag "
+                     + "och \(skippedWordProbes) överhoppade på 12 rörelser" + (wordProbes > 2 ? " FEL" : ""))
+        hideWordBubble()
+        clearPressedWord()
     }
 }
