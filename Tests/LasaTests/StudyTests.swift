@@ -51,13 +51,38 @@ final class StudyTests: XCTestCase {
         XCTAssertEqual(labels.printed(for: 0, pdfLabel: "xii"), "xii")
         XCTAssertNil(labels.printed(for: 0, pdfLabel: "1"))
         XCTAssertEqual(labels.index(forTyped: "XII", pageCount: 5) { $0 == 3 ? "xii" : nil }, 3)
-        // -1: PDF:ens egna nummer även när filnamnet har ett intervall.
+        // -1: läsaren har sagt att filens nummer är bokens, även när filnamnet har ett intervall.
         let off = BookPageNumbering.resolve(first: -1, spread: false, fileName: "Kap (s63-80).pdf", pageCount: 18,
-                                            hasPDFLabels: false)
-        XCTAssertEqual(off.source, .file)
-        XCTAssertNil(off.printed(for: 4, pdfLabel: nil))
+                                            hasPDFLabels: true)
+        XCTAssertEqual(off.source, .fileConfirmed)
+        XCTAssertNil(off.printed(for: 4, pdfLabel: "v"))
         XCTAssertEqual(off.citationPage(for: 4, half: nil, pdfLabel: nil), "5")
         XCTAssertFalse(off.usesBookNumbers)
+        // -2: PDF:ens sidetiketter.
+        XCTAssertEqual(BookPageNumbering.resolve(first: -2, spread: false, fileName: "Kap (s63-80).pdf", pageCount: 18,
+                                                 hasPDFLabels: true).source, .pdfLabels)
+    }
+
+    /// D4-1: utan intervall i filnamnet, utan sidetiketter och utan inställning får citatet ingen sida.
+    func testUnsetBookNumbersGiveNoCitationPage() {
+        let hietanen = BookPageNumbering.resolve(first: 0, spread: false,
+                                                 fileName: "HIETANEN 2015 Topikernas teori och praktik.pdf",
+                                                 pageCount: 25, hasPDFLabels: false)
+        XCTAssertEqual(hietanen.source, .file)
+        XCTAssertNil(hietanen.citationPage(for: 22, half: nil, pdfLabel: nil))
+        XCTAssertNil(hietanen.printed(for: 22, pdfLabel: nil))
+        XCTAssertEqual(Citation.inText(.harvard, source: CitationSource(author: "Hietanen, Mika", year: "2015", title: "T"),
+                                       page: hietanen.citationPage(for: 22, half: nil, pdfLabel: nil)),
+                       "(Hietanen 2015)")
+        // Förslaget ur sidornas text: tryckta nummer i sidhuvud eller sidfot, bara som förslag.
+        XCTAssertEqual(PrintedPageNumbers.candidates(in: "Topikernas teori\nText på sidan.\nMer text.\n136"), [136])
+        XCTAssertEqual(PrintedPageNumbers.candidates(in: "134 MIKA HIETANEN\nText.\nSlut."), [134])
+        XCTAssertEqual(PrintedPageNumbers.candidates(in: "Bara text utan tal\nfyra 2 rader"), [])
+        let pages = (20..<25).map { (index: $0, numbers: [$0 + 112, 7]) } + [(index: 3, numbers: [])]
+        let found = PrintedPageNumbers.firstPage(pages)
+        XCTAssertEqual(found?.first, 112)
+        XCTAssertEqual(found?.votes, 5)
+        XCTAssertNil(PrintedPageNumbers.firstPage([(index: 0, numbers: [5]), (index: 1, numbers: [9])]))
     }
 
     // MARK: K3

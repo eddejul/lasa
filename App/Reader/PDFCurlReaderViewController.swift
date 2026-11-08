@@ -62,6 +62,8 @@ final class PDFCurlReaderViewController: UIViewController {
     private var lastMarkMenuAnchor: CGRect?
     /// K12: anteckningarna bredvid texten, när panelen är framme.
     fileprivate var sideNotes: SideNotesPanel?
+    /// D4-1: bokens sida för filens första sida enligt tryckta sidnummer i textlagret, bara ett förslag.
+    fileprivate var printedPageSuggestion: (first: Int, votes: Int)?
     /// Bubblan ovanför fingret när ett ord hålls (G12, gemensam med den andra läsaren).
     private lazy var wordBubble = WordBubble(host: view)
 
@@ -202,6 +204,7 @@ final class PDFCurlReaderViewController: UIViewController {
             scheduleResumeCard()
             // Sökregistret byggs i bakgrunden om det saknas, när de första sidorna hunnit ritas.
             SearchIndex.shared.prepare(searchKey, source: .pdf(book.url), delay: 4)
+            startPrintedPageDetection()
         }
         PageTurnSound.shared.prepare()
         WordDictionary.warmUpLanguageModels()
@@ -688,7 +691,7 @@ final class PDFCurlReaderViewController: UIViewController {
     }
 
     /// K3: bokens sidnummer för en markering. I ett uppslag avgör markeringens plats på bilden vilken sida.
-    fileprivate func citationPage(for highlight: Highlight) -> String {
+    fileprivate func citationPage(for highlight: Highlight) -> String? {
         var half: Int?
         if case let .offset(_, spread) = pageNumbering.source, spread,
            let rect = highlight.rects.first, let page = document.page(at: highlight.section) {
@@ -888,8 +891,12 @@ final class PDFCurlReaderViewController: UIViewController {
         var message = pageNumbering.summary
         if let suggestion = suggestion {
             message += suggestion.spread
-                ? " Förslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last), uppslag."
-                : " Förslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last)."
+                ? "\n\nFörslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last), uppslag."
+                : "\n\nFörslag ur filnamnet: sidorna \(suggestion.first) till \(suggestion.last)."
+        }
+        if let printed = printedPageSuggestion {
+            message += "\n\nFörslag ur sidornas text: filens första sida är s. \(printed.first) (tryckta sidnummer på "
+                + "\(printed.votes) sidor). Kontrollera mot en sida innan du sparar."
         }
         message += "\n\nSkriv bokens sidnummer för filens första sida."
         let alert = UIAlertController(title: "Bokens sidnummer", message: message, preferredStyle: .alert)
@@ -897,7 +904,7 @@ final class PDFCurlReaderViewController: UIViewController {
         if case let .offset(first, _) = pageNumbering.source {
             current = first
         } else {
-            current = suggestion?.first
+            current = suggestion?.first ?? printedPageSuggestion?.first
         }
         alert.addTextField { field in
             field.keyboardType = .numberPad
@@ -918,23 +925,54 @@ final class PDFCurlReaderViewController: UIViewController {
         }
         alert.addAction(UIAlertAction(title: "En boksida per sida i filen", style: .default) { _ in save(false) })
         alert.addAction(UIAlertAction(title: "Två boksidor per sida (uppslag)", style: .default) { _ in save(true) })
-        if info.pageFirst != 0 {
-            alert.addAction(UIAlertAction(title: suggestion == nil ? "Automatiskt" : "Förslaget ur filnamnet",
-                                          style: .default) { [weak self] _ in
-                info.pageFirst = 0
+        if hasPDFLabels, info.pageFirst != BookPageNumbering.labelNumbers {
+            alert.addAction(UIAlertAction(title: "Sidnumren som står i PDF:en", style: .default) { [weak self] _ in
+                info.pageFirst = BookPageNumbering.labelNumbers
                 info.pageSpread = false
                 self?.applyBookPages(info)
             })
         }
-        if info.pageFirst != -1 {
-            alert.addAction(UIAlertAction(title: "Filens egna sidnummer", style: .default) { [weak self] _ in
-                info.pageFirst = -1
+        if info.pageFirst != BookPageNumbering.fileNumbers {
+            alert.addAction(UIAlertAction(title: "Filens sidnummer är bokens", style: .default) { [weak self] _ in
+                info.pageFirst = BookPageNumbering.fileNumbers
                 info.pageSpread = false
                 self?.applyBookPages(info)
             })
         }
         alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
         present(alert, animated: true)
+    }
+
+    /// D4-1: varför citatet saknar sida, med förslaget ur sidornas text om det finns.
+    fileprivate func missingPageHint(for highlight: Highlight) -> String {
+        var text = "Bokens sidnummer är inte inställt, så citatet har ingen sida. Markeringen står på filens sida "
+            + "\(highlight.section + 1)."
+        if let printed = printedPageSuggestion {
+            text += " Sidornas text tyder på s. \(printed.first + highlight.section) i boken."
+        }
+        return text
+    }
+
+    /// D4-1: letar efter tryckta sidnummer i sidornas text i bakgrunden, med ett eget dokument, när bokens
+    /// sidnummer inte är inställt. Resultatet är bara ett förslag i Bokens sidnummer och citatrutan.
+    fileprivate func startPrintedPageDetection() {
+        guard pageNumbering.source == .file, printedPageSuggestion == nil else { return }
+        let url = book.url
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let document = PDFDocument(url: url), !document.isLocked else { return }
+            let count = min(document.pageCount, 24)
+            var pages: [(index: Int, numbers: [Int])] = []
+            for index in 0..<count {
+                let text = document.page(at: index)?.string ?? ""
+                pages.append((index, PrintedPageNumbers.candidates(in: text)))
+            }
+            let found = PrintedPageNumbers.firstPage(pages)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.printedPageSuggestion = found
+                AppLog.shared.write("D4-1: tryckta sidnummer i textlagret \(found.map { "ger s. \($0.first) (\($0.votes) sidor)" } ?? "hittades inte")")
+            }
+        }
     }
 
     /// K12: panelen Anteckningar bredvid texten, av och på i Mer.
@@ -1703,7 +1741,10 @@ extension PDFCurlReaderViewController {
         }
         menu.onCite = { [weak self] in
             guard let self = self, let current = AnnotationStore.shared.highlight(id: id) else { return }
-            CitationViewController.present(book: self.book, text: current.text, page: self.citationPage(for: current),
+            let page = self.citationPage(for: current)
+            CitationViewController.present(book: self.book, text: current.text, page: page,
+                                           pageHint: page == nil ? self.missingPageHint(for: current) : nil,
+                                           onSetPages: { [weak self] in self?.showBookPages() },
                                            from: self, sourceView: self.view, sourceRect: anchor)
         }
         lastMarkMenuAnchor = anchor

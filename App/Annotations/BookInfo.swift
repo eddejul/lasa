@@ -3,13 +3,17 @@ import Foundation
 /// Bokens egna sidnummer i en PDF (K2): ett ställe som ger bokens sidnummer för en sida i filen.
 /// Gå till sida, sidraden, tidslinjen, bokmärkena, anteckningsboken och citaten använder det.
 ///
-/// Tre källor: filens egna nummer (sida 1 är 1), PDF:ens sidetiketter, eller en förskjutning där filens
+/// Källorna: filens egna nummer (sida 1 är 1), PDF:ens sidetiketter, eller en förskjutning där filens
 /// första sida är bokens sida `first`. Med `spread` är varje sida i filen ett foto av ett helt uppslag,
-/// alltså två boksidor. Ren logik utan PDFKit, så att den går att testa (G13).
+/// alltså två boksidor. Filens nummer räknas bara som bokens när läsaren sagt det (`fileConfirmed`):
+/// annars får citaten ingen sida (granskning 4, D4-1). Ren logik utan PDFKit, så att den går att testa (G13).
 struct BookPageNumbering: Equatable {
 
     enum Source: Equatable {
+        /// Filens nummer, och bokens sidnummer är inte inställt. Citaten får ingen sida.
         case file
+        /// Läsaren har sagt att filens nummer är bokens (Filens sidnummer är bokens).
+        case fileConfirmed
         case pdfLabels
         case offset(first: Int, spread: Bool)
     }
@@ -18,14 +22,26 @@ struct BookPageNumbering: Equatable {
 
     static let file = BookPageNumbering(source: .file)
 
-    /// Väljer källa. `setting` är det som sparats för boken (0 automatiskt, -1 PDF:ens egna nummer, större än
-    /// 0 bokens sida för filens första sida). Automatiskt: förslaget ur filnamnet, annars PDF:ens sidetiketter.
+    /// Det sparade sättet i `book_info.page_first`: 0 inte valt än, -1 filens nummer är bokens,
+    /// -2 PDF:ens sidetiketter, större än 0 bokens sida för filens första sida.
+    static let notChosen = 0
+    static let fileNumbers = -1
+    static let labelNumbers = -2
+
+    /// Väljer källa ur det sparade sättet. Inte valt än: förslaget ur filnamnet, annars PDF:ens sidetiketter,
+    /// annars filens nummer utan att de räknas som bokens.
     static func resolve(first setting: Int, spread: Bool, fileName: String, pageCount: Int,
                         hasPDFLabels: Bool) -> BookPageNumbering {
         if setting > 0 {
             return BookPageNumbering(source: .offset(first: setting, spread: spread))
         }
-        if setting == 0, let suggestion = suggestion(fileName: fileName, pageCount: pageCount) {
+        if setting == fileNumbers {
+            return BookPageNumbering(source: .fileConfirmed)
+        }
+        if setting == labelNumbers {
+            return BookPageNumbering(source: hasPDFLabels ? .pdfLabels : .file)
+        }
+        if let suggestion = suggestion(fileName: fileName, pageCount: pageCount) {
             return BookPageNumbering(source: .offset(first: suggestion.first, spread: suggestion.spread))
         }
         return BookPageNumbering(source: hasPDFLabels ? .pdfLabels : .file)
@@ -62,7 +78,7 @@ struct BookPageNumbering: Equatable {
     /// PDF:ens egen sidetikett för sidan, om den finns.
     func printed(for index: Int, pdfLabel: String?) -> String? {
         switch source {
-        case .file:
+        case .file, .fileConfirmed:
             return nil
         case .pdfLabels:
             let label = pdfLabel?.trimmingCharacters(in: .whitespaces) ?? ""
@@ -77,9 +93,18 @@ struct BookPageNumbering: Equatable {
     }
 
     /// Bokens sidnummer för en markering, till citat (K3) och anteckningsboken (K1). `half` är 0 för vänstra
-    /// och 1 för högra sidan i ett uppslag, nil när det inte är känt (då blir det "63 f.").
-    func citationPage(for index: Int, half: Int?, pdfLabel: String?) -> String {
-        if let pages = bookPages(for: index) {
+    /// och 1 för högra sidan i ett uppslag, nil när det inte är känt (då blir det "63 f."). Nil när bokens
+    /// sidnummer inte är inställt: då påstår citatet ingen sida (D4-1).
+    func citationPage(for index: Int, half: Int?, pdfLabel: String?) -> String? {
+        switch source {
+        case .file:
+            return nil
+        case .fileConfirmed:
+            return String(index + 1)
+        case .pdfLabels:
+            return printed(for: index, pdfLabel: pdfLabel) ?? String(index + 1)
+        case .offset:
+            guard let pages = bookPages(for: index) else { return nil }
             if pages.count == 1 {
                 return String(pages.lowerBound)
             }
@@ -88,7 +113,6 @@ struct BookPageNumbering: Equatable {
             }
             return "\(pages.lowerBound) f."
         }
-        return printed(for: index, pdfLabel: pdfLabel) ?? String(index + 1)
     }
 
     /// Sidan i filen (från 0) för ett sidnummer som skrivits i Gå till sida: bokens nummer först, annars
@@ -111,7 +135,7 @@ struct BookPageNumbering: Equatable {
                     return index
                 }
             }
-        case .file:
+        case .file, .fileConfirmed:
             break
         }
         if let number = Int(typed), number >= 1, number <= pageCount {
@@ -122,14 +146,16 @@ struct BookPageNumbering: Equatable {
 
     /// Om Gå till sida ska be om bokens nummer.
     var usesBookNumbers: Bool {
-        source != .file
+        source != .file && source != .fileConfirmed
     }
 
     /// Kort beskrivning till rutan Bokens sidnummer.
     var summary: String {
         switch source {
         case .file:
-            return "Nu används filens egna sidnummer."
+            return "Bokens sidnummer är inte inställt. Sidraden visar filens sidnummer, och citaten får ingen sida."
+        case .fileConfirmed:
+            return "Filens sidnummer används som bokens."
         case .pdfLabels:
             return "Nu används sidnumren som står i PDF:en."
         case let .offset(first, spread):
@@ -140,10 +166,54 @@ struct BookPageNumbering: Equatable {
     }
 }
 
+/// Förslag ur sidornas text (D4-1): tryckta sidnummer överst eller nederst på sidorna i PDF:ens textlager.
+/// Bara ett förslag som läsaren bekräftar i Bokens sidnummer, det skrivs aldrig in av sig självt.
+enum PrintedPageNumbers {
+
+    /// Fristående tal (1 till 4 siffror) först eller sist på sidans två första och två sista rader.
+    static func candidates(in text: String) -> [Int] {
+        let lines = text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return [] }
+        var edges = Array(lines.prefix(2))
+        edges += lines.suffix(2)
+        var result: [Int] = []
+        for line in edges where line.count <= 90 {
+            let words = line.split(separator: " ")
+            for word in [words.first, words.last].compactMap({ $0 }) {
+                if word.count <= 4, word.allSatisfy(\.isNumber), let number = Int(word), number > 0, !result.contains(number) {
+                    result.append(number)
+                }
+            }
+        }
+        return result
+    }
+
+    /// Bokens sida för filens första sida, ur talen på varje sida (index i filen). Minst tre sidor och minst
+    /// hälften av sidorna med tal ska ge samma förskjutning.
+    static func firstPage(_ pages: [(index: Int, numbers: [Int])]) -> (first: Int, votes: Int)? {
+        var votes: [Int: Int] = [:]
+        var pagesWithNumbers = 0
+        for page in pages where !page.numbers.isEmpty {
+            pagesWithNumbers += 1
+            for first in Set(page.numbers.map { $0 - page.index }) where first >= 1 {
+                votes[first, default: 0] += 1
+            }
+        }
+        guard let best = votes.max(by: { $0.value < $1.value || ($0.value == $1.value && $0.key > $1.key) }),
+              best.value >= 3, best.value * 2 >= pagesWithNumbers else {
+            return nil
+        }
+        return (best.key, best.value)
+    }
+}
+
 /// Det som sparas per bok för sidnummer (K2) och citat (K3), i tabellen `book_info` i markeringar.sqlite
 /// (steg 6 i trappan). Följer med i säkerhetskopian, eftersom hela databasen kopieras.
 struct BookInfo: Equatable {
-    /// 0 automatiskt, -1 PDF:ens egna nummer, större än 0 bokens sida för filens första sida.
+    /// Sättet för sidnumren: se `BookPageNumbering.notChosen`, `fileNumbers` och `labelNumbers`, eller större
+    /// än 0 för bokens sida för filens första sida.
     var pageFirst = 0
     var pageSpread = false
     /// Bokinfo till citaten. Tomma fält fylls i från bokens titel och författare (B1) eller EPUB:en.

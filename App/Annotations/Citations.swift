@@ -273,16 +273,21 @@ final class CitationViewController: UIViewController, UIPopoverPresentationContr
     private let book: Book
     private let text: String
     private let page: String?
+    /// Varför citatet saknar sida (D4-1), och knappen till Bokens sidnummer i PDF.
+    private let pageHint: String?
+    private let onSetPages: (() -> Void)?
     private let stack = UIStackView()
     private let scroll = UIScrollView()
 
     /// Det som kopierades senast, till självtestet.
     private(set) static var lastCopied = ""
 
-    init(book: Book, text: String, page: String?) {
+    init(book: Book, text: String, page: String?, pageHint: String? = nil, onSetPages: (() -> Void)? = nil) {
         self.book = book
         self.text = text
         self.page = page
+        self.pageHint = pageHint
+        self.onSetPages = onSetPages
         super.init(nibName: nil, bundle: nil)
         title = "Kopiera som citat"
     }
@@ -291,10 +296,12 @@ final class CitationViewController: UIViewController, UIPopoverPresentationContr
         fatalError("init(coder:) används inte")
     }
 
-    static func present(book: Book, text: String, page: String?, from presenter: UIViewController,
+    static func present(book: Book, text: String, page: String?, pageHint: String? = nil,
+                        onSetPages: (() -> Void)? = nil, from presenter: UIViewController,
                         sourceView: UIView, sourceRect: CGRect) {
         guard presenter.presentedViewController == nil else { return }
-        let controller = CitationViewController(book: book, text: text, page: page)
+        let controller = CitationViewController(book: book, text: text, page: page, pageHint: pageHint,
+                                                onSetPages: onSetPages)
         let navigation = UINavigationController(rootViewController: controller)
         if presenter.traitCollection.horizontalSizeClass == .regular {
             navigation.modalPresentationStyle = .popover
@@ -377,7 +384,8 @@ final class CitationViewController: UIViewController, UIPopoverPresentationContr
         infoLabel.numberOfLines = 0
         infoLabel.font = .preferredFont(forTextStyle: .footnote)
         infoLabel.textColor = palette.inkSoft
-        let pageText = page.map { "Sida \($0) i boken." } ?? "Ingen sida (EPUB och text har inga fasta sidor)."
+        let pageText = page.map { "Sida \($0) i boken." }
+            ?? pageHint ?? "Ingen sida (EPUB och text har inga fasta sidor)."
         infoLabel.text = "Bokinfo: " + Citation.reference(.harvard, source: source) + "\n" + pageText
         let edit = button("Ändra bokinfo", filled: false) { [weak self] in
             guard let self = self else { return }
@@ -385,7 +393,16 @@ final class CitationViewController: UIViewController, UIPopoverPresentationContr
                 self?.rebuild()
             }
         }
-        let infoRow = UIStackView(arrangedSubviews: [infoLabel, edit])
+        var infoViews: [UIView] = [infoLabel, edit]
+        if page == nil, let onSetPages = onSetPages {
+            let pages = button("Ställ in bokens sidnummer", filled: false) { [weak self] in
+                self?.dismiss(animated: true) {
+                    onSetPages()
+                }
+            }
+            infoViews.insert(pages, at: 1)
+        }
+        let infoRow = UIStackView(arrangedSubviews: infoViews)
         infoRow.axis = .vertical
         infoRow.alignment = .leading
         infoRow.spacing = 6
