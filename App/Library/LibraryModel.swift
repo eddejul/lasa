@@ -15,6 +15,21 @@ struct ReadingStatus: Equatable {
     var chapterLeft: Int = -1
 }
 
+extension Book {
+
+    /// Titeln som biblioteket och läsarens menyrad visar (B1): läsarens egen, bokens egen ur filen, annars
+    /// filnamnet utan understreck.
+    var displayTitle: String {
+        BookRegistry.shared.record(id: id)?.displayTitle ?? BookRecord.cleanedTitle(title)
+    }
+
+    /// Titeln läsaren skrivit själv med Byt namn, nil om ingen.
+    var customTitle: String? {
+        guard let custom = BookRegistry.shared.record(id: id)?.customTitle, !custom.isEmpty else { return nil }
+        return custom
+    }
+}
+
 /// En bok som biblioteket visar den: titel, författare, andel läst, när den lästes senast och kurser.
 struct ShelfItem: Equatable {
     let book: Book

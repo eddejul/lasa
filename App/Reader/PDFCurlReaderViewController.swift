@@ -131,7 +131,7 @@ final class PDFCurlReaderViewController: UIViewController {
         let saved = LibraryStore.shared.savedPageIndex(for: book)
         self.currentIndex = min(max(saved, 0), document.pageCount - 1)
         super.init(nibName: nil, bundle: nil)
-        title = book.title
+        title = book.displayTitle
         navigationItem.largeTitleDisplayMode = .never
     }
 

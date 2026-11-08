@@ -144,7 +144,7 @@ final class ReflowReaderViewController: UIViewController {
         self.book = book
         self.location = LibraryStore.shared.savedLocation(for: book) ?? ReflowLocation(chapter: 0, progression: 0)
         super.init(nibName: nil, bundle: nil)
-        title = book.title
+        title = book.displayTitle
         navigationItem.largeTitleDisplayMode = .never
     }
 
@@ -265,7 +265,7 @@ final class ReflowReaderViewController: UIViewController {
             if location.chapter < 0 || location.chapter >= content.chapters.count {
                 location = ReflowLocation(chapter: 0, progression: 0)
             }
-            title = content.title
+            title = book.customTitle ?? content.title
             let renderer = ReflowRenderer(book: content, host: webHost, theme: theme)
             renderer.onChapterMeasured = { [weak self] chapter in
                 self?.chapterMeasured(chapter)
