@@ -226,6 +226,32 @@ final class AnnotationStore {
             );
             CREATE INDEX IF NOT EXISTS reading_log_book ON reading_log (book);
             """,
+        // Steg 8 (K12): anteckningarna bredvid texten, en per bok och sida (PDF) eller kapitel (EPUB och text).
+        """
+            CREATE TABLE IF NOT EXISTS page_notes (
+                book TEXT NOT NULL,
+                section INTEGER NOT NULL,
+                text TEXT NOT NULL DEFAULT '',
+                created REAL NOT NULL,
+                updated REAL NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (book, section)
+            );
+            """,
+        // Steg 9 (K8): begreppsregistret, begrepp och definition per bok, och markeringen det skapades från.
+        """
+            CREATE TABLE IF NOT EXISTS concepts (
+                id TEXT PRIMARY KEY,
+                book TEXT NOT NULL,
+                term TEXT NOT NULL,
+                definition TEXT NOT NULL DEFAULT '',
+                highlight TEXT NOT NULL DEFAULT '',
+                created REAL NOT NULL,
+                updated REAL NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS concepts_book ON concepts (book);
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.

@@ -93,6 +93,11 @@ struct NotebookEntry: Equatable {
     let chapter: String
     /// Bokens sidnummer (K2), eller nil i EPUB och text.
     let page: String?
+    /// K12: en anteckning bredvid texten (till en sida eller ett kapitel), inte en markering. Texten ligger i
+    /// `highlight.text`, och id:t börjar med `pageNotePrefix`.
+    var isPageNote = false
+
+    static let pageNotePrefix = "sidanteckning:"
 }
 
 /// Filter och gruppering i anteckningsboken (K1). Ren logik (G13).
@@ -114,8 +119,8 @@ enum NotebookLogic {
     static func filter(_ entries: [NotebookEntry], _ filter: Filter) -> [NotebookEntry] {
         let query = FoldedText(filter.query.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).text as String
         return entries.filter { entry in
-            if !filter.colors.isEmpty, !filter.colors.contains(entry.highlight.color) { return false }
-            if filter.notesOnly, !entry.highlight.hasNote { return false }
+            if !filter.colors.isEmpty, entry.isPageNote || !filter.colors.contains(entry.highlight.color) { return false }
+            if filter.notesOnly, !entry.highlight.hasNote, !entry.isPageNote { return false }
             if let books = filter.books, !books.contains(entry.bookID) { return false }
             if !query.isEmpty {
                 let haystack = FoldedText((entry.highlight.text + " " + entry.highlight.note + " " + entry.chapter) as NSString).text as String
@@ -269,8 +274,19 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
         colorNames = HighlightColorNames.all()
         switch scope {
         case let .book(book, chapter, page):
-            entries = AnnotationStore.shared.highlights(book: book.id).map {
+            var list = AnnotationStore.shared.highlights(book: book.id).map {
                 NotebookEntry(highlight: $0, bookID: book.id, bookTitle: book.title, chapter: chapter($0), page: page($0))
+            }
+            // K12: anteckningarna bredvid texten, först på sin sida.
+            for note in PageNoteStore.shared.notes(book: book.id) {
+                let highlight = Highlight(id: NotebookEntry.pageNotePrefix + String(note.section), book: book.id,
+                                          section: note.section, start: -1, length: 0, text: note.text, color: .yellow,
+                                          note: "", created: note.updated, updated: note.updated)
+                list.append(NotebookEntry(highlight: highlight, bookID: book.id, bookTitle: book.title,
+                                          chapter: chapter(highlight), page: page(highlight), isPageNote: true))
+            }
+            entries = list.sorted {
+                ($0.highlight.section, $0.highlight.start) < ($1.highlight.section, $1.highlight.start)
             }
         case .all:
             courses = CourseStore.shared.courses()
@@ -429,14 +445,19 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
         content.text = "”\(Citation.cleanQuote(entry.highlight.text))”"
         content.textProperties.font = Theme.serif(.body)
         content.textProperties.color = palette.ink
-        let colorName = colorNames[entry.highlight.color] ?? entry.highlight.color.title
+        let colorName = entry.isPageNote ? "Anteckning bredvid texten"
+            : colorNames[entry.highlight.color] ?? entry.highlight.color.title
+        if entry.isPageNote {
+            content.text = entry.highlight.text
+            content.textProperties.font = .preferredFont(forTextStyle: .body)
+        }
         var detail = entry.highlight.hasNote ? entry.highlight.note : ""
         detail += (detail.isEmpty ? "" : "\n") + colorName
         content.secondaryText = detail
         content.secondaryTextProperties.color = palette.inkSoft
         content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-        content.image = UIImage(systemName: "circle.fill")
-        content.imageProperties.tintColor = entry.highlight.color.solid
+        content.image = UIImage(systemName: entry.isPageNote ? "square.and.pencil" : "circle.fill")
+        content.imageProperties.tintColor = entry.isPageNote ? palette.inkSoft : entry.highlight.color.solid
         content.imageProperties.maximumSize = CGSize(width: 12, height: 12)
         content.textToSecondaryTextVerticalPadding = 6
         cell.contentConfiguration = content

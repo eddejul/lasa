@@ -28,6 +28,10 @@ final class ReaderChrome {
         var bookInfo: Selector? = nil
         /// K1: anteckningsboken.
         var notebook: Selector? = nil
+        /// K12: anteckningarna bredvid texten.
+        var sideNotes: Selector? = nil
+        /// K8: begreppsregistret.
+        var concepts: Selector? = nil
     }
 
     let contentsItem: UIBarButtonItem
@@ -192,6 +196,18 @@ final class ReaderChrome {
             study.append(UIAction(title: "Anteckningsbok", image: UIImage(systemName: "text.book.closed")) {
                 [weak self] _ in
                 self?.send(notebook)
+            })
+        }
+        if let concepts = actions.concepts {
+            study.append(UIAction(title: "Begrepp", image: UIImage(systemName: "textformat.abc")) {
+                [weak self] _ in
+                self?.send(concepts)
+            })
+        }
+        if let sideNotes = actions.sideNotes {
+            study.append(UIAction(title: "Anteckningar bredvid texten", image: UIImage(systemName: "sidebar.right")) {
+                [weak self] _ in
+                self?.send(sideNotes)
             })
         }
         if let bookPages = actions.bookPages {

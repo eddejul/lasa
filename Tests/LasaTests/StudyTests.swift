@@ -191,6 +191,34 @@ final class StudyTests: XCTestCase {
         XCTAssertEqual(word, "sensus-o-sv-etos\tetos\tKaraktär<br><br><i>Talarens etos.</i>\tSensus ord svenska Bok")
     }
 
+    // MARK: K8 och K12
+
+    func testConceptTermsAndDefinitions() {
+        XCTAssertEqual(ConceptLogic.term(from: "ethos."), "ethos")
+        XCTAssertEqual(ConceptLogic.term(from: "Retoriken bygger på det sannolika och rimliga"), "Retoriken bygger på det")
+        XCTAssertEqual(ConceptLogic.suggestedDefinition(text: "ethos", note: " Talarens karaktär ", term: "ethos"),
+                       "Talarens karaktär")
+        XCTAssertEqual(ConceptLogic.suggestedDefinition(text: "ethos", note: "", term: "ethos"), "")
+        let now = Date()
+        let list = [Concept(id: "1", book: "b", term: "pathos", definition: "", highlight: "", created: now, updated: now),
+                    Concept(id: "2", book: "b", term: "Ethos", definition: "", highlight: "", created: now, updated: now)]
+        XCTAssertEqual(ConceptLogic.sorted(list).map(\.term), ["Ethos", "pathos"])
+    }
+
+    func testPageNotesInTheNotebook() {
+        let highlight = Highlight(id: NotebookEntry.pageNotePrefix + "3", book: "b", section: 3, start: -1, length: 0,
+                                  text: "Fråga till seminariet", color: .yellow, note: "", created: Date(), updated: Date())
+        let note = NotebookEntry(highlight: highlight, bookID: "b", bookTitle: "Bok", chapter: "", page: "65", isPageNote: true)
+        var filter = NotebookLogic.Filter()
+        filter.notesOnly = true
+        XCTAssertEqual(NotebookLogic.filter([note], filter).count, 1)
+        filter.notesOnly = false
+        filter.colors = [.yellow]
+        XCTAssertEqual(NotebookLogic.filter([note], filter).count, 0)
+        // Anteckningarna bredvid texten blir inga Anki-kort.
+        XCTAssertFalse(AnkiFormat.highlightsFile([], colorNames: [:]).contains("sidanteckning"))
+    }
+
     // MARK: Trappan
 
     /// Edvins data: en databas i den form main har i dag (steg 5) går genom de nya stegen utan att något
@@ -238,6 +266,22 @@ final class StudyTests: XCTestCase {
         var log = ""
         try db.query("SELECT COUNT(*), SUM(seconds) FROM reading_log") { log = "\($0.int(0))|\($0.double(1))" }
         XCTAssertEqual(log, "1|42.0")
+        // Steg 8 (K12) och steg 9 (K8).
+        try db.execute("INSERT INTO page_notes (book, section, text, created, updated, deleted) VALUES ('bok', 3, 'Fråga', 1, 1, 0)")
+        try db.execute("""
+            INSERT INTO page_notes (book, section, text, created, updated, deleted) VALUES ('bok', 3, 'Ny fråga', 1, 2, 0)
+            ON CONFLICT(book, section) DO UPDATE SET text = excluded.text, updated = excluded.updated
+            """)
+        var notes = ""
+        try db.query("SELECT COUNT(*), MAX(text) FROM page_notes") { notes = "\($0.int(0))|\($0.string(1))" }
+        XCTAssertEqual(notes, "1|Ny fråga")
+        try db.execute("""
+            INSERT INTO concepts (id, book, term, definition, highlight, created, updated, deleted)
+            VALUES ('k', 'bok', 'ethos', 'Talarens karaktär', 'm', 1, 1, 0)
+            """)
+        var concept = ""
+        try db.query("SELECT term, definition FROM concepts WHERE book = 'bok'") { concept = "\($0.string(0))|\($0.string(1))" }
+        XCTAssertEqual(concept, "ethos|Talarens karaktär")
         // Trappan körd en gång till gör ingenting.
         let again = try db.migrate(AnnotationStore.migrations)
         XCTAssertEqual(again.from, again.to)

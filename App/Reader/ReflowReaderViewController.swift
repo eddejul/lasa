@@ -68,7 +68,8 @@ final class ReflowReaderViewController: UIViewController {
         return ReaderChrome(controller: self, bottomBar: bottomBar, readerItem: text, theme: theme,
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
-                                           bookInfo: #selector(showBookInfo), notebook: #selector(showNotebook)),
+                                           bookInfo: #selector(showBookInfo), notebook: #selector(showNotebook),
+                                           sideNotes: #selector(toggleSideNotes), concepts: #selector(showConcepts)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -84,6 +85,8 @@ final class ReflowReaderViewController: UIViewController {
     private var pressedWord: PressedWord?
     /// Markeringsradens ruta senast den visades (U5), till självtestet.
     private var lastMarkMenuAnchor: CGRect?
+    /// K12: anteckningarna bredvid texten, när panelen är framme.
+    fileprivate var sideNotes: SideNotesPanel?
     private var wordQueryRunning = false
     private var queuedWordPoint: CGPoint?
     private var pressEnded = false
@@ -214,6 +217,7 @@ final class ReflowReaderViewController: UIViewController {
         super.viewWillDisappear(animated)
         guard isMovingFromParent else { return }
         ReadingLog.shared.pause()
+        sideNotes?.saveNow()
         if let renderer = renderer {
             var line = "Stängde \(book.url.lastPathComponent): \(renderer.statsSummary)"
             if let first = renderer.firstSnapshotAt {
@@ -748,6 +752,13 @@ final class ReflowReaderViewController: UIViewController {
         }
         reportReadingStatus(content: content, renderer: renderer)
         logReading(content: content)
+        updateSideNotes()
+    }
+
+    /// K12: anteckningen för kapitlet som syns. EPUB och text har inga fasta sidor, så en per kapitel.
+    fileprivate func updateSideNotes() {
+        guard let panel = sideNotes else { return }
+        panel.show(book: bookKey, section: currentChapter, title: chapterName(currentChapter))
     }
 
     /// K10: sidorna som syns, till läsloggen (bara i minnet, databasen skrivs högst en gång i minuten).
@@ -1406,6 +1417,9 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
                 return false
             }
             if let bar = markBar, touched.isDescendant(of: bar) {
+                return false
+            }
+            if let panel = sideNotes, touched.isDescendant(of: panel) {
                 return false
             }
             // Knappar på bladet, som Försök igen när ett kapitel inte kunde visas (G2).
@@ -2133,6 +2147,10 @@ extension ReflowReaderViewController {
             HighlightLookUp.present(highlight, book: self.book, pageIndex: pageIndex, from: self,
                                     sourceView: self.view, sourceRect: anchor)
         }
+        menu.onConcept = { [weak self] in
+            guard let self = self, let current = AnnotationStore.shared.highlight(id: id) else { return }
+            ConceptEditor.add(from: current, presenter: self)
+        }
         menu.onCite = { [weak self] in
             guard let self = self, let current = AnnotationStore.shared.highlight(id: id) else { return }
             // EPUB och text har inga fasta sidor, så citatet får ingen sida.
@@ -2180,6 +2198,35 @@ extension ReflowReaderViewController {
         bookmarkItem?.image = UIImage(systemName: marked ? "bookmark.fill" : "bookmark")
         bookmarkItem?.accessibilityValue = marked ? "Sidan har ett bokmärke" : "Inget bokmärke"
         chrome.updateBookmark(marked)
+    }
+
+    /// K12: panelen Anteckningar bredvid texten, av och på i Mer.
+    @objc fileprivate func toggleSideNotes() {
+        if let panel = sideNotes {
+            panel.remove()
+            sideNotes = nil
+            return
+        }
+        let panel = SideNotesPanel()
+        panel.onClose = { [weak self] in
+            self?.toggleSideNotes()
+        }
+        SideNotesPanel.install(panel, in: view)
+        sideNotes = panel
+        updateSideNotes()
+    }
+
+    /// K8: begreppsregistret. Ett tryck på ett begrepp söker efter det i boken.
+    @objc fileprivate func showConcepts() {
+        guard presentedViewController == nil else { return }
+        let list = ConceptsViewController(book: book)
+        list.onSearch = { [weak self] term in
+            self?.lastQuery = term
+            self?.showSearch()
+        }
+        let navigation = UINavigationController(rootViewController: list)
+        navigation.modalPresentationStyle = traitCollection.userInterfaceIdiom == .pad ? .formSheet : .pageSheet
+        present(navigation, animated: true)
     }
 
     /// K3: Bokinfo för citat i Mer. EPUB fyller i år och förlag själv.
@@ -2333,7 +2380,11 @@ extension ReflowReaderViewController {
             nil
         }))
         notebook.onSelect = { [weak self] highlight in
-            self?.openAnnotation(.highlights, id: highlight.id)
+            if highlight.id.hasPrefix(NotebookEntry.pageNotePrefix) {
+                self?.hop(to: ReflowLocation(chapter: highlight.section, progression: 0))
+            } else {
+                self?.openAnnotation(.highlights, id: highlight.id)
+            }
         }
         let navigation = UINavigationController(rootViewController: notebook)
         navigation.modalPresentationStyle = traitCollection.userInterfaceIdiom == .pad ? .formSheet : .pageSheet

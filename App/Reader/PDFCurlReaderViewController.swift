@@ -40,7 +40,8 @@ final class PDFCurlReaderViewController: UIViewController {
                                            goToPage: #selector(showGoToPage), zoom: #selector(zoomCurrentPage),
                                            thumbnails: #selector(showThumbnails),
                                            bookPages: #selector(showBookPages), bookInfo: #selector(showBookInfo),
-                                           notebook: #selector(showNotebook)),
+                                           notebook: #selector(showNotebook), sideNotes: #selector(toggleSideNotes),
+                                           concepts: #selector(showConcepts)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -59,6 +60,8 @@ final class PDFCurlReaderViewController: UIViewController {
     private var pressedWord: PressedWord?
     /// Markeringsradens ruta senast den visades (U5), till självtestet.
     private var lastMarkMenuAnchor: CGRect?
+    /// K12: anteckningarna bredvid texten, när panelen är framme.
+    fileprivate var sideNotes: SideNotesPanel?
     /// Bubblan ovanför fingret när ett ord hålls (G12, gemensam med den andra läsaren).
     private lazy var wordBubble = WordBubble(host: view)
 
@@ -209,6 +212,7 @@ final class PDFCurlReaderViewController: UIViewController {
         super.viewWillDisappear(animated)
         guard isMovingFromParent else { return }
         ReadingLog.shared.pause()
+        sideNotes?.saveNow()
         AppLog.shared.write("Stängde \(book.url.lastPathComponent): \(renderer.statsSummary) Appen använder "
                             + String(format: "%.0f MB.", MemoryUsage.megabytes))
         SyncEngine.shared.syncSoon()
@@ -579,6 +583,15 @@ final class PDFCurlReaderViewController: UIViewController {
         }
         reportReadingStatus(indices)
         logReading(indices)
+        updateSideNotes()
+    }
+
+    /// K12: anteckningen för sidan som syns (den vänstra i ett uppslag).
+    fileprivate func updateSideNotes() {
+        guard let panel = sideNotes else { return }
+        let indices = visibleIndices.isEmpty ? [currentIndex] : visibleIndices
+        let index = indices.min() ?? currentIndex
+        panel.show(book: bookKey, section: index, title: placeLabel(index))
     }
 
     /// K10: sidorna som syns, till läsloggen (bara i minnet, databasen skrivs högst en gång i minuten).
@@ -919,6 +932,35 @@ final class PDFCurlReaderViewController: UIViewController {
         present(alert, animated: true)
     }
 
+    /// K12: panelen Anteckningar bredvid texten, av och på i Mer.
+    @objc fileprivate func toggleSideNotes() {
+        if let panel = sideNotes {
+            panel.remove()
+            sideNotes = nil
+            return
+        }
+        let panel = SideNotesPanel()
+        panel.onClose = { [weak self] in
+            self?.toggleSideNotes()
+        }
+        SideNotesPanel.install(panel, in: view)
+        sideNotes = panel
+        updateSideNotes()
+    }
+
+    /// K8: begreppsregistret. Ett tryck på ett begrepp söker efter det i boken.
+    @objc fileprivate func showConcepts() {
+        guard presentedViewController == nil else { return }
+        let list = ConceptsViewController(book: book)
+        list.onSearch = { [weak self] term in
+            self?.lastQuery = term
+            self?.showSearch()
+        }
+        let navigation = UINavigationController(rootViewController: list)
+        navigation.modalPresentationStyle = traitCollection.userInterfaceIdiom == .pad ? .formSheet : .pageSheet
+        present(navigation, animated: true)
+    }
+
     /// K3: Bokinfo för citat i Mer.
     @objc fileprivate func showBookInfo() {
         guard presentedViewController == nil else { return }
@@ -1227,6 +1269,9 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
             return false
         }
         if let bar = markBar, let touched = touch.view, touched.isDescendant(of: bar) {
+            return false
+        }
+        if let panel = sideNotes, let touched = touch.view, touched.isDescendant(of: panel) {
             return false
         }
         if gestureRecognizer === markDrag {
@@ -1647,6 +1692,10 @@ extension PDFCurlReaderViewController {
             HighlightLookUp.present(highlight, book: self.book, pageIndex: highlight.section, from: self,
                                     sourceView: self.view, sourceRect: anchor)
         }
+        menu.onConcept = { [weak self] in
+            guard let self = self, let current = AnnotationStore.shared.highlight(id: id) else { return }
+            ConceptEditor.add(from: current, presenter: self)
+        }
         menu.onCite = { [weak self] in
             guard let self = self, let current = AnnotationStore.shared.highlight(id: id) else { return }
             CitationViewController.present(book: self.book, text: current.text, page: self.citationPage(for: current),
@@ -1782,7 +1831,11 @@ extension PDFCurlReaderViewController {
             self?.citationPage(for: highlight)
         }))
         notebook.onSelect = { [weak self] highlight in
-            self?.openAnnotation(.highlights, id: highlight.id)
+            if highlight.id.hasPrefix(NotebookEntry.pageNotePrefix) {
+                self?.hop(to: highlight.section)
+            } else {
+                self?.openAnnotation(.highlights, id: highlight.id)
+            }
         }
         let navigation = UINavigationController(rootViewController: notebook)
         navigation.modalPresentationStyle = traitCollection.userInterfaceIdiom == .pad ? .formSheet : .pageSheet

@@ -91,6 +91,7 @@ enum AnkiExport {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Anki", isDirectory: true)
         try? FileManager.default.removeItem(at: folder)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let highlights = highlights.filter { !$0.isPageNote }
         if !highlights.isEmpty {
             let url = folder.appendingPathComponent("Sensus markeringar (Lucktext).txt")
             let text = AnkiFormat.highlightsFile(highlights, colorNames: HighlightColorNames.all())

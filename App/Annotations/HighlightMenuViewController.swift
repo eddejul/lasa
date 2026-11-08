@@ -13,6 +13,8 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
     var onLookUp: (() -> Void)?
     /// K3: Kopiera som citat. Läsaren visar rutan med citatstilarna.
     var onCite: (() -> Void)?
+    /// K8: gör markeringen till ett begrepp i bokens register.
+    var onConcept: (() -> Void)?
 
     private let highlight: Highlight
     private var colorButtons: [HighlightColor: UIButton] = [:]
@@ -131,6 +133,12 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
             }
         }
         cite.accessibilityLabel = "Kopiera som citat"
+        let concept = actionButton("Begrepp", symbol: "textformat.abc", color: palette.ink) { [weak self] in
+            self?.dismiss(animated: true) {
+                self?.onConcept?()
+            }
+        }
+        concept.accessibilityLabel = "Lägg till som begrepp"
         let lookUp = actionButton("Slå upp", symbol: "character.book.closed", color: palette.ink) { [weak self] in
             self?.dismiss(animated: true) {
                 self?.onLookUp?()
@@ -145,6 +153,9 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
         var actionViews = [note, copy]
         if onCite != nil {
             actionViews.append(cite)
+        }
+        if onConcept != nil {
+            actionViews.append(concept)
         }
         if onLookUp != nil {
             actionViews.append(lookUp)
