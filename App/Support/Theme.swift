@@ -48,11 +48,15 @@ enum Theme {
 
     static func palette(for theme: ReaderTheme) -> Palette {
         switch theme {
+        // Edvin 8 nov: knappar, sidraden och tidslinjen var för blå. Accenten är nu neutral som i Apple Books:
+        // mörkgrå på ljust papper (cirka 11:1 mot sidan), ljusgrå på mörkt (cirka 10:1). Apple Books värden är
+        // inte publicerade. Ur App Store-bilderna uppmättes ungefär vitt med svart text (Original) och #4A4A4D
+        // (Quiet), så värdena här är ungefärliga.
         case .paper, .white:
             return Palette(canvas: hex(0xF6F2EA), surface: hex(0xFFFDF8), surfaceSunk: hex(0xEEE8DD),
                            page: theme == .white ? .white : hex(0xFBF8F2),
                            ink: hex(0x1E1C19), inkSoft: hex(0x5F5950), inkFaint: hex(0x9A9387), rule: hex(0xE2DBCF),
-                           accent: hex(0x2D5B84), accentSoft: hex(0xE3ECF4), ribbon: hex(0xB4432F),
+                           accent: hex(0x3A3936), accentSoft: hex(0xEAE6DF), ribbon: hex(0xB4432F),
                            success: hex(0x3E7B57), warning: hex(0xB7791F), isDark: false)
         case .sepia:
             return Palette(canvas: hex(0xEFE5D0), surface: hex(0xF8F0DF), surfaceSunk: hex(0xE6D9BF),
@@ -64,7 +68,7 @@ enum Theme {
             return Palette(canvas: hex(0x141311), surface: hex(0x211F1C), surfaceSunk: hex(0x2B2925),
                            page: hex(0x1C1C1C),
                            ink: hex(0xE8E3DA), inkSoft: hex(0xABA497), inkFaint: hex(0x6F695F), rule: hex(0x37342F),
-                           accent: hex(0x8DB4DC), accentSoft: hex(0x253446), ribbon: hex(0xD46A55),
+                           accent: hex(0xC9C6C0), accentSoft: hex(0x34322F), ribbon: hex(0xD46A55),
                            success: hex(0x7DBF95), warning: hex(0xE0A94F), isDark: true)
         }
     }

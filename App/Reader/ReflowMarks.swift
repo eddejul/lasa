@@ -38,7 +38,7 @@ enum ReflowMarks {
         css += """
         span.lasa-word {
           text-decoration: underline !important;
-          text-decoration-color: rgba(70, 120, 170, 0.75) !important;
+          text-decoration-color: rgba(128, 120, 108, 0.85) !important;
           text-decoration-thickness: 1.5px !important;
           text-underline-offset: 3px !important;
           -webkit-text-decoration-skip: none;
