@@ -157,6 +157,8 @@ enum GeminiClient {
                 result = .failure(Failure.invalidResponse)
             }
             DispatchQueue.main.async {
+                // A1: ordknappens anrop räknas bland dagens anrop. Frågan och svaret är oförändrade.
+                AIClient.recordWordButtonCall(status: (response as? HTTPURLResponse)?.statusCode)
                 if retryWithoutSchema {
                     let withSchema = prompt + "\n\nJSON-schema: " + (Self.jsonText(schema) ?? "")
                     send(prompt: withSchema, schema: schema, key: key, useSchema: false, completion: completion)
