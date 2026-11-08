@@ -69,6 +69,9 @@ final class BookImporter {
                 return book
             }
             let hash = try await Self.inBackground { try Self.hashFile(source) { _ in } }
+            if let book = await resolveVersion(at: source, hash: hash, presenter: presenter) {
+                return book
+            }
             return library.registerFile(at: source, hash: hash)
         }
 
@@ -120,16 +123,57 @@ final class BookImporter {
         if let keep = replaceKeeping {
             let old = library.scan().books.first { $0.path == name }
             // Granskningens fynd 7: bytet görs på en gång, och misslyckas det ligger den gamla filen kvar.
-            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+            // Granskning 2, N5: den nya filen kan i ovanliga fall få en annan adress, den som returneras gäller.
+            let replaced = try FileManager.default.replaceItemAt(destination, withItemAt: temporary) ?? destination
             if !keep, let old = old {
                 // Den gamla bokens rad och markeringar finns kvar, men den nya filen blir en ny bok.
                 BookRegistry.shared.markMissing(id: old.id)
             }
-            return library.registerFile(at: destination, hash: hash, asNew: !keep)
+            return library.registerFile(at: replaced, hash: hash, asNew: !keep)
         }
         try FileManager.default.moveItem(at: temporary, to: destination)
+        if let book = await resolveVersion(at: destination, hash: hash, presenter: presenter) {
+            return book
+        }
         return library.registerFile(at: destination, hash: hash)
     }
+
+    /// Granskning 2, N2: liknar filen en bok vars fil saknas (en platshållare från gamla appen, en borttagen bok
+    /// med samma namn, eller ett liknande namn) frågas Ny version av boken, i stället för att filen tyst tar över
+    /// den bokens markeringar. Behåll ger filen bokens id, Nej gör den till en ny bok. Nil: ingen fråga.
+    private func resolveVersion(at url: URL, hash: String, presenter: UIViewController?) async -> Book? {
+        guard let file = LibraryStore.shared.bookFile(at: url),
+              let question = BookRegistry.shared.importQuestion(for: file, hash: hash) else { return nil }
+        let keep = await askVersion(question, presenter: presenter)
+        AppLog.shared.write("Import av \(file.path) liknar \(question.record.file) (filen saknas): "
+                            + (keep ? "behåller markeringarna" : "ny bok"))
+        if keep {
+            BookRegistry.shared.answer(question, keep: true)
+            return LibraryStore.shared.book(at: url)
+        }
+        return LibraryStore.shared.registerFile(at: url, hash: hash, asNew: true)
+    }
+
+    private func askVersion(_ question: BookRegistry.VersionQuestion, presenter: UIViewController?) async -> Bool {
+        if SelfTest.isActive, let answer = Self.selfTestKeepVersion {
+            return answer
+        }
+        // Utan någon att fråga blir filen en ny bok: inget tas över tyst.
+        guard let presenter = presenter else { return false }
+        return await withCheckedContinuation { continuation in
+            let alert = UIAlertController(title: "Ny version av boken", message: question.message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Behåll markeringarna", style: .default) { _ in
+                continuation.resume(returning: true)
+            })
+            alert.addAction(UIAlertAction(title: "Nej, börja om", style: .default) { _ in
+                continuation.resume(returning: false)
+            })
+            Self.topmost(from: presenter).present(alert, animated: true)
+        }
+    }
+
+    /// Självtestet: svaret på frågan Ny version vid import, utan att trycka.
+    static var selfTestKeepVersion: Bool?
 
     private func update(_ job: UUID, fraction: Double) {
         guard let index = jobs.firstIndex(where: { $0.id == job }) else { return }

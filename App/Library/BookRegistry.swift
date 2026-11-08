@@ -129,10 +129,14 @@ enum BookMatcher {
                 return .known(id: record.id)
             }
             if record.sha256.isEmpty {
+                // En platshållare (storlek 0) för en bok som togs bort i gamla appen har ingen kontrollsumma att
+                // jämföra med. En fil med samma namn kan vara en annan bok, så frågan ställs (granskning 2, N2).
+                if record.size == 0 {
+                    return .newVersion(id: record.id)
+                }
                 // En bok från före G3 som inte hunnit räknas. Samma storlek: samma bok (filen har sparats om).
-                // En rad för en bok som inte fanns i Böcker vid flytten (storlek 0) är också samma bok.
                 // Annan storlek: filen har ersatts, och frågan om en ny version ställs (granskningens fynd 8).
-                if record.size == file.size || record.size == 0 {
+                if record.size == file.size {
                     return .known(id: record.id)
                 }
                 return .newVersion(id: record.id)
@@ -450,6 +454,10 @@ final class BookRegistry {
         var message: String {
             let old = record.file
             let new = file.path
+            if old == new, record.missing {
+                return "Det finns markeringar, anteckningar och en läsposition från en bok som hette \(old) och togs "
+                    + "bort. Är den nya filen samma bok? Då följer de med till den."
+            }
             if old == new {
                 return "Filen \(new) har ändrats. Ska markeringar, anteckningar och läsposition följa med till den "
                     + "nya versionen?"
@@ -556,8 +564,9 @@ final class BookRegistry {
             return id
         case .newVersion(let id):
             // Samma plats: filen har ersatts, och frågan ställdes vid importen. Den tar över bokens id,
-            // och markeringarnas rutor (G6) räknas om från den nya filen.
-            if var record = records.first(where: { $0.id == id }), record.file == file.path {
+            // och markeringarnas rutor (G6) räknas om från den nya filen. En bok vars fil saknas (en platshållare
+            // eller en borttagen bok) tas aldrig över utan frågan Ny version (`importQuestion`, granskning 2, N2).
+            if var record = records.first(where: { $0.id == id }), record.file == file.path, !record.missing {
                 store.clearRects(book: id)
                 record.sha256 = hash
                 record.size = file.size
@@ -575,6 +584,19 @@ final class BookRegistry {
             save([record])
             return record.id
         }
+    }
+
+    /// En fil som läggs in (G10) och som matchern säger kan vara en ny version av en bok vars fil saknas:
+    /// samma plats (en platshållare eller en borttagen bok) eller ett liknande namn. Då ställs frågan Ny version
+    /// i stället för att filen tyst tar över bokens markeringar (granskning 2, N2).
+    func importQuestion(for file: BookFile, hash: String) -> VersionQuestion? {
+        let present = Set(LibraryStore.shared.listFiles().files.map(\.path))
+        let records = self.records()
+        guard case .newVersion(let id) = BookMatcher.match(file, hash: hash, records: records, present: present),
+              let record = records.first(where: { $0.id == id }), record.missing || record.file != file.path else {
+            return nil
+        }
+        return VersionQuestion(file: file, hash: hash, record: record)
     }
 
     /// Lägger in en fil som en ny bok, även om en annan bok haft samma plats (Ersätt och börja om).
@@ -667,19 +689,29 @@ enum LegacyBookMigration {
         return done
     }
 
-    /// Filnamnen i gamla nycklar (`position.Bok.pdf` och så vidare). Längsta prefixet först, eftersom
-    /// `positionDate.` också börjar med `position.`.
-    static func legacyKeyNames(_ defaults: UserDefaults) -> Set<String> {
+    /// Filnamnen i gamla nycklar (`position.Bok.pdf` och så vidare) med de gamla prefix som finns för varje.
+    /// Längsta prefixet först, eftersom `positionDate.` också börjar med `position.`.
+    static func legacyKeys(_ defaults: UserDefaults) -> [String: Set<String>] {
         let prefixes = keyPairs.map { $0.old }.sorted { $0.count > $1.count }
-        var names = Set<String>()
+        var names: [String: Set<String>] = [:]
         for key in defaults.dictionaryRepresentation().keys {
             guard let prefix = prefixes.first(where: { key.hasPrefix($0) }) else { continue }
             let name = String(key.dropFirst(prefix.count))
             if !(name as NSString).pathExtension.isEmpty {
-                names.insert(name)
+                names[name, default: []].insert(prefix)
             }
         }
         return names
+    }
+
+    static func legacyKeyNames(_ defaults: UserDefaults) -> Set<String> {
+        Set(legacyKeys(defaults).keys)
+    }
+
+    /// Filnamn med en riktig läsposition (`position.` eller `location.`). En ensam `positionDate.`, som gamla
+    /// appens Ta bort lämnade kvar, är ingen läsposition och räknas inte som något att flytta (granskning 2, N4).
+    static func positionKeyNames(_ defaults: UserDefaults) -> Set<String> {
+        Set(legacyKeys(defaults).filter { $0.value.contains("position.") || $0.value.contains("location.") }.keys)
     }
 
     /// `book` i markeringar och bokmärken som inte är id:t för någon bok i registret (eller i `records`):
@@ -700,28 +732,31 @@ enum LegacyBookMigration {
         return names
     }
 
-    /// Boken som ett gammalt filnamn hör till: en bok som finns med samma plats, annars den enda bok som finns
-    /// med samma filnamn i en undermapp (en bok som flyttats till en mapp före första starten), annars den
-    /// senast tillagda saknade boken med samma plats.
-    static func target(forLegacyName name: String, records: [BookRecord]) -> BookRecord? {
+    /// Boken som ett gammalt filnamn hör till: en bok som finns med samma plats, annars den senast tillagda
+    /// saknade boken med samma plats. Vid första flytten (`firstMigration`) också den enda bok som finns med
+    /// samma filnamn i en undermapp (en bok som flyttats till en mapp före första starten). Senare kan det lika
+    /// gärna vara en annan bok med samma namn, så regeln gäller bara då (granskning 2, N3).
+    static func target(forLegacyName name: String, records: [BookRecord], firstMigration: Bool = true) -> BookRecord? {
         let present = records.filter { !$0.missing }
         if let exact = present.first(where: { $0.file == name }) {
             return exact
         }
-        let sameName = present.filter { ($0.file as NSString).lastPathComponent == name }
-        if sameName.count == 1 {
-            return sameName[0]
+        if firstMigration {
+            let sameName = present.filter { ($0.file as NSString).lastPathComponent == name }
+            if sameName.count == 1 {
+                return sameName[0]
+            }
         }
         return records.filter { $0.missing && $0.file == name }.max { $0.added < $1.added }
     }
 
-    /// Sant om något finns att flytta: markeringar eller bokmärken under ett filnamn, eller gamla nycklar
-    /// för en bok som finns i registret.
+    /// Sant om något finns att flytta: markeringar eller bokmärken under ett filnamn, eller en gammal
+    /// läsposition (`position.` eller `location.`). En ensam `positionDate.` räknas inte (N4).
     static func hasWork(db: SQLiteDatabase, records: [BookRecord], defaults: UserDefaults) -> Bool {
         if let orphans = try? orphanBooks(db, records: records), !orphans.isEmpty {
             return true
         }
-        return legacyKeyNames(defaults).contains { target(forLegacyName: $0, records: records) != nil }
+        return !positionKeyNames(defaults).isEmpty
     }
 
     /// Flyttar allt som hör till ett gammalt filnamn till bokens id. Markeringar och bokmärken för ett filnamn
@@ -735,13 +770,17 @@ enum LegacyBookMigration {
                     now: Date = Date()) throws -> Result {
         var result = Result()
         var records = records
+        let firstMigration = try !isDone(db)
         let rowNames = try orphanBooks(db, records: records)
+        let positionNames = positionKeyNames(defaults)
         var mapping: [String: BookRecord] = [:]
         var placeholders: [BookRecord] = []
-        for name in rowNames.union(legacyKeyNames(defaults)).sorted() {
-            if let record = target(forLegacyName: name, records: records) {
+        for name in rowNames.union(positionNames).sorted() {
+            if let record = target(forLegacyName: name, records: records, firstMigration: firstMigration) {
                 mapping[name] = record
-            } else if rowNames.contains(name) {
+            } else {
+                // Markeringar eller en läsposition för en bok som inte finns: en platshållare, så att de kommer
+                // tillbaka (med frågan Ny version, N2) om filen läggs in igen.
                 let title = ((name as NSString).lastPathComponent as NSString).deletingPathExtension
                 let placeholder = BookRecord(id: UUID().uuidString.lowercased(), sha256: "", file: name, title: title,
                                              size: 0, modified: 0, added: now.timeIntervalSince1970, missing: true)
@@ -784,7 +823,9 @@ enum LegacyBookMigration {
             try db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, '1')", [doneKey])
         }
         result.placeholders = placeholders.count
-        for name in mapping.keys {
+        // Alla gamla nycklar tas bort efteråt, också ensamma `positionDate.` utan läsposition (N4): de har
+        // inget mål och skulle annars ge en gammal tid till en annan bok med samma namn.
+        for name in Set(mapping.keys).union(legacyKeyNames(defaults)) {
             for pair in keyPairs {
                 defaults.removeObject(forKey: pair.old + name)
             }

@@ -14,6 +14,7 @@ enum LibrarySelfTest {
         guard let navigation = library.navigationController else { return }
         navigation.popToRootViewController(animated: false)
         testWave3Database()
+        await testPlaceholderImport(library: library)
 
         // Titlar, författare och omslag läses i bakgrunden. Vänta tills alla är klara (högst 20 s).
         library.reload()
@@ -128,6 +129,53 @@ enum LibrarySelfTest {
         library.showsEmptyForSelfTest = false
         library.reload()
         await pause(0.4)
+    }
+
+    /// Granskning 2, N2: en ny fil med samma namn som en bok som togs bort i gamla appen (en platshållare med
+    /// storlek 0 och utan kontrollsumma) tar inte tyst över dess markeringar. Nej ger en ny bok, Behåll ger
+    /// platshållarens id och markeringen.
+    static func testPlaceholderImport(library: LibraryViewController) async {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("platshallarprov", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var results: [String] = []
+        var allOK = true
+        for (name, keep) in [("PlatshallarprovA.md", false), ("PlatshallarprovB.md", true)] {
+            let placeholder = BookRecord(id: UUID().uuidString.lowercased(), sha256: "", file: name,
+                                         title: (name as NSString).deletingPathExtension, size: 0, modified: 0,
+                                         added: Date().timeIntervalSince1970, missing: true)
+            BookRegistry.shared.save([placeholder])
+            AnnotationStore.shared.addHighlight(book: placeholder.id, section: 0, start: 2, length: 5,
+                                                text: "Platshållare", color: .yellow)
+            let source = folder.appendingPathComponent(name)
+            try? Data("# \(name)\n\nEn annan bok med samma namn som en borttagen.\n".utf8).write(to: source)
+            BookImporter.selfTestKeepVersion = keep
+            let book: Book? = await withCheckedContinuation { continuation in
+                BookImporter.shared.start([source], move: true, presenter: library) { books in
+                    continuation.resume(returning: books.first)
+                }
+            }
+            BookImporter.selfTestKeepVersion = nil
+            let marks = AnnotationStore.shared.highlights(book: placeholder.id).count
+            let stillMissing = BookRegistry.shared.record(id: placeholder.id)?.missing ?? false
+            let ok: Bool
+            if keep {
+                ok = book?.id == placeholder.id && marks == 1 && !stillMissing
+                results.append("Behåll: \(book?.id == placeholder.id ? "platshållarens id" : "FEL, annat id"), "
+                               + "\(marks) markering")
+            } else {
+                ok = book != nil && book?.id != placeholder.id && stillMissing
+                results.append("Nej: \(book?.id != placeholder.id ? "ny bok" : "FEL, tog över platshållaren"), "
+                               + "platshållaren \(stillMissing ? "kvar som borttagen" : "FEL, används")")
+            }
+            allOK = allOK && ok
+            if let book = book {
+                try? LibraryStore.shared.delete(book)
+            }
+        }
+        try? FileManager.default.removeItem(at: folder)
+        library.reload()
+        SelfTest.log("Platshållare och ny fil med samma namn (N2): \(results.joined(separator: "; ")). "
+                     + (allOK ? "Rätt" : "FEL"))
     }
 
     /// Edvins riktiga data: en databas i den form våg 3 lämnade (version 3) med en bok, markeringar med rutor,

@@ -116,6 +116,18 @@ final class LibraryStore {
         return allBooks().first { $0.url.resolvingSymlinksInPath().standardizedFileURL.path == target }
     }
 
+    /// Filen i Böcker som den ser ut på disken, med sökvägen i Böcker.
+    func bookFile(at url: URL) -> BookFile? {
+        let listed = listFiles()
+        let target = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard let match = listed.urls.first(where: {
+            $0.value.resolvingSymlinksInPath().standardizedFileURL.path == target
+        }) else {
+            return nil
+        }
+        return listed.files.first { $0.path == match.key }
+    }
+
     /// Lägger in en fil som ligger i Böcker i registret, med kontrollsumman räknad (vid import, G10).
     /// `asNew`: filen blir en ny bok även om den ersatt en annan med samma namn (Ersätt och börja om).
     func registerFile(at url: URL, hash: String, asNew: Bool = false) -> Book? {
@@ -186,6 +198,8 @@ final class LibraryStore {
 
     /// En läsposition från en annan enhet. Tiden följer med, så att den inte skickas tillbaka som ny.
     func applySyncedPosition(section: Int, progression: Double, date: Date, for book: Book) {
+        // Granskning 2, N6: samma vakt som när läspositionen sparas. Utan registret är bokens id tillfälligt.
+        guard BookRegistry.shared.isAvailable else { return }
         if book.kind == .pdf {
             defaults.set(section, forKey: positionKey(for: book))
         } else {
