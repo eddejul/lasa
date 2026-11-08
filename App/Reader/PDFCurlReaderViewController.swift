@@ -2280,12 +2280,100 @@ extension PDFCurlReaderViewController {
         dismiss(animated: false)
         await pause(0.3)
 
+        await selfTestStudy()
         await selfTestFoldWork()
         await selfTestResumeCard()
 
         let after = AnnotationStore.shared.totalCounts()
         SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
         SelfTest.finish()
+    }
+
+    /// Våg 7 (Plugget): bokens sidnummer (K2), citatet (K3), anteckningsboken (K1), anteckningarna bredvid
+    /// texten (K12), begreppen (K8) och läsloggen (K10).
+    fileprivate func selfTestStudy() async {
+        // K2: förskjutningen gör filens sida 1 till bokens sida 63, och Gå till sida 70 hittar filens sida 8.
+        let originalInfo = BookInfoStore.shared.info(book: bookKey)
+        SelfTest.log("Bokens sidnummer (K2) från början: \(pageNumbering.summary) Sidraden: \(pageText(for: [0]))")
+        var info = originalInfo
+        info.pageFirst = 63
+        info.pageSpread = false
+        applyBookPages(info)
+        let typed = pageIndex(forTyped: "70").map { "filens sida \($0 + 1)" } ?? "ingen"
+        SelfTest.log("Bokens sidnummer (K2) med 63: sidraden \(pageText(for: [0])), Gå till sida 70 ger \(typed) (ska vara filens sida 8), "
+                     + "bokmärkets namn \(pageName(2))")
+        info.pageSpread = true
+        applyBookPages(info)
+        SelfTest.log("Bokens sidnummer (K2) som uppslag: \(pageText(for: [1]))")
+        applyBookPages(originalInfo)
+
+        // K3: citatet för bokens första markering, i alla tre stilarna, och rutan.
+        if let highlight = AnnotationStore.shared.highlights(book: bookKey).first {
+            let source = CitationSources.source(for: book)
+            for style in CitationStyle.allCases {
+                SelfTest.log("Citat (K3) \(style.title): \(Citation.quote(highlight.text, style: style, source: source, page: citationPage(for: highlight)).prefix(160))")
+            }
+            CitationViewController.present(book: book, text: highlight.text, page: citationPage(for: highlight), from: self,
+                                           sourceView: view, sourceRect: CGRect(x: view.bounds.midX, y: 120, width: 2, height: 2))
+            await pause(0.9)
+            if let navigation = presentedViewController as? UINavigationController {
+                SelfTest.saveScreen(navigation.view, name: "12-citat")
+            } else {
+                SelfTest.log("FEL: citatrutan öppnades inte")
+            }
+            await dismissPresented()
+
+            // K8: ett begrepp ur markeringen, och registret.
+            let concept = ConceptStore.shared.add(book: bookKey, term: ConceptLogic.term(from: highlight.text),
+                                                  definition: "Självtestets definition", highlight: highlight.id)
+            showConcepts()
+            await pause(0.9)
+            if let navigation = presentedViewController as? UINavigationController,
+               let list = navigation.viewControllers.first as? ConceptsViewController {
+                SelfTest.log("Begrepp (K8): \(list.count) i registret, det nya heter \(concept.term)")
+                SelfTest.saveScreen(navigation.view, name: "12d-begrepp")
+            } else {
+                SelfTest.log("FEL: begreppsregistret öppnades inte")
+            }
+            await dismissPresented()
+        } else {
+            SelfTest.log("FEL: ingen markering att citera (K3)")
+        }
+
+        // K12: panelen bredvid texten, en anteckning till sidan som syns.
+        toggleSideNotes()
+        await pause(0.5)
+        if let panel = sideNotes {
+            panel.typeForSelfTest("Självtest: en fråga till sidan")
+            let saved = PageNoteStore.shared.note(book: bookKey, section: panel.shownSection)
+            SelfTest.log("Anteckningar bredvid texten (K12): sidan \(panel.shownSection + 1), sparat \"\(saved)\"")
+            SelfTest.saveScreen(view, name: "12c-bredvid")
+        } else {
+            SelfTest.log("FEL: panelen Anteckningar bredvid texten öppnades inte")
+        }
+        toggleSideNotes()
+        await pause(0.4)
+
+        // K1: anteckningsboken med markeringarna och anteckningen bredvid texten.
+        showNotebook()
+        await pause(1.0)
+        if let navigation = presentedViewController as? UINavigationController,
+           let notebook = navigation.viewControllers.first as? NotebookViewController {
+            SelfTest.log("Anteckningsbok (K1): \(notebook.visibleCount) rader, färgerna \(HighlightColorNames.all().values.sorted().joined(separator: ", "))")
+            SelfTest.saveScreen(navigation.view, name: "12b-anteckningsbok")
+        } else {
+            SelfTest.log("FEL: anteckningsboken öppnades inte")
+        }
+        await dismissPresented()
+
+        // K10: läsloggen sparas och de lästa delarna ritas på tidslinjen.
+        ReadingLog.shared.flush()
+        let today = ReadingWeek.dayKey(Date())
+        let day = ReadingLog.shared.days(from: today)[today]
+        updateReadRanges()
+        SelfTest.log("Läsloggen (K10): i dag \(day.map { "\(Int($0.seconds)) s och \($0.pages) sidor" } ?? "inget"), "
+                     + "\(bottomBar.slider.readRanges.count) lästa sträckor på tidslinjen")
+        SelfTest.saveScreen(view, name: "12e-tidslinje")
     }
 
     /// V4: hoppen sparar platsen man lämnade, Tillbaka tar dig dit och ett långt tryck visar de senaste.
