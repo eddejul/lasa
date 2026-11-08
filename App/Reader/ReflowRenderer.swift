@@ -102,6 +102,8 @@ final class ReflowRenderer {
     /// Självtestet: så många mätningar i följd av ett kapitel som ska misslyckas.
     private var simulatedFailures: [Int: Int] = [:]
     private var images: [ReflowPage: ReflowSnapshot] = [:]
+    /// Edvin 8 nov: en sidbild med bara papper (ingen text) tas om, högst två gånger per sida och stil.
+    private var blankRetries: [ReflowPage: Int] = [:]
     private var recentlyUsed: [ReflowPage] = []
     private var workingSet: [ReflowPage] = []
     private var waiting: [ReflowPage: [(ReflowSnapshot) -> Void]] = [:]
@@ -160,6 +162,7 @@ final class ReflowRenderer {
         styleKey = newStyleKey
         images.removeAll()
         recentlyUsed.removeAll()
+        blankRetries.removeAll()
 
         if layoutChanged {
             counts.removeAll()
@@ -390,12 +393,18 @@ final class ReflowRenderer {
             view.load(chapter: chapter, url: book.chapters[chapter].url, readAccess: book.rootDirectory)
         }
 
-        // Nyladdade kapitel delas i sidor, och kapitel med gammal stil får den nya.
-        for view in views where view.state == .loaded && !view.busy {
-            if view.layoutKey != layout.key {
-                setUp(view)
-            } else if view.styleKey != styleKey {
-                restyle(view)
+        // Nyladdade kapitel delas i sidor, och kapitel med gammal stil får den nya. Ett kapitel i taget, det man
+        // läser först (Edvin 8 nov: efter Aa delades alla tre laddade kapitel om samtidigt, och på iPadens A8X
+        // kunde det ta så lång tid att sidan stod blank och vakten laddade om kapitlen).
+        let stale = views.filter { view in
+            view.state == .loaded && (view.layoutKey != layout.key || view.styleKey != styleKey)
+        }
+        if !stale.contains(where: { $0.busy }),
+           let next = stale.min(by: { abs($0.chapter - center) < abs($1.chapter - center) }) {
+            if next.layoutKey != layout.key {
+                setUp(next)
+            } else {
+                restyle(next)
             }
         }
 
@@ -656,14 +665,39 @@ final class ReflowRenderer {
             let configuration = WKSnapshotConfiguration()
             configuration.afterScreenUpdates = true
             view.webView.takeSnapshot(with: configuration) { [weak self, weak view] image, _ in
-                guard let self = self, let view = view, self.endJob(job, on: view) else { return }
-                if let image = image, style == self.styleKey, view.chapter == page.chapter, view.styleKey == style {
+                guard let self = self, let view = view, self.isCurrent(job, on: view) else { return }
+                guard let image = image, style == self.styleKey, view.chapter == page.chapter, view.styleKey == style else {
+                    guard self.endJob(job, on: view) else { return }
+                    if image == nil {
+                        self.failures += 1
+                    }
+                    self.pump()
+                    return
+                }
+                // Edvin 8 nov: sidan kunde bli blank efter en ändring i Aa. En bild med bara papper sparas inte
+                // de två första gångerna, så att sidan tas om. Kontrollen görs utanför huvudtråden.
+                let paper = self.theme.paperColor
+                let tries = self.blankRetries[page] ?? 0
+                Task { @MainActor [weak self, weak view] in
+                    var blank = false
+                    if tries < 2 {
+                        blank = await Task.detached(priority: .userInitiated) {
+                            SnapshotInk.isBlank(image, paper: paper)
+                        }.value
+                    }
+                    guard let self = self, let view = view, self.endJob(job, on: view) else { return }
+                    if blank {
+                        self.blankRetries[page] = tries + 1
+                        AppLog.shared.write("Sidbild utan text (kapitel \(page.chapter + 1), sida \(page.page + 1)), "
+                                            + "tas om, försök \(tries + 1)")
+                        self.pump()
+                        return
+                    }
+                    self.blankRetries[page] = nil
                     self.snapshotTimes = Array((self.snapshotTimes + [(CACurrentMediaTime() - started) * 1000]).suffix(50))
                     self.store(ReflowSnapshot(image: image, links: links, marks: marks), for: page)
-                } else if image == nil {
-                    self.failures += 1
+                    self.pump()
                 }
-                self.pump()
             }
         }
     }
@@ -697,6 +731,37 @@ final class ReflowRenderer {
             guard let page = victim ?? images.keys.first else { break }
             images[page] = nil
             recentlyUsed.removeAll { $0 == page }
+        }
+    }
+}
+
+/// Om en sidbild bara är papper (ingen text, ingen bild). Körs utanför huvudtråden.
+enum SnapshotInk {
+
+    static func isBlank(_ image: UIImage, paper: UIColor) -> Bool {
+        guard let cg = image.cgImage else { return false }
+        let width = 128
+        let height = max(Int((Double(width) * Double(cg.height) / Double(max(cg.width, 1))).rounded()), 1)
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        paper.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        let reference = [Int(red * 255), Int(green * 255), Int(blue * 255)]
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        return pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            var index = 0
+            while index < width * height * 4 {
+                let difference = abs(Int(bytes[index]) - reference[0]) + abs(Int(bytes[index + 1]) - reference[1])
+                    + abs(Int(bytes[index + 2]) - reference[2])
+                if difference > 30 {
+                    return false
+                }
+                index += 4
+            }
+            return true
         }
     }
 }
