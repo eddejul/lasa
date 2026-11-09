@@ -6,6 +6,7 @@ import { deleteBookFile, storeBookFile } from './backend.js';
 import { bookErrorMessage, isUnreadable, unreadable } from './bookerrors.js';
 import { closePdf, openPdf } from './pdfjs.js';
 import { matchFile, uniqueName } from './bookmatch.js';
+import { makeSearchable } from './ocr.js';
 import { addBook, bookRegistry, contentId, listBooks, markBookMissing, restoreBook, setBookFile } from './store.js';
 import { htmlTitle } from './textbook.js';
 import { choiceDialog, confirmDialog, el, replace, statusBox, toast } from './ui.js';
@@ -269,6 +270,9 @@ export async function renderLibrary(container, { onOpen }) {
       el('div', { class: 'book-progress' },
         el('div', { class: 'progress-bar' }, el('div', { class: 'progress-fill', style: `width: ${Math.round((book.progress || 0) * 100)}%` })),
         el('span', {}, progressText(book))),
+      book.format === 'pdf' ? el('button', { class: 'link-button', dataset: { testid: 'make-searchable' },
+        title: 'Läs sidorna med datorns OCR och lägg en sökbar kopia i biblioteket', onclick: () => makeSearchable(book) },
+      'Gör sökbar') : null,
       el('button', { class: 'link-button danger', onclick: async () => {
         const ok = await confirmDialog({ title: `Ta bort ${book.title}?`,
           message: 'Boken tas bort ur Sensus. Originalfilen där du hämtade den finns kvar, och sparade ord ligger kvar. '

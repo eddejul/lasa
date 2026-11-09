@@ -15,7 +15,9 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -37,6 +39,74 @@ TYPES = {
 BOOK_NAME = re.compile(r"^[0-9a-f]{64}\.(pdf|epub|txt|md|rtf|html)$")
 
 
+# Gör sökbar (P1), som ocr_* i main.rs: tools/ocr/sokbar_pdf.py körs med Python och Tesseract, filerna ligger i
+# datamappen under OCR och tas bort direkt.
+OCR_SCRIPT = os.path.normpath(os.path.join(HERE, "..", "..", "tools", "ocr", "sokbar_pdf.py"))
+OCR_ENV = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+
+
+class OcrJob:
+    def __init__(self, folder):
+        self.lock = threading.Lock()
+        self.folder = folder
+        self.output = os.path.join(folder, "ut.pdf")
+        self.cancel = os.path.join(folder, "avbryt")
+        self.state, self.done, self.total, self.message, self.log = "running", 0, 0, "", []
+        self.process = None
+
+    def follow(self):
+        finished, verdict = False, None
+        for raw in self.process.stdout:
+            line = raw.decode("utf-8", "replace").strip()
+            word, _, rest = line.partition(" ")
+            rest = rest.strip()
+            with self.lock:
+                if word == "START":
+                    self.total = int(rest or 0)
+                elif word == "SIDA":
+                    numbers = rest.split()
+                    if len(numbers) >= 2:
+                        self.done, self.total = int(numbers[0]), int(numbers[1])
+                elif word == "KLAR":
+                    finished = True
+                elif word == "SAKNAS":
+                    verdict = ("missing", rest)
+                elif word == "HAR_TEXT":
+                    verdict = ("hasText", rest)
+                elif word == "AVBRUTEN":
+                    verdict = ("cancelled", "")
+                elif word == "FEL":
+                    verdict = ("error", rest)
+        code = self.process.wait()
+        time.sleep(0.2)
+        with self.lock:
+            if finished and code == 0 and os.path.isfile(self.output):
+                self.state, self.message = "done", ""
+            elif verdict:
+                self.state, self.message = verdict
+            elif os.path.exists(self.cancel):
+                self.state, self.message = "cancelled", ""
+            else:
+                self.state, self.message = "error", " ".join(self.log[-3:]) or f"Skriptet slutade med kod {code}."
+            shutil.rmtree(os.path.join(self.folder, "tmp"), ignore_errors=True)
+            if self.state != "done":
+                shutil.rmtree(self.folder, ignore_errors=True)
+
+    def read_errors(self):
+        for raw in self.process.stderr:
+            with self.lock:
+                self.log = (self.log + [raw.decode("utf-8", "replace").rstrip()])[-30:]
+
+
+def ocr_tool_args(args):
+    extra = []
+    for name in ("tesseract", "tessdata"):
+        value = (args.get(name) or "").strip()
+        if value:
+            extra += [f"--{name}", value]
+    return extra
+
+
 class Backend:
     def __init__(self, dictionary, data, open_files=()):
         self.lock = threading.Lock()
@@ -46,6 +116,8 @@ class Backend:
         self.dictionary.execute("PRAGMA query_only = ON")
         os.makedirs(os.path.join(data, "Böcker"), exist_ok=True)
         self.data = data
+        self.ocr_jobs, self.ocr_next = {}, 0
+        shutil.rmtree(os.path.join(data, "OCR"), ignore_errors=True)
         self.users = {
             "ord": sqlite3.connect(os.path.join(data, "anvandarord.sqlite"), check_same_thread=False, isolation_level=None),
             "bibliotek": sqlite3.connect(os.path.join(data, "bibliotek.sqlite"), check_same_thread=False, isolation_level=None),
@@ -95,6 +167,82 @@ class Backend:
         if not BOOK_NAME.match(name):
             raise ValueError("Ogiltigt namn på bokfilen.")
         return os.path.join(self.data, "Böcker", name)
+
+    def ocr(self, command, args):
+        """Gör sökbar, samma kommandon och lägen som i main.rs."""
+        python = (args.get("python") or "").strip() or "python"
+        if command == "ocr_check":
+            try:
+                r = subprocess.run([python, "-X", "utf8", OCR_SCRIPT, "--kontroll", *ocr_tool_args(args)],
+                                   capture_output=True, timeout=60, env=OCR_ENV)
+            except OSError as error:
+                return {"ok": False, "saknas": ["python"], "fel": str(error)}
+            text = r.stdout.decode("utf-8", "replace")
+            for line in reversed(text.splitlines()):
+                if line.strip().startswith("{"):
+                    try:
+                        return json.loads(line)
+                    except ValueError:
+                        break
+            details = (text.strip() + " " + r.stderr.decode("utf-8", "replace").strip()).strip()[:400]
+            return {"ok": False, "saknas": ["python"], "fel": details}
+        if command == "ocr_start":
+            source = self.book_path(args["id"], "pdf")
+            if not os.path.isfile(source):
+                raise ValueError("Bokfilen finns inte.")
+            if any(job.state == "running" for job in self.ocr_jobs.values()):
+                raise ValueError("En bok görs redan sökbar. Vänta tills den är klar, eller avbryt den.")
+            self.ocr_next += 1
+            name = f"{int(time.time())}-{self.ocr_next}"
+            folder = os.path.join(self.data, "OCR", name)
+            os.makedirs(os.path.join(folder, "tmp"), exist_ok=True)
+            job = OcrJob(folder)
+            arguments = [python, "-X", "utf8", OCR_SCRIPT, source, job.output, "--tmp", os.path.join(folder, "tmp"),
+                         "--avbryt-fil", job.cancel, "--arbetare", "2"]
+            if args.get("replace"):
+                arguments.append("--ersatt-text")
+            try:
+                job.process = subprocess.Popen(arguments + ocr_tool_args(args), stdin=subprocess.DEVNULL,
+                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=OCR_ENV)
+            except OSError as error:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise ValueError(f"Python kunde inte startas ({error}).") from error
+            self.ocr_jobs[name] = job
+            threading.Thread(target=job.read_errors, daemon=True).start()
+            threading.Thread(target=job.follow, daemon=True).start()
+            return name
+        job = self.ocr_jobs.get(args.get("job"))
+        if command == "ocr_discard":
+            if job:
+                del self.ocr_jobs[args["job"]]
+                if job.state == "running":
+                    open(job.cancel, "w").close()
+                else:
+                    shutil.rmtree(job.folder, ignore_errors=True)
+            return None
+        if job is None:
+            raise KeyError("Jobbet finns inte längre.")
+        if command == "ocr_status":
+            with job.lock:
+                return {"state": job.state, "done": job.done, "total": job.total, "message": job.message}
+        if command == "ocr_cancel":
+            try:
+                open(job.cancel, "w").close()
+            except OSError:
+                pass
+            timer = threading.Timer(20, lambda: job.process.poll() is None and job.process.kill())
+            timer.daemon = True
+            timer.start()
+            return None
+        if command == "ocr_take":
+            if job.state != "done":
+                raise ValueError("Filen är inte klar.")
+            with open(job.output, "rb") as file:
+                data = file.read()
+            shutil.rmtree(job.folder, ignore_errors=True)
+            del self.ocr_jobs[args["job"]]
+            return data
+        raise KeyError(command)
 
     def handle(self, command, args, body, headers):
         with self.lock:
@@ -163,6 +311,8 @@ class Backend:
             if command == "pending_read":
                 with open(self.taken[int(args["index"])], "rb") as file:
                     return file.read()
+            if command.startswith("ocr_"):
+                return self.ocr(command, args)
             if command == "open_url":
                 with open(os.path.join(self.data, "opened_urls.txt"), "a", encoding="utf-8") as file:
                     file.write(args["url"] + "\n")

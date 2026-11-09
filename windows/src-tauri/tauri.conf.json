@@ -41,7 +41,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/lasa-ordbok.sqlite": "lasa-ordbok.sqlite"
+      "resources/lasa-ordbok.sqlite": "lasa-ordbok.sqlite",
+      "../../tools/ocr/sokbar_pdf.py": "ocr/sokbar_pdf.py"
     },
     "windows": {
       "nsis": {

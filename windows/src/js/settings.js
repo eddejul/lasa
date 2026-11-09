@@ -2,6 +2,7 @@
 
 import { secretGet, secretSet } from './backend.js';
 import { DEFAULT_MODEL, GEMINI_SECRET, testKey } from './gemini.js';
+import { DEFAULT_PYTHON, DEFAULT_TESSERACT, checkOcr, missingLines, saveOcrTools } from './ocr.js';
 import { setSetting, settings } from './store.js';
 import { isSignedIn, reportText, signIn, signOut, syncNow, syncState } from './sync.js';
 import { el, replace } from './ui.js';
@@ -104,7 +105,47 @@ export async function renderSettings(container) {
     }
   } }, 'Prova nyckeln');
 
+  // Gör sökbar (P1): sökvägarna till Python, Tesseract och mappen med språkmodellerna.
+  const ocrPython = el('input', { type: 'text', class: 'text-input', value: settings.ocrPython ?? '', placeholder: DEFAULT_PYTHON,
+    spellcheck: 'false', dataset: { testid: 'ocr-python' } });
+  const ocrTesseract = el('input', { type: 'text', class: 'text-input', value: settings.ocrTesseract ?? '',
+    placeholder: DEFAULT_TESSERACT, spellcheck: 'false', dataset: { testid: 'ocr-tesseract' } });
+  const ocrTessdata = el('input', { type: 'text', class: 'text-input', value: settings.ocrTessdata ?? '',
+    placeholder: 'Tesseracts egen mapp (tessdata bredvid tesseract.exe)', spellcheck: 'false', dataset: { testid: 'ocr-tessdata' } });
+  const ocrMessage = el('div', { class: 'settings-message', role: 'status', dataset: { testid: 'ocr-message' } });
+  const ocrCheck = el('button', { class: 'button primary', dataset: { testid: 'ocr-check' }, onclick: async () => {
+    ocrCheck.disabled = true;
+    ocrMessage.classList.remove('error');
+    ocrMessage.textContent = 'Kontrollerar ...';
+    try {
+      await saveOcrTools({ python: ocrPython.value, tesseract: ocrTesseract.value, tessdata: ocrTessdata.value });
+      const result = await checkOcr();
+      if (result.ok) {
+        ocrMessage.textContent = `Allt finns: Python ${result.python}, Tesseract ${result.tesseract}, svenska i ${result.tessdata}. `
+          + 'Knappen Gör sökbar finns under varje PDF i biblioteket.';
+      } else {
+        replace(ocrMessage, missingLines(result).map((line) => el('p', {}, line)));
+        ocrMessage.classList.add('error');
+      }
+    } catch (error) {
+      ocrMessage.textContent = String(error?.message ?? error);
+      ocrMessage.classList.add('error');
+    }
+    ocrCheck.disabled = false;
+  } }, 'Spara och kontrollera');
+
   replace(container, el('div', { class: 'settings' },
+    el('section', { class: 'list-section' },
+      el('h3', {}, 'Gör sökbar (OCR)'),
+      el('div', { class: 'list-group settings-form' },
+        el('p', { class: 'list-secondary' }, 'Gör sökbar läser skannade PDF:er med Tesseract på datorn och lägger texten osynligt '
+          + 'på sidorna, i spaltordning, i en ny fil bredvid originalet. Det behövs Python 3 med PyMuPDF, numpy och Pillow, '
+          + 'Tesseract OCR och den svenska modellen swe.traineddata.'),
+        field('Python', ocrPython, `Tomt betyder ${DEFAULT_PYTHON} (det som finns i PATH). Annars hela sökvägen till python.exe.`),
+        field('Tesseract', ocrTesseract, 'Tomt betyder Tesseract i Program Files, eller i PATH.'),
+        field('Mapp med språkmodeller', ocrTessdata, 'Mappen där swe.traineddata ligger. Tomt betyder Tesseracts egen tessdata-mapp.'),
+        el('div', { class: 'row-buttons settings-buttons' }, ocrCheck),
+        ocrMessage)),
     el('section', { class: 'list-section' },
       el('h3', {}, 'Förklaring med AI'),
       el('div', { class: 'list-group settings-form' },

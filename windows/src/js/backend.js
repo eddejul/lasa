@@ -106,6 +106,19 @@ export async function pendingRead(index) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+/** Den färdiga PDF:en från Gör sökbar (ocr_take), som byte. Jobbets filer tas bort när den är hämtad. */
+export async function ocrTake(job) {
+  if (tauri) {
+    const data = await tauri.invoke('ocr_take', { job });
+    return new Uint8Array(data);
+  }
+  const response = await fetch('/api/ocr_take', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 /** Anropar callback när Windows ger appen fler böcker medan den är öppen. */
 export function onOpenFiles(callback) {
   globalThis.__TAURI__?.event?.listen('lasa-open-files', () => callback());
