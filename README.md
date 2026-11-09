@@ -28,7 +28,28 @@ Läsapp för iPad och iPhone med pappersvikning som i Apple Books, och en ordfun
 
 Med ett gratis Apple-ID slutar appen starta efter 7 dagar. Kör Sideloadly igen med samma fil. Böckerna och läspositionerna finns kvar.
 
-Vill du slippa det: **AltStore** förnyar appen automatiskt när datorn (med AltServer igång) och iPaden är på samma wifi.
+Vill du slippa det finns två gratis vägar (F3 steg två). Kontrollerat mot deras egna sidor 9 november 2026:
+
+* **SideStore** fungerar från iOS och iPadOS 15.0 (docs.sidestore.io, Prerequisites), alltså på iPad Air 2 med
+  iPadOS 15.8.3. Datorn behövs bara vid installationen. Så går det till enligt deras instruktioner:
+  1. På datorn: installera iTunes från Apple (inte Microsoft Store) och programmet iloader (MSI-filen).
+  2. Koppla iPaden med kabel, lita på datorn och skriv koden. Öppna iloader, logga in med ditt Apple-ID, välj
+     iPaden och installera SideStore (stable).
+  3. På iPaden: Inställningar, Allmänt, VPN och enhetshantering, lita på ditt Apple-ID. Installera appen
+     LocalDevVPN från App Store, öppna den och välj Connect. Öppna SideStore och logga in med samma Apple-ID.
+  4. Lägg in Sensus i SideStore (Lasa-unsigned.ipa från Actions). SideStore förnyar apparna i bakgrunden, och
+     under My Apps förnyar ett tryck på räknaren 7 DAYS direkt. LocalDevVPN ska vara på när SideStore
+     installerar eller förnyar.
+  Gränser med gratis Apple-ID (SideStores FAQ): högst 3 appar åt gången och SideStore räknas som en av dem, och
+  högst 10 olika appar (App ID) per vecka. Har du redan installerat Sensus med Sideloadly räknas den också.
+  Att LocalDevVPN går att installera på iPadOS 15 står inte på SideStores sidor och är inte kontrollerat.
+* **AltStore Classic** förnyar när datorn med AltServer är igång, men version 2.3 (14 september 2026) kräver
+  iOS 17.4 enligt AltStores versionsanteckningar. Den går alltså inte på iPaden. Om en äldre version går att
+  installera på iPadOS 15 är inte kontrollerat. På iPhone 12 med nyare iOS fungerar den: AltServer på datorn
+  (Windows 10 eller senare, iTunes och iCloud från Apple), samma wifi, och Bakgrundsuppdatering på.
+
+**Steg tre, betalt utvecklarkonto** (99 USD per år): appen går inte ut efter 7 dagar och kan delas via
+TestFlight. Det bryter målet om gratis drift och är ett beslut för senare. Inget i repot förutsätter det.
 
 ## Testa fas 1
 
@@ -80,6 +101,16 @@ Fas 6 byggs på grenen `fas6`, som innehåller fas 2, 3 och 4.
 * **AI-knappen:** skapa en gratis nyckel i Google AI Studio (aistudio.google.com) och klistra in den under Inställningar, Förklaring med AI. Tryck Prova nyckeln. Håll sedan fingret på ett ord: rutan har Förklara i meningen. Utan nyckel syns ingen AI-knapp. Meningen skickas till Google.
 * **Synk:** kräver ett eget Supabase-projekt, se [docs/SYNK.md](docs/SYNK.md). Fyll i adress, nyckel, e-post och lösenord under Inställningar och tryck Logga in. Synken går också när appen öppnas och när du stänger en bok. Windows-appen behöver synken för att det ska märkas.
 
-## Licenser för ordboken
+## Licens
 
-Ordboken bygger på Folkets synonymlexikon och Folkets lexikon (KTH), Swesaurus och SALDO (Språkbanken, Göteborgs universitet) och Open English WordNet. Detaljer i `tools/dictionary/README.md` och under Om ordboken i appen.
+* **Koden** (appen för iPad, Windows-appen, skripten under `tools/`) är öppen källkod under MIT-licensen, se
+  [LICENSE](LICENSE).
+* **Ordboken** (databasen `lasa-ordbok.sqlite` som byggs av `tools/dictionary/build.py` och följer med apparna)
+  delas under **CC BY-SA 4.0** (https://creativecommons.org/licenses/by-sa/4.0/). Den är en bearbetning av
+  Folkets lexikon (KTH, CC BY-SA 2.5, som tillåter en senare version med samma villkor), wordfreq (CC BY-SA 4.0)
+  och Wiktionary via kaikki.org (CC BY-SA 4.0), och bygger också på Folkets synonymlexikon Synlex (KTH, fri med
+  upphovsnotisen kvar), Swesaurus och SALDO (Språkbanken, Göteborgs universitet, CC BY 4.0) och Open English
+  WordNet (CC BY 4.0). Detaljer i `tools/dictionary/README.md` och under Om ordboken i appen. Svenska
+  Akademiens data (SO, SAOL) ingår inte, den visas bara via svenska.se.
+* **Biblioteken i Windows-appen** behåller sina egna licenser: pdf.js (Apache 2.0), foliate-js (MIT) och zip.js
+  (BSD 3-Clause), se `windows/src/vendor/VENDOR.md`.

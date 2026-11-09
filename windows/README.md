@@ -66,6 +66,17 @@ Läsa behöver Microsoft Edge WebView2, som redan finns i Windows 11. Saknas den
 * **Markeringar:** dra över texten med musen och välj en av fyra färger, eller Anteckning. Klicka på en
   markering för att byta färg, skriva en anteckning, kopiera eller ta bort. **Bokmärke** (eller B) på sidan.
   Panelen **Markeringar** listar bokmärken och markeringar. Synkas inte än (se Kända brister).
+* **Gör sökbar** (P1, under varje PDF i biblioteket): en skannad PDF får osynlig text genom datorns OCR, så
+  att ordfunktionen, sök och markeringar fungerar. Sensus kör `tools/ocr/sokbar_pdf.py` (se
+  `tools/ocr/README.md`) med Python och Tesseract. Texten kommer i läsordning, vänster spalt, höger spalt och
+  sist fotnoterna, inte i helsidesläsningens blandade ordning. Förloppet visar sida N av M och har Avbryt.
+  Den nya filen heter `<namn> (sökbar).pdf` och läggs i biblioteket bredvid originalet, som inte ändras. En
+  bok som redan har text (till exempel en äldre sökbar PDF) ger frågan Läs om sidorna. Det behövs Python 3 med
+  PyMuPDF, numpy och Pillow, Tesseract OCR och den svenska modellen `swe.traineddata`. Saknas något säger en
+  ruta vad. Sökvägarna ställs in under Inställningar, Gör sökbar (OCR): Python (tomt är `python`),
+  Tesseract (tomt är Program Files) och Mapp med språkmodeller (tomt är Tesseracts egen tessdata-mapp, som
+  från början bara har engelska). Spara och kontrollera visar vad som hittades. Ett jobb i taget. Sidbilderna
+  ligger i datamappen under `OCR` medan de behövs och tas bort direkt, och mappen töms när appen startar.
 * **Tangentbordet:** ? visar alla genvägar. F11 helskärm, Ctrl och G gå till sida (i EPUB en plats eller
   procent). Webbläsarens egna tangenter (F5, Ctrl och R, Ctrl och P) gör ingenting.
 
@@ -159,7 +170,8 @@ Ordboken (`lasa-ordbok.sqlite`) ligger bland programfilerna och ändras aldrig.
   läsas beror på PDF:en: om alla sidor delar en resurslista (som PDF:er från reportlab) läses ändå nästan
   allt. Minnet hålls nere med högst 4 ritade sidor (6 i uppslag) och högst 8 miljoner bildpunkter per sida.
 * Synken är provad mot en låtsas-Supabase, inte mot ett riktigt Supabase-projekt.
-* Skannade PDF:er utan textlager: sidorna visas, men ord går inte att slå upp. Appen säger till.
+* Skannade PDF:er utan textlager: sidorna visas, men ord går inte att slå upp förrän boken gjorts sökbar
+  (Gör sökbar). Appen säger till.
 * Språkgissningen och den engelska ordklassen är enklare än iPadens, som använder Apples språkverktyg.
   Knappen Visa som engelska eller svenska rättar fel språk.
 * I EPUB visas platsen som "plats 12 av 340". En plats är ungefär 1 500 tecken, inte en tryckt sida.
@@ -229,9 +241,15 @@ lägg den där och anropa `read('namn', [...])` eller `write(...)` i `src/js/sto
   togs bort i 0.7.0 som läggs till igen med markeringen kvar. W10: Rulla och Bläddra med uppslagen,
   ordfunktionen, markeringar, sök och läspositionen.
 * `dev/server.py --open <fil> ...` gör som Öppna med: filerna läggs till och den första öppnas.
+* `python windows/tests/e2e_ocr.py --dictionary <lasa-ordbok.sqlite> --out <mapp> --tessdata <mapp med
+  swe.traineddata>`: Gör sökbar med riktig Python och Tesseract. Startar själv `dev/server.py` (port 8967) med
+  tom datamapp och en påhittad tvåspaltig sida (`tools/ocr/testsidor.py`): rutan när modellen saknas,
+  Inställningar, förloppet, den nya boken bredvid originalet, pdf.js textlager i spaltordning, meningen som
+  sparas med ett ord över en radbrytning, frågan Läs om sidorna och Avbryt. `dev/server.py` kör skriptet
+  direkt ur `tools/ocr`, appen ur sina resurser (`ocr/sokbar_pdf.py`, se `tauri.conf.json`).
 
 **Bygget:** workflow `Windows build` (`.github/workflows/windows-build.yml`) körs vid push till `main`
-och `fas*` när något under `windows/`, `tools/dictionary/` eller själva workflowfilen ändras. Ordboken
+och `fas*` när något under `windows/`, `tools/dictionary/`, `tools/ocr/` eller själva workflowfilen ändras. Ordboken
 byggs med samma steg och cache som i iOS-bygget, och Tauri bygger installationsfilerna på `windows-latest`.
 Versionerna är låsta: npm-paketen i `package.json` och `package-lock.json`, Rust i `Cargo.toml` och
 `Cargo.lock`.
