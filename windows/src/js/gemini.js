@@ -178,6 +178,124 @@ export async function explain(lookup, sentence) {
   return explanationFrom(answer, choices);
 }
 
+// Ett allmänt anrop (AI-frågorna, K6b), med samma besked som iPadens AIClient.Failure. Ordknappens anrop
+// ovan är oförändrat.
+
+/** Ett fel från generate: kind är 'noKey', 'badKey', 'unknownModel', 'quotaMinute' (seconds), 'quotaDay',
+ *  'offline', 'network', 'http' eller 'invalid'. message är beskedet att visa. */
+export class AIFailure extends Error {
+  constructor(kind, message, extra = {}) {
+    super(message);
+    this.kind = kind;
+    Object.assign(this, extra);
+  }
+
+  /** Fel som bara går över när nyckeln eller modellen rättas. */
+  get needsSetup() {
+    return ['noKey', 'badKey', 'unknownModel'].includes(this.kind);
+  }
+}
+
+/** Klockslaget (svensk tid, som 09.00) när dagens gratiskvot fylls på: midnatt i Kalifornien. */
+export function quotaResetText(now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(now).map((part) => [part.type, part.value]));
+  const since = ((Number(parts.hour) % 24) * 3600 + Number(parts.minute) * 60 + Number(parts.second)) * 1000 + now.getMilliseconds();
+  const midnight = new Date(now.getTime() - since + 24 * 3600 * 1000);
+  return `${String(midnight.getHours()).padStart(2, '0')}.${String(midnight.getMinutes()).padStart(2, '0')}`;
+}
+
+export const AI_MESSAGES = {
+  noKey: 'Förklaring med AI är inte uppsatt än. Det tar en minut: skapa en gratis nyckel i Google AI Studio och klistra in den under Inställningar.',
+  badKey: 'Google godkände inte nyckeln. Skapa en ny i Google AI Studio och klistra in den igen under Inställningar.',
+  unknownModel: (model) => `Modellen ${model} finns inte hos Google. Kontrollera modellens namn under Förklaring med AI i Inställningar.`,
+  quotaMinute: (seconds) => (seconds
+    ? `Gratiskvoten för den här minuten är slut. Prova igen om ${seconds} sekunder.`
+    : 'Gratiskvoten för den här minuten är slut. Prova igen om en minut.'),
+  quotaDay: () => `Dagens gratiskvot hos Google är slut. Den fylls på klockan ${quotaResetText()} svensk tid. Svar som redan hämtats finns kvar.`,
+  offline: 'Ingen kontakt med Google. Kontrollera att datorn är ansluten till internet.',
+  network: (message) => `Ingen kontakt med Google. ${message}`,
+  http: (status, message) => `Gemini svarade med fel ${status}. ${String(message).slice(0, 160)}`,
+  invalid: 'Svaret från Gemini gick inte att läsa. Prova igen.',
+};
+
+/** Googles fel som ett AIFailure, som failure(status:data:model:) i AIClient.swift: 429 delas på quotaId
+ *  (PerDay) och väntetiden i RetryInfo. */
+export function failureFrom(status, json, model) {
+  const message = String(json?.error?.message ?? '');
+  const lower = message.toLowerCase();
+  if ((status === 400 && (lower.includes('api key') || lower.includes('api_key'))) || status === 401 || status === 403) {
+    return new AIFailure('badKey', AI_MESSAGES.badKey);
+  }
+  if (status === 404) return new AIFailure('unknownModel', AI_MESSAGES.unknownModel(model), { model });
+  if (status === 429) {
+    const details = Array.isArray(json?.error?.details) ? json.error.details : [];
+    const quotaIds = details.flatMap((detail) => (Array.isArray(detail?.violations) ? detail.violations : [])
+      .map((violation) => String(violation?.quotaId ?? '')));
+    if (quotaIds.some((id) => id.includes('PerDay')) || lower.includes('per day')) {
+      return new AIFailure('quotaDay', AI_MESSAGES.quotaDay(), { resetText: quotaResetText() });
+    }
+    const delay = details.map((detail) => detail?.retryDelay).find((value) => typeof value === 'string');
+    const seconds = delay ? Math.ceil(parseFloat(delay.replace(/s$/, ''))) : null;
+    const known = Number.isFinite(seconds) ? seconds : null;
+    return new AIFailure('quotaMinute', AI_MESSAGES.quotaMinute(known), { seconds: known });
+  }
+  return new AIFailure('http', AI_MESSAGES.http(status, message), { status });
+}
+
+/** Ett anrop till Gemini med strukturerat svar: { prompt, schema, maxOutputTokens, temperature, timeout } ger
+ *  det tolkade JSON-objektet eller kastar AIFailure. Äldre modeller utan responseJsonSchema får schemat i texten. */
+export async function generate({ prompt, schema, maxOutputTokens = 8192, temperature = 0.3, timeout = 90000, signal = null }) {
+  const key = await secretGet(GEMINI_SECRET);
+  if (!key) throw new AIFailure('noKey', AI_MESSAGES.noKey);
+  const model = aiModel();
+  const attempt = async (text, useSchema) => {
+    const generationConfig = { responseMimeType: 'application/json', temperature, maxOutputTokens };
+    if (useSchema) generationConfig.responseJsonSchema = schema;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort);
+    const timer = setTimeout(abort, timeout);
+    let response;
+    let body;
+    try {
+      response = await fetch(`${ENDPOINT}${encodeURI(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text }] }], generationConfig }),
+        signal: controller.signal,
+      });
+      body = await response.text();
+    } catch (error) {
+      if (signal?.aborted) throw new AIFailure('cancelled', 'Avbrutet.');
+      if (error?.name === 'AbortError') throw new AIFailure('network', AI_MESSAGES.network('Svaret dröjde för länge.'));
+      if (globalThis.navigator?.onLine === false || error instanceof TypeError) throw new AIFailure('offline', AI_MESSAGES.offline);
+      throw new AIFailure('network', AI_MESSAGES.network(String(error?.message ?? error)));
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
+    let json = null;
+    try {
+      json = JSON.parse(body);
+    } catch {
+      json = null;
+    }
+    if (!response.ok) {
+      const message = String(json?.error?.message ?? '');
+      if (useSchema && response.status === 400 && message.includes('response') && !message.toLowerCase().includes('api key')) {
+        return attempt(`${text}\n\nJSON-schema: ${JSON.stringify(schema)}`, false);
+      }
+      throw failureFrom(response.status, json, model);
+    }
+    const answer = answerJSON(json);
+    if (!answer) throw new AIFailure('invalid', AI_MESSAGES.invalid);
+    return answer;
+  };
+  return attempt(prompt, true);
+}
+
 /** Provar nyckeln och modellen med en liten fråga. */
 export async function testKey(key) {
   const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] };

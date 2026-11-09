@@ -5,6 +5,7 @@ import '../vendor/foliate-js/view.js';
 import { Overlayer } from '../vendor/foliate-js/overlayer.js';
 import { chapterNodes, offsetsFromRange, rangeFromOffsets, relocate } from './chaptertext.js';
 import { MAX_HITS, breathe, excerpt, findAll, foldQuery } from './search.js';
+import { paragraphSource } from './questions.js';
 import { makeTextBook } from './textbook.js';
 import { reflowCandidates, sentenceAround } from './wordfind.js';
 
@@ -26,6 +27,50 @@ function drawMark(rects, { color, strong, note }) {
     wrapper.append(line);
   }
   return wrapper;
+}
+
+// Frågans prick: en numrerad cirkel. Färgerna är fasta, eftersom överlägget ligger i kapitlets egen ram.
+const DOT_COLORS = { '': '#2f6f75', kan: '#2e8b4a', osaker: '#c48a00', kan_inte: '#c0392b' };
+
+/** Pricken i spaltens vänstra marginal, i höjd med platsens sista rad. */
+function dotPlace(doc, range, last) {
+  let element = range.endContainer.parentElement;
+  while (element && element !== doc.body) {
+    const display = doc.defaultView?.getComputedStyle(element).display ?? 'block';
+    if (!display.startsWith('inline')) break;
+    element = element.parentElement;
+  }
+  const fragments = element ? [...element.getClientRects()] : [];
+  const fragment = fragments.find((f) => last.top >= f.top - 2 && last.bottom <= f.bottom + 2 && last.left >= f.left - 2
+    && last.right <= f.right + 2);
+  const left = (fragment ?? last).left;
+  return { cx: Math.max(10, left - 12), cy: (last.top + last.bottom) / 2 };
+}
+
+function drawDot(rects, style) {
+  const group = document.createElementNS(SVG, 'g');
+  const last = [...rects].filter((r) => r.width > 0 || r.height > 0).pop();
+  if (!last) return group;
+  const { cx, cy } = style.place ? style.place(last) : { cx: last.right + 12, cy: (last.top + last.bottom) / 2 };
+  style.hit = { cx, cy };
+  const circle = document.createElementNS(SVG, 'circle');
+  circle.setAttribute('cx', cx);
+  circle.setAttribute('cy', cy);
+  circle.setAttribute('r', 9);
+  circle.setAttribute('fill', DOT_COLORS[style.status] ?? DOT_COLORS['']);
+  circle.setAttribute('opacity', '0.92');
+  const label = document.createElementNS(SVG, 'text');
+  label.setAttribute('x', cx);
+  label.setAttribute('y', cy + 4);
+  label.setAttribute('text-anchor', 'middle');
+  label.setAttribute('font-size', style.number > 99 ? '8' : '11');
+  label.setAttribute('font-family', 'Segoe UI, sans-serif');
+  label.setAttribute('font-weight', '600');
+  label.setAttribute('fill', '#ffffff');
+  label.textContent = String(style.number);
+  group.append(circle, label);
+  group.dataset.testid = 'question-dot';
+  return group;
 }
 
 // Typsnitt som finns i Windows. Samma nycklar som på iPaden där det går (original, georgia, palatino, system).
@@ -120,8 +165,13 @@ export function wordAt(doc, x, y) {
 }
 
 export class ReflowReader {
-  constructor(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks = null, onMarkClick = null, onSelect = null }) {
+  constructor(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks = null, onMarkClick = null, onSelect = null,
+    getDots = null, onDotClick = null }) {
     this.kind = 'reflow';
+    // Frågorna i marginalen (K6, questions.js): getDots(kapitel) ger [{ id, offset, number, status }].
+    this.getDots = getDots;
+    this.onDotClick = onDotClick;
+    this.sectionTexts = new Map();
     this.stage = stage;
     this.onRelocate = onRelocate;
     this.onWord = onWord;
@@ -221,6 +271,18 @@ export class ReflowReader {
     doc.addEventListener('keydown', (event) => this.onKey?.(event));
     doc.addEventListener('wheel', (event) => this.onWheel?.(event), { passive: false });
     doc.addEventListener('mousedown', (event) => this.onPointerDown?.(event));
+    // Ett klick på en frågas prick (ritad av drawDot i kapitlets överlägg).
+    doc.addEventListener('click', (event) => {
+      for (const annotation of this.annotations.values()) {
+        const hit = annotation.kind === 'dot' && annotation.index === index ? annotation.style.hit : null;
+        if (hit && Math.hypot(event.clientX - hit.cx, event.clientY - hit.cy) <= 12) {
+          event.preventDefault();
+          event.stopPropagation();
+          this.onDotClick?.(annotation.dot);
+          return;
+        }
+      }
+    }, true);
     // En fil som släpps över sidan ska inte öppnas i kapitlets ram.
     doc.addEventListener('dragover', (event) => event.preventDefault());
     doc.addEventListener('drop', (event) => event.preventDefault());
@@ -312,6 +374,7 @@ export class ReflowReader {
 
   drawAnnotation({ draw, annotation }) {
     if (annotation.kind === 'search') draw(Overlayer.outline, { color: 'rgba(230, 140, 0, 0.95)', width: 2.5, radius: 3 });
+    else if (annotation.kind === 'dot') draw(drawDot, annotation.style);
     else draw(drawMark, annotation.style);
   }
 
@@ -331,9 +394,20 @@ export class ReflowReader {
       const value = this.view.getCFI(index, range);
       fresh.set(value, { value, index, kind: 'mark', mark, style: mark.style });
     }
+    // Frågornas prickar: vid platsens sista tecken, i spaltens vänstra marginal.
+    for (const dot of this.getDots?.(this.documentIndex(index)) ?? []) {
+      if (!Number.isInteger(dot.offset)) continue;
+      const end = Math.min(dot.offset, info.text.length);
+      const range = rangeFromOffsets(doc, Math.max(0, end - 1), end, info);
+      if (!range) continue;
+      const value = this.view.getCFI(index, range);
+      if (fresh.has(value)) continue;
+      const style = { number: dot.number, status: dot.status, place: (last) => dotPlace(doc, range, last) };
+      fresh.set(value, { value, index, kind: 'dot', dot, style });
+    }
     // Borttagna markeringar tas bort, de andra ritas om (samma CFI ersätter den gamla).
     for (const [value, annotation] of [...this.annotations]) {
-      if (annotation.kind === 'mark' && annotation.index === index && !fresh.has(value)) {
+      if ((annotation.kind === 'mark' || annotation.kind === 'dot') && annotation.index === index && !fresh.has(value)) {
         this.view.deleteAnnotation(annotation);
         this.annotations.delete(value);
       }
@@ -347,6 +421,86 @@ export class ReflowReader {
 
   refreshMarks() {
     for (const { index } of this.view?.renderer?.getContents() ?? []) this.paintMarks(index);
+  }
+
+  // Frågorna (K6b): kapitlen, texten och platserna, som questions.js använder.
+
+  /** Prickarna som är ritade, i fönstrets koordinater: [{ number, id, x, y }] (för provkörningen, foliate-js
+   *  överlägg ligger i en stängd skugg-DOM). */
+  drawnDots() {
+    const result = [];
+    for (const annotation of this.annotations.values()) {
+      const hit = annotation.kind === 'dot' ? annotation.style.hit : null;
+      const doc = hit ? this.loadedDoc(annotation.index) : null;
+      if (!doc) continue;
+      const rect = this.frameRect(doc, new DOMRect(hit.cx, hit.cy, 0, 0));
+      result.push({ number: annotation.dot.number, id: annotation.dot.id, x: rect.left, y: rect.top });
+    }
+    return result.sort((a, b) => a.number - b.number);
+  }
+
+  /** Antalet kapitel bland bokens dokument. */
+  get sectionCount() {
+    return this.sectionOfDocument?.length ?? 0;
+  }
+
+  async sectionDocument(section) {
+    const index = this.sectionOfDocument?.[section] ?? section;
+    const item = this.view?.book?.sections?.[index];
+    if (!item?.createDocument) return null;
+    try {
+      return await item.createDocument();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Kapitlets text, samma som markeringarna räknar i. */
+  async sectionText(section) {
+    if (!this.sectionTexts.has(section)) {
+      const doc = await this.sectionDocument(section);
+      this.sectionTexts.set(section, doc ? chapterNodes(doc).text : '');
+    }
+    return this.sectionTexts.get(section);
+  }
+
+  /** Kapitlen för frågorna: ett per dokument i läsordningen, [{ key, order, index, title }]. */
+  async questionChapters() {
+    const labels = this.sectionLabels();
+    return (this.sectionOfDocument ?? []).map((sectionIndex, i) => ({
+      key: `k${i}`, order: i, index: i, title: labels[sectionIndex] || `Kapitel ${i + 1}`,
+    }));
+  }
+
+  /** Kapitlets text utan taggar, med en tom rad mellan styckena, och vägen tillbaka till kapitlets text. */
+  async questionText(chapter) {
+    const doc = await this.sectionDocument(chapter.index);
+    return doc ? paragraphSource(doc, chapter.index) : paragraphSource(document.implementation.createHTMLDocument(''), chapter.index);
+  }
+
+  chapterForPlace(place, chapters) {
+    return Number.isInteger(place?.section) ? chapters.find((chapter) => chapter.index === place.section) ?? null : null;
+  }
+
+  /** Kapitlets första sida syns. */
+  isChapterStart(place, chapter) {
+    return place?.section === chapter.index && (Number(place.progression) || 0) < 0.001;
+  }
+
+  placeName(section) {
+    return this.chapterLabel(section);
+  }
+
+  /** Visar ett ställe i ett kapitel och ringar in det (Visa i boken). */
+  async showRange(section, start, end) {
+    const index = this.sectionOfDocument?.[section] ?? section;
+    const doc = await this.sectionDocument(section);
+    const range = doc ? rangeFromOffsets(doc, start, end) : null;
+    if (!range) {
+      await this.goToPlace(section, 0);
+      return;
+    }
+    await this.showHit({ section: index, cfi: this.view.getCFI(index, range) });
   }
 
   showAnnotation({ value, range }) {

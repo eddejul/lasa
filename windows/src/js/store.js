@@ -163,6 +163,87 @@ export async function deleteBookmark(id) {
   await write('bookmark_delete', [now(), id]);
 }
 
+// Frågor i marginalen (K6) och AI-frågorna (K6b, docs/AI-FRAGOR.md). Samma tabeller som iPaden:
+// question_answers (steg 10 plus my_answer och feedback) och ai_questions (steg 13), book är bokens id (G3).
+// Frågefilen som valts med Välj frågefil ligger i question_files.
+
+const parseJSON = (text, fallback) => {
+  try {
+    return text ? JSON.parse(text) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+/** Hur det gått på bokens frågor: Map från frågans id till { status, answered, updated, myAnswer, feedback }. */
+export async function questionAnswers(book) {
+  const rows = await read('question_answers_of_book', [book]);
+  return new Map(rows.map(([question, status, answered, updated, myAnswer, feedback]) =>
+    [question, { status, answered, updated, myAnswer: myAnswer ?? '', feedback: parseJSON(feedback, null) }]));
+}
+
+/** Kan, Osäker eller Kan inte ('kan', 'osaker', 'kan_inte', som QuestionStatus på iPaden). */
+export async function setQuestionStatus(book, question, status) {
+  await write('question_status_set', [book, question, status, now()]);
+}
+
+/** Det skrivna svaret, sparat när rutan stängs. */
+export async function setQuestionMyAnswer(book, question, myAnswer) {
+  await write('question_my_answer_set', [book, question, now(), myAnswer]);
+}
+
+/** Jämförs svar (JSON) med svaret det gällde. */
+export async function setQuestionFeedback(book, question, myAnswer, feedback) {
+  await write('question_feedback_set', [book, question, now(), myAnswer, JSON.stringify(feedback)]);
+}
+
+/** Bokens AI-frågor: [{ chapter, part, chapterTitle, model, created, summary, concepts, questions }]. */
+export async function aiQuestions(book) {
+  const rows = await read('ai_questions_of_book', [book]);
+  return rows.map(([chapter, part, chapterTitle, model, created, summary, concepts, questions]) => ({
+    chapter, part, chapterTitle: chapterTitle ?? '', model: model ?? '', created: created ?? 0, summary: summary ?? '',
+    concepts: parseJSON(concepts, []), questions: parseJSON(questions, []),
+  }));
+}
+
+/** Sparar en del av ett kapitel. Ett för kort kapitel sparas med tom lista, så att det inte skickas igen. */
+export async function saveAiQuestions(book, { chapter, part, chapterTitle, model, summary, concepts, questions }) {
+  await write('ai_questions_save', [book, chapter, part, chapterTitle ?? '', model ?? '', now(), summary ?? '',
+    JSON.stringify(concepts ?? []), JSON.stringify(questions ?? [])]);
+}
+
+/** Tar bort ett kapitels AI-frågor (Gör nya frågor till kapitlet). */
+export async function deleteAiQuestions(book, chapter) {
+  await write('ai_questions_delete_chapter', [book, chapter]);
+}
+
+/** Andra böcker med AI-frågor, de senast lästa först: [{ book, title, summaries, concepts }]. */
+export async function otherBooksWithQuestions(book) {
+  const rows = await read('ai_questions_other_books', [book]);
+  const books = new Map();
+  for (const [id, title, , , summary, concepts] of rows) {
+    if (!books.has(id)) books.set(id, { book: id, title, summaries: [], concepts: [] });
+    const entry = books.get(id);
+    if (summary) entry.summaries.push(summary);
+    for (const concept of parseJSON(concepts, [])) if (!entry.concepts.includes(concept)) entry.concepts.push(concept);
+  }
+  return [...books.values()];
+}
+
+/** Frågefilen som valts för boken: { name, json } eller null. */
+export async function questionFile(book) {
+  const rows = await read('question_file_of_book', [book]);
+  return rows.length ? { name: rows[0][0], json: rows[0][1] } : null;
+}
+
+export async function saveQuestionFile(book, name, json) {
+  await write('question_file_save', [book, name, json, now()]);
+}
+
+export async function deleteQuestionFile(book) {
+  await write('question_file_delete', [book]);
+}
+
 // Sparade ord
 
 /** Sparar ett uppslaget ord. Har det slagits upp förut räknas det upp, och meningen, boken och sidan

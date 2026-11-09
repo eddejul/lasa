@@ -9,6 +9,9 @@ import { bookErrorMessage } from './bookerrors.js';
 import { closeWordPopup, isWordPopupOpen, showWordPopup } from './popup.js';
 import { PdfReader } from './pdfreader.js';
 import { FONTS, ReflowReader, SIZES } from './reflowreader.js';
+import {
+  BookQuestions, aiEnabled, questionsEnabled, renderQuestionsPanel, setAiEnabled, setQuestionsEnabled,
+} from './questions.js';
 import { newSearchState, renderSearchPanel } from './searchpanel.js';
 import { isBrowserKey } from './shortcuts.js';
 import { contentId, markOpened, savePosition, setSetting, settings } from './store.js';
@@ -33,7 +36,7 @@ export async function closeReader() {
 }
 
 /** Öppnar en bok i `container`. onBack går tillbaka till biblioteket. */
-export async function openReader(container, book, { onBack, onSavedWords, onAbout, onAppKey = null }) {
+export async function openReader(container, book, { onBack, onSavedWords, onAbout, onSettings = null, onAppKey = null }) {
   await closeReader();
   const stage = el('div', { class: 'reader-stage', tabindex: '-1' });
   const loading = el('div', { class: 'reader-loading', dataset: { testid: 'reader-loading' } }, 'Öppnar boken ...');
@@ -42,6 +45,11 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   const panel = el('div', { class: 'reader-panel', hidden: true });
 
   const annotations = new BookAnnotations(book);
+  // Frågor i marginalen (K6) och AI-frågorna (K6b, questions.js). Knappen syns bara när frågorna är påslagna.
+  let questions = null;
+  let redrawQuestions = null;
+  const questionsButton = el('button', { class: 'toolbar-button', onclick: () => togglePanel('questions'), hidden: !questionsEnabled(),
+    title: 'Frågor i marginalen', dataset: { testid: 'questions-button' } }, 'Frågor');
   const bookmarkButton = el('button', { class: 'toolbar-button bookmark-button', onclick: () => toggleBookmark(),
     title: 'Bokmärke på sidan (B)', 'aria-pressed': 'false', dataset: { testid: 'bookmark-button' } }, 'Bokmärke');
   const toolbar = el('header', { class: 'toolbar reader-toolbar' },
@@ -56,6 +64,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
       book.format !== 'pdf' ? el('button', { class: 'toolbar-button', onclick: () => togglePanel('type'), title: 'Typsnitt och storlek' }, 'Aa') : null,
       el('button', { class: 'toolbar-button', onclick: () => togglePanel('marks'), title: 'Markeringar och bokmärken',
         dataset: { testid: 'marks-button' } }, 'Markeringar'),
+      questionsButton,
       bookmarkButton,
       el('button', { class: 'toolbar-button', onclick: () => togglePanel('theme'), dataset: { testid: 'theme-button' } }, 'Tema'),
       el('button', { class: 'toolbar-button', onclick: () => onSavedWords() }, 'Sparade ord'),
@@ -65,9 +74,10 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     el('button', { class: 'page-arrow left', 'aria-label': 'Föregående sida', onclick: () => turn(-1) }, '‹'),
     el('button', { class: 'page-arrow right', 'aria-label': 'Nästa sida', onclick: () => turn(1) }, '›'),
   ];
+  const readerBody = el('div', { class: 'reader-body' }, stage, loading, arrows, panel);
   const view = el('div', { class: 'reader' },
     toolbar,
-    el('div', { class: 'reader-body' }, stage, loading, arrows, panel),
+    readerBody,
     el('footer', { class: 'reader-bottom' }, slider, label));
   replace(container, view);
 
@@ -96,6 +106,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   };
   const onRelocate = (next) => {
     label.textContent = next.label;
+    questions?.onShown(next.place ?? null);
     currentPlace = next.place ?? null;
     currentPlaceLabel = next.placeLabel ?? next.label;
     updateBookmarkButton();
@@ -119,6 +130,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   const isTyping = (event) => /^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName ?? '') && event.target !== slider;
   const turn = (direction, options = {}) => {
     closeWordPopup();
+    questions?.noteTurn(direction);
     return direction > 0 ? reader.next() : reader.prev(options);
   };
   // Nedåt och uppåt (pil, PageDown, mellanslag): rulla sidan om den rullas, annars bläddra.
@@ -235,6 +247,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
 
   // Markeringar: färgval när text markeras med musen, meny vid klick på en markering.
   const getMarks = (section, text) => annotations.marksFor(section, text);
+  const getDots = (section) => questions?.dotsFor(section) ?? [];
+  const onDotClick = (dot) => questions?.open(dot.id);
   const addHighlight = async (selection, color) => {
     const highlight = await annotations.add(selection, color);
     selection.clear();
@@ -305,8 +319,50 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
   const reader = book.format === 'pdf'
     ? new PdfReader(stage, { onRelocate, onWord, onMessage: (message) => toast(message),
       fit: settings.pdfFit ?? 'auto', zoom: settings.pdfZoom ?? 1, spread: settings.pdfSpread ?? 'auto', flow: settings.pdfFlow ?? 'paged',
-      getMarks, onSelect, onMarkClick })
-    : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks, onSelect, onMarkClick });
+      getMarks, onSelect, onMarkClick, getDots, onDotClick })
+    : new ReflowReader(stage, { onRelocate, onWord, onKey, onWheel, onPointerDown, getMarks, onSelect, onMarkClick, getDots, onDotClick });
+  questions = new BookQuestions(book, {
+    reader,
+    host: readerBody,
+    onRefresh: () => reader.refreshMarks(),
+    onOpenSettings: () => onSettings?.(),
+    onPanelChange: () => {
+      if (panel.dataset.name === 'questions') redrawQuestions?.();
+    },
+  });
+
+  /** Inställningarna för frågorna i Visning och Aa: Frågor i marginalen, och under det Gör frågor med AI. */
+  function questionToggles() {
+    const box = (checked, label, onChange, testid, disabled = false) => {
+      const input = el('input', { type: 'checkbox', dataset: { testid } });
+      input.checked = checked;
+      input.disabled = disabled;
+      input.addEventListener('change', () => onChange(input.checked));
+      return el('label', { class: `check-row${disabled ? ' disabled' : ''}` }, input, el('span', {}, label));
+    };
+    const refresh = async () => {
+      questionsButton.hidden = !questionsEnabled();
+      await questions.load();
+      reader.refreshMarks();
+      questions.onShown(currentPlace);
+    };
+    return [
+      el('h3', { class: 'panel-subhead' }, 'Frågor i marginalen'),
+      box(questionsEnabled(), 'Frågor i marginalen', async (on) => {
+        const open = panel.dataset.name;
+        await setQuestionsEnabled(on);
+        await refresh();
+        togglePanel(null);
+        togglePanel(open);
+      }, 'toggle-questions'),
+      box(aiEnabled(), 'Gör frågor med AI', async (on) => {
+        await setAiEnabled(on);
+        await refresh();
+      }, 'toggle-ai-questions', !questionsEnabled()),
+      el('p', { class: 'choice-note' }, 'Prickar i marginalen med frågor att svara på ur minnet. Med AI görs frågorna av Google Gemini '
+        + 'med din nyckel, och hela kapitlets text skickas dit. En frågefil går före.'),
+    ];
+  }
 
   document.addEventListener('keydown', onKey);
   // Provkörningen i webbläsaren (dev/server.py) når läsaren härifrån. Finns inte i appen.
@@ -367,6 +423,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
     panel.hidden = false;
     if (name === 'search') {
       renderSearchPanel(panel, reader, searchState, { onClose: () => togglePanel(null) });
+    } else if (name === 'questions') {
+      redrawQuestions = renderQuestionsPanel(panel, questions, { onClose: () => togglePanel(null) });
     } else if (name === 'marks') {
       refreshMarksPanel();
     } else if (name === 'toc') {
@@ -437,7 +495,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
         zoomLabel,
         el('button', { class: 'button', onclick: async () => { await zoom(1); zoomLabel.textContent = `${Math.round(reader.zoom * 100)} %`; },
           'aria-label': 'Zooma in', dataset: { testid: 'zoom-in' } }, '+')),
-      el('p', { class: 'muted' }, 'Ctrl och plus eller minus, eller Ctrl och mushjulet, zoomar också. Ctrl och 0 återställer.'));
+      el('p', { class: 'muted' }, 'Ctrl och plus eller minus, eller Ctrl och mushjulet, zoomar också. Ctrl och 0 återställer.'),
+      questionToggles());
     } else if (name === 'type') {
       const sizeLabel = el('span', { class: 'size-label' }, `${Math.round(SIZES[settings.size] * 100)} %`);
       const setSize = async (index) => {
@@ -468,7 +527,8 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
           reader.setSettings({ font: font.id });
           togglePanel(null);
           togglePanel('type');
-        } }, font.title))));
+        } }, font.title))),
+      questionToggles());
     }
   }
 
@@ -480,6 +540,7 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
       closeMarkMenu();
       closeWordPopup();
       await save();
+      questions?.close();
       reader.destroy();
     },
   };
@@ -523,6 +584,14 @@ export async function openReader(container, book, { onBack, onSavedWords, onAbou
       el('p', {}, 'Boken kunde inte öppnas.'), el('p', { class: 'muted' }, bookErrorMessage(error, book.title))));
   }
   loading.remove();
+  // Frågorna läses in när boken har öppnats (kapitlen kommer ur läsaren), och kapitlet som visas får sina.
+  try {
+    await questions.load();
+    reader.refreshMarks();
+    questions.onShown(currentPlace);
+  } catch (error) {
+    console.warn('Frågorna kunde inte läsas in', error);
+  }
   // Boken har öppnats: platsen nu är utgångsläget, och först en flytt härifrån sparas.
   baseline = positionKey(location?.position);
   stage.focus({ preventScroll: true });

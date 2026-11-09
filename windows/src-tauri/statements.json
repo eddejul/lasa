@@ -122,6 +122,32 @@
         "CREATE TABLE IF NOT EXISTS meta (",
         "  key TEXT PRIMARY KEY,",
         "  value TEXT NOT NULL",
+        ");",
+        "CREATE TABLE IF NOT EXISTS question_answers (",
+        "  book TEXT NOT NULL,",
+        "  question TEXT NOT NULL,",
+        "  status TEXT NOT NULL,",
+        "  answered INTEGER NOT NULL DEFAULT 1,",
+        "  updated REAL NOT NULL,",
+        "  PRIMARY KEY (book, question)",
+        ");",
+        "CREATE TABLE IF NOT EXISTS ai_questions (",
+        "  book TEXT,",
+        "  chapter TEXT,",
+        "  part INTEGER,",
+        "  chapter_title TEXT,",
+        "  model TEXT,",
+        "  created REAL,",
+        "  summary TEXT,",
+        "  concepts TEXT,",
+        "  questions TEXT,",
+        "  PRIMARY KEY (book, chapter, part)",
+        ");",
+        "CREATE TABLE IF NOT EXISTS question_files (",
+        "  book TEXT PRIMARY KEY,",
+        "  name TEXT NOT NULL,",
+        "  json TEXT NOT NULL,",
+        "  updated REAL NOT NULL",
         ");"
       ],
       "columns": {
@@ -145,6 +171,16 @@
           [
             "modified",
             "INTEGER NOT NULL DEFAULT 0"
+          ]
+        ],
+        "question_answers": [
+          [
+            "my_answer",
+            "TEXT NOT NULL DEFAULT ''"
+          ],
+          [
+            "feedback",
+            "TEXT NOT NULL DEFAULT ''"
           ]
         ]
       },
@@ -231,6 +267,22 @@
     "books_registry": [
       "bibliotek",
       "SELECT id, title, author, format, ext, file_name, size, added, opened, position, progress, cover, position_updated, sha256, missing, modified FROM books"
+    ],
+    "question_answers_of_book": [
+      "bibliotek",
+      "SELECT question, status, answered, updated, my_answer, feedback FROM question_answers WHERE book = ?"
+    ],
+    "ai_questions_of_book": [
+      "bibliotek",
+      "SELECT chapter, part, chapter_title, model, created, summary, concepts, questions FROM ai_questions WHERE book = ? ORDER BY chapter, part"
+    ],
+    "ai_questions_other_books": [
+      "bibliotek",
+      "SELECT a.book, b.title, b.opened, a.created, a.summary, a.concepts FROM ai_questions a JOIN books b ON b.id = a.book WHERE a.book != ? AND b.missing = 0 AND a.questions != '[]' ORDER BY b.opened DESC, a.created DESC"
+    ],
+    "question_file_of_book": [
+      "bibliotek",
+      "SELECT name, json FROM question_files WHERE book = ?"
     ]
   },
   "write": {
@@ -317,6 +369,34 @@
     "book_restore": [
       "bibliotek",
       "UPDATE books SET missing = 0, file_name = ?, modified = ? WHERE id = ?"
+    ],
+    "ai_questions_save": [
+      "bibliotek",
+      "INSERT OR REPLACE INTO ai_questions (book, chapter, part, chapter_title, model, created, summary, concepts, questions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ],
+    "ai_questions_delete_chapter": [
+      "bibliotek",
+      "DELETE FROM ai_questions WHERE book = ? AND chapter = ?"
+    ],
+    "question_status_set": [
+      "bibliotek",
+      "INSERT INTO question_answers (book, question, status, answered, updated) VALUES (?, ?, ?, 1, ?) ON CONFLICT (book, question) DO UPDATE SET status = excluded.status, answered = answered + 1, updated = excluded.updated"
+    ],
+    "question_my_answer_set": [
+      "bibliotek",
+      "INSERT INTO question_answers (book, question, status, answered, updated, my_answer) VALUES (?, ?, '', 0, ?, ?) ON CONFLICT (book, question) DO UPDATE SET my_answer = excluded.my_answer, updated = excluded.updated"
+    ],
+    "question_feedback_set": [
+      "bibliotek",
+      "INSERT INTO question_answers (book, question, status, answered, updated, my_answer, feedback) VALUES (?, ?, '', 0, ?, ?, ?) ON CONFLICT (book, question) DO UPDATE SET my_answer = excluded.my_answer, feedback = excluded.feedback, updated = excluded.updated"
+    ],
+    "question_file_save": [
+      "bibliotek",
+      "INSERT OR REPLACE INTO question_files (book, name, json, updated) VALUES (?, ?, ?, ?)"
+    ],
+    "question_file_delete": [
+      "bibliotek",
+      "DELETE FROM question_files WHERE book = ?"
     ]
   }
 }
