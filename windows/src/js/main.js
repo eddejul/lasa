@@ -228,6 +228,14 @@ async function start() {
       if (content) renderSavedWords(content);
     }
   });
+  // Gör sökbar (P1): den nya filen syns direkt om biblioteket är framme, och rutan om något saknas kan öppna
+  // Inställningar. En öppen bok stängs aldrig av det.
+  window.addEventListener('lasa-library-changed', () => {
+    if (currentTab === 'library' && !isReaderOpen()) showTab('library');
+  });
+  window.addEventListener('lasa-show-tab', (event) => {
+    if (!isReaderOpen() && TABS.some((item) => item.id === event.detail)) showTab(event.detail);
+  });
   await showTab('library');
   onOpenFiles(openPendingFiles);
   await openPendingFiles();

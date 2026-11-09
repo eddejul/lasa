@@ -452,6 +452,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
 .status-box { cursor: progress; }
 
+/* Gör sökbar (P1): förloppet med Avbryt */
+.ocr-box { display: flex; flex-direction: column; gap: 8px; min-width: min(420px, 100%); }
+.ocr-row { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.ocr-box .progress-bar { background: color-mix(in srgb, var(--bg) 35%, transparent); }
+.ocr-box .progress-fill { background: var(--bg); }
+.ocr-cancel { color: var(--bg); text-decoration: underline; }
+.settings-message p { margin: 0 0 6px; }
+.dialog p, .settings-message { overflow-wrap: anywhere; }
+
 /* Medan en bok öppnas */
 .reader-loading {
   position: absolute;
