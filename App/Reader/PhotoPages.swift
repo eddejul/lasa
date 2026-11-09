@@ -261,14 +261,24 @@ final class PageCropViewController: UIViewController {
     private let frameView = CropFrameView()
     private let hint = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
-    private let loadImage: (@escaping (UIImage?) -> Void) -> Void
+    private let loadPage: (Int, @escaping (UIImage?) -> Void) -> Void
     private var image: UIImage?
     private(set) var crop: PageCrop
+    /// Sidan i rutan. Pilarna visar andra sidor, så att ramen kan provas på flera (samma ram för alla).
+    private(set) var pageIndex: Int
+    private let pageCount: Int
+    private lazy var previousItem = UIBarButtonItem(image: UIImage(systemName: "chevron.left"), style: .plain,
+                                                    target: self, action: #selector(previousTapped))
+    private lazy var nextItem = UIBarButtonItem(image: UIImage(systemName: "chevron.right"), style: .plain,
+                                                target: self, action: #selector(nextTapped))
+    private let pageItem = UIBarButtonItem(title: "", style: .plain, target: nil, action: nil)
 
-    /// `loadImage` ritar hela sidan i bakgrunden (renderarens miniatyr) och svarar på huvudtråden.
-    init(crop: PageCrop, loadImage: @escaping (@escaping (UIImage?) -> Void) -> Void) {
+    /// `loadPage` ritar en hel sida i bakgrunden (renderarens miniatyr) och svarar på huvudtråden.
+    init(crop: PageCrop, pageIndex: Int, pageCount: Int, loadPage: @escaping (Int, @escaping (UIImage?) -> Void) -> Void) {
         self.crop = crop
-        self.loadImage = loadImage
+        self.pageIndex = pageIndex
+        self.pageCount = max(pageCount, 1)
+        self.loadPage = loadPage
         super.init(nibName: nil, bundle: nil)
         title = "Beskär marginalerna"
     }
@@ -287,7 +297,12 @@ final class PageCropViewController: UIViewController {
                                                             action: #selector(doneTapped))
         let full = UIBarButtonItem(title: "Hela sidan", style: .plain, target: self, action: #selector(fullTapped))
         let suggest = UIBarButtonItem(title: "Föreslå", style: .plain, target: self, action: #selector(suggestTapped))
-        toolbarItems = [full, UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil), suggest]
+        previousItem.accessibilityLabel = "Föregående sida"
+        nextItem.accessibilityLabel = "Nästa sida"
+        pageItem.isEnabled = false
+        toolbarItems = [full, UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
+                        previousItem, pageItem, nextItem,
+                        UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil), suggest]
 
         imageView.contentMode = .scaleToFill
         imageView.layer.shadowColor = UIColor.black.cgColor
@@ -310,15 +325,34 @@ final class PageCropViewController: UIViewController {
         view.addSubview(hint)
         spinner.color = palette.inkSoft
         view.addSubview(spinner)
-        spinner.startAnimating()
+        showPage(pageIndex)
+    }
 
-        loadImage { [weak self] image in
-            guard let self = self else { return }
+    /// Visar en annan sida i rutan. Ramen står kvar.
+    func showPage(_ index: Int) {
+        pageIndex = min(max(index, 0), pageCount - 1)
+        pageItem.title = "Sida \(pageIndex + 1) av \(pageCount)"
+        previousItem.isEnabled = pageIndex > 0
+        nextItem.isEnabled = pageIndex < pageCount - 1
+        spinner.startAnimating()
+        let wanted = pageIndex
+        loadPage(wanted) { [weak self] image in
+            guard let self = self, self.pageIndex == wanted else { return }
             self.spinner.stopAnimating()
-            self.image = image
-            self.imageView.image = image
+            if let image = image {
+                self.image = image
+                self.imageView.image = image
+            }
             self.view.setNeedsLayout()
         }
+    }
+
+    @objc private func previousTapped() {
+        showPage(pageIndex - 1)
+    }
+
+    @objc private func nextTapped() {
+        showPage(pageIndex + 1)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -401,7 +435,7 @@ final class PageCropViewController: UIViewController {
             finish(nil)
         }
         if let suggestPages = suggestPages {
-            suggestPages(finish)
+            suggestPages(pageIndex, finish)
             return
         }
         guard let image = image else {
@@ -417,7 +451,7 @@ final class PageCropViewController: UIViewController {
     }
 
     /// Läsaren: förslaget över flera sidor (se `requestSuggestion`).
-    var suggestPages: ((@escaping (PageCrop?) -> Void) -> Void)?
+    var suggestPages: ((Int, @escaping (PageCrop?) -> Void) -> Void)?
 
     var hasImage: Bool {
         image != nil

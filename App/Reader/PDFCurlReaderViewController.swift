@@ -501,16 +501,17 @@ final class PDFCurlReaderViewController: UIViewController {
         let renderer = self.renderer
         let width = min(view.bounds.width, view.bounds.height, 820)
         let scale = displayScale
-        let editor = PageCropViewController(crop: current) { completion in
-            let operation = renderer.thumbnail(for: index, width: width, scale: scale) { image in
+        let editor = PageCropViewController(crop: current, pageIndex: index,
+                                            pageCount: renderer.pageCount) { page, completion in
+            let operation = renderer.thumbnail(for: page, width: width, scale: scale) { image in
                 completion(image)
             }
             // Före förritningen till disken, som annars kan ta flera sekunder på en fotad bok.
             operation.queuePriority = .veryHigh
         }
-        // Föreslå: texten på sidan man läser och fyra sidor runt den, små bilder på renderingskön.
-        editor.suggestPages = { completion in
-            let pages = [index, index + 1, index + 2, index - 1, index + 3].filter { $0 >= 0 && $0 < renderer.pageCount }
+        // Föreslå: texten på sidan i rutan och fyra sidor runt den, små bilder på renderingskön.
+        editor.suggestPages = { center, completion in
+            let pages = [center, center + 1, center + 2, center - 1, center + 3].filter { $0 >= 0 && $0 < renderer.pageCount }
             var crops: [PageCrop] = []
             var left = pages.count
             for page in pages {
@@ -590,7 +591,10 @@ final class PDFCurlReaderViewController: UIViewController {
                      + "(papperet i provboken är 0,10 till 0,90 brett, texten cirka 0,18 till 0,81 och 0,15 till 0,65 högt)")
         let chosen = suggestion ?? PageCrop(rect: CGRect(x: 0.15, y: 0.12, width: 0.7, height: 0.76))
         editor.setCrop(chosen)
-        await pause(0.4)
+        // Pilen visar nästa sida med samma ram.
+        editor.showPage(editor.pageIndex + 1)
+        await pause(1.2)
+        SelfTest.log("Rutan visar sida \(editor.pageIndex + 1), bild \(editor.hasImage ? "ja" : "FEL, ingen")")
         if let shown = presentedViewController?.view {
             SelfTest.saveScreen(shown, name: "02-ramen")
         }
