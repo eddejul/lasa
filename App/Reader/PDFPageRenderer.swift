@@ -25,6 +25,8 @@ final class PDFPageRenderer {
     private var size: CGSize = .zero
     private var scale: CGFloat = 0
     private var theme: ReaderTheme = .white
+    /// P3: den del av sidan som ritas, för hela boken. Ingår i varianten på disken.
+    private(set) var crop: PageCrop = .full
     /// Räknas upp när storlek eller tema ändras. Bilder från en äldre omgång kastas.
     private var generation = 0
 
@@ -117,6 +119,17 @@ final class PDFPageRenderer {
         self.size = size
         self.scale = scale
         self.theme = theme
+        discardImages()
+    }
+
+    /// P3: ramen för hela boken. Ändras den kastas de ritade bilderna, som när storleken ändras.
+    func setCrop(_ crop: PageCrop) {
+        guard crop != self.crop else { return }
+        self.crop = crop
+        discardImages()
+    }
+
+    private func discardImages() {
         generation += 1
         queue.cancelAllOperations()
         pending.removeAll()
@@ -125,9 +138,10 @@ final class PDFPageRenderer {
         recentlyUsed.removeAll()
     }
 
-    /// Variantens namn i diskcachen: storlek, skala och tema.
+    /// Variantens namn i diskcachen: storlek, skala, tema och ramen (P3, tom för hela sidan).
     private var variant: String {
         "\(Int(size.width.rounded()))x\(Int(size.height.rounded()))@\(Int((scale * 10).rounded()))-\(theme.rawValue)"
+            + crop.variantSuffix
     }
 
     /// Bilden om den redan är ritad. Ritar aldrig något själv.
@@ -189,6 +203,7 @@ final class PDFPageRenderer {
         let size = self.size
         let scale = self.scale
         let theme = self.theme
+        let crop = self.crop
         let variant = self.variant
         let worker = self.worker
         var order: [Int] = []
@@ -202,7 +217,8 @@ final class PDFPageRenderer {
             operation.qualityOfService = .utility
             operation.addExecutionBlock { [weak operation] in
                 guard let operation = operation, !operation.isCancelled, !cache.contains(index, variant: variant),
-                      let image = worker.render(index: index, size: size, scale: scale, theme: theme) else { return }
+                      let image = worker.render(index: index, size: size, scale: scale, theme: theme, crop: crop)
+                else { return }
                 cache.store(image, index: index, variant: variant)
             }
             prefills.append(operation)
@@ -301,6 +317,7 @@ final class PDFPageRenderer {
         let worker = self.worker
         let cache = diskCache
         let variant = self.variant
+        let crop = self.crop
 
         let operation = BlockOperation()
         operation.queuePriority = priority
@@ -316,7 +333,7 @@ final class PDFPageRenderer {
                 }
                 return
             }
-            let image = worker.render(index: index, size: size, scale: scale, theme: theme)
+            let image = worker.render(index: index, size: size, scale: scale, theme: theme, crop: crop)
             let milliseconds = (CACurrentMediaTime() - started) * 1000
             DispatchQueue.main.async {
                 self?.record(milliseconds, index: index, ok: image != nil)
@@ -517,18 +534,25 @@ private final class PDFRenderWorker {
         return text.isEmpty ? nil : text
     }
 
-    func render(index: Int, size: CGSize, scale: CGFloat, theme: ReaderTheme) -> UIImage? {
+    func render(index: Int, size: CGSize, scale: CGFloat, theme: ReaderTheme, crop: PageCrop = .full) -> UIImage? {
         guard size.width >= 1, size.height >= 1, scale > 0,
               let page = document.page(at: index) else {
             return nil
         }
         let factor = thumbnailFactor(using: page)
-        let requested = CGSize(width: size.width * scale / factor,
-                               height: size.height * scale / factor)
-        let image = page.thumbnail(of: requested, for: .mediaBox)
+        // P3: med en ram ritas hela sidan så stor att ramens del fyller ytan, och den delen skärs ut.
+        let shown = page.bounds(for: .mediaBox).applying(page.transform(for: .mediaBox)).standardized.size
+        let target = crop.isFull ? size : crop.fullPageSize(fitting: size, page: shown)
+        let requested = CGSize(width: target.width * scale / factor,
+                               height: target.height * scale / factor)
+        var image = page.thumbnail(of: requested, for: .mediaBox)
         // En tom bild betyder att ritningen misslyckades.
         guard image.size.width >= 1, image.size.height >= 1, image.cgImage != nil || image.ciImage != nil else {
             return nil
+        }
+        if !crop.isFull {
+            guard let cut = crop.cut(image, page: shown) else { return nil }
+            image = cut
         }
         return PageImageStyler.apply(theme, to: image)
     }

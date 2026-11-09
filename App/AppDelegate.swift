@@ -8,6 +8,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         // G4: loggen i Filer och Apples rapporter om krascher och frysningar.
         AppLog.shared.writeLaunch()
         DiagnosticReports.shared.start()
+        // P5: vilka språk Apples Vision kan läsa på enheten, en rad i loggen.
+        VisionProbe.logSupportedLanguagesSoon()
         return true
     }
 

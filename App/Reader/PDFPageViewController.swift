@@ -153,6 +153,28 @@ final class PDFPageViewController: UIViewController {
         return imageView.frame
     }
 
+    /// P3: ramen som bilden som visas ritades med. Den gamla bilden står kvar tills den nya är ritad.
+    private var imageCrop: PageCrop = .full
+
+    /// Självtestet: ramen som sidbilden som syns ritades med.
+    var shownCrop: PageCrop {
+        imageCrop
+    }
+
+    /// P3: var hela sidan skulle ligga i bladet. Samma som `imageFrame` utan ram. All omräkning mellan sidans
+    /// koordinater och bladet (`PDFPageGeometry`) ska få den här rutan, aldrig `imageFrame`.
+    var pageFrame: CGRect? {
+        imageFrame.map { imageCrop.pageFrame(for: $0) }
+    }
+
+    private func showImage(_ image: UIImage) {
+        imageView.image = image
+        if renderer.crop != imageCrop {
+            imageCrop = renderer.crop
+            overlaysDirty = true
+        }
+    }
+
     /// Markerar ett ord som slås upp. Rutorna är i bladets koordinater.
     func showHighlight(_ rects: [CGRect]) {
         clearHighlight()
@@ -226,7 +248,7 @@ final class PDFPageViewController: UIViewController {
 
     /// En ruta i sidans koordinater omräknad till bladet, när sidbilden finns.
     func viewRect(forPageRect rect: CGRect) -> CGRect? {
-        guard let frame = imageFrame, let page = pdfPage else { return nil }
+        guard let frame = pageFrame, let page = pdfPage else { return nil }
         return PDFPageGeometry.viewRect(for: rect, imageFrame: frame, page: page)
     }
 
@@ -294,13 +316,16 @@ final class PDFPageViewController: UIViewController {
         marksView.frame = view.bounds
         marksView.subviews.forEach { $0.removeFromSuperview() }
         questionFrames = [:]
-        guard !frame.isNull, let page = pdfPage else {
+        guard !frame.isNull, let page = pdfPage, let pageFrame = pageFrame else {
             ribbon.isHidden = true
             return
         }
+        // P3: på en beskuren sida räknas rutorna mot hela sidans plats, och det som hamnar utanför ramen
+        // (i den bortskurna marginalen) ritas inte.
+        let visible = frame.insetBy(dx: -2, dy: -2)
         if !questionDots.isEmpty {
             let placements = questionDots.map { dot -> QuestionDotPlacement in
-                let y = dot.pageRect.map { PDFPageGeometry.viewRect(for: $0, imageFrame: frame, page: page).midY }
+                let y = dot.pageRect.map { PDFPageGeometry.viewRect(for: $0, imageFrame: pageFrame, page: page).midY }
                     ?? frame.minY + frame.height * CGFloat(dot.fraction)
                 return QuestionDotPlacement(id: dot.id, number: dot.number, status: dot.status, anchorY: y)
             }
@@ -310,7 +335,8 @@ final class PDFPageViewController: UIViewController {
         }
         for mark in marks {
             for rect in mark.rects {
-                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: frame, page: page)
+                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: pageFrame, page: page)
+                guard shown.intersects(visible) else { continue }
                 let fill = UIView(frame: shown.insetBy(dx: -1.5, dy: -1))
                 fill.backgroundColor = mark.color.overlay(dark: darkMarks)
                 fill.layer.cornerRadius = 2
@@ -326,7 +352,8 @@ final class PDFPageViewController: UIViewController {
         let known = Theme.current.inkSoft.withAlphaComponent(0.7)
         for mark in wordMarks {
             for rect in mark.rects {
-                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: frame, page: page)
+                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: pageFrame, page: page)
+                guard shown.intersects(visible) else { continue }
                 let line = UIView(frame: CGRect(x: shown.minX, y: shown.maxY + 1, width: shown.width, height: 2))
                 line.isUserInteractionEnabled = false
                 if mark.isKnown {
@@ -358,7 +385,7 @@ final class PDFPageViewController: UIViewController {
             flashRects = []
             flashViews.forEach { $0.removeFromSuperview() }
             flashViews = rects.map { rect in
-                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: frame, page: page).insetBy(dx: -3, dy: -2)
+                let shown = PDFPageGeometry.viewRect(for: rect, imageFrame: pageFrame, page: page).insetBy(dx: -3, dy: -2)
                 let box = UIView(frame: shown)
                 box.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.25)
                 box.layer.borderColor = UIColor.systemOrange.cgColor
@@ -393,14 +420,14 @@ final class PDFPageViewController: UIViewController {
             return
         }
         if let image = renderer.cachedImage(for: pageIndex) {
-            imageView.image = image
+            showImage(image)
             view.setNeedsLayout()
             return
         }
         let index = pageIndex
         renderer.requestImage(for: index, completion: { [weak self] image in
             guard let self = self, self.pageIndex == index else { return }
-            self.imageView.image = image
+            self.showImage(image)
             self.setFailureShown(false)
             self.view.setNeedsLayout()
         }, failure: { [weak self] in

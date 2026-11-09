@@ -60,7 +60,9 @@ enum Backup {
     private static let positionsName = "lasepositioner.json"
     /// Nycklarna i UserDefaults som hör till läspositionerna: under filnamnet (före G3) och under bokens id.
     private static let positionPrefixes = ["position.", "location.", "positionDate.",
-                                           "bookPosition.", "bookLocation.", "bookPositionDate."]
+                                           "bookPosition.", "bookLocation.", "bookPositionDate.",
+                                           // P3: bokens ram för beskärningen.
+                                           PageCropStore.prefix]
 
     static var directory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

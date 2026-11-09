@@ -619,7 +619,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         books = scanned.books
         guard isViewLoaded else { return }
         if !showsEmptyForSelfTest {
-            CourseStore.shared.addFolderCourses(for: books)
+            // P4: en mapp med bara txt-filer till PDF:er (undermappen txt) blir ingen egen kurs.
+            CourseStore.shared.addFolderCourses(for: PDFTextCompanion.withoutCompanions(books))
         }
         reviewCount = UserWords.shared.reviewCount()
         savedCount = UserWords.shared.savedWords().count
@@ -643,7 +644,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     /// Bygger om det som visas ur böckerna och registret, utan att läsa Böcker igen.
     private func rebuildItems() {
         records = Dictionary(BookRegistry.shared.records().map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let books = showsEmptyForSelfTest ? [] : self.books
+        // P4: en txt-fil bredvid sin PDF (samma namn) är PDF:ens textläge och syns inte som en egen bok.
+        let books = showsEmptyForSelfTest ? [] : PDFTextCompanion.withoutCompanions(self.books)
         courses = CourseStore.shared.courses()
         let explicit = CourseStore.shared.membership()
         allItems = books.map { book in
