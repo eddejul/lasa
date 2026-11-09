@@ -185,7 +185,8 @@ enum PageCropSuggestion {
         let ink = max(paper - 80, 0)
         func value(_ x: Int, _ y: Int) -> Int { Int(gray[y * width + x]) }
 
-        // 1. Papperet: den längsta följden kolumner, sedan rader, där mer än hälften är ljust.
+        // 1. Papperet: den längsta följden kolumner, sedan rader, där minst en tiondel är ljust. Textrader i en
+        // nedskalad bild är mest grå, så ett högre krav delade papperet vid varje stycke (provboken 9 nov).
         func longestRun(_ flags: [Bool]) -> Range<Int>? {
             var best: Range<Int>?
             var start: Int?
@@ -203,11 +204,11 @@ enum PageCropSuggestion {
             return best
         }
         let columns = (0..<width).map { x in
-            (0..<height).filter { value(x, $0) >= bright }.count * 2 > height
+            (0..<height).filter { value(x, $0) >= bright }.count * 10 > height
         }
         guard let paperX = longestRun(columns), paperX.count > width / 3 else { return nil }
         let rows = (0..<height).map { y in
-            paperX.filter { value($0, y) >= bright }.count * 2 > paperX.count
+            paperX.filter { value($0, y) >= bright }.count * 10 > paperX.count
         }
         guard let paperY = longestRun(rows), paperY.count > height / 3 else { return nil }
 
@@ -218,8 +219,15 @@ enum PageCropSuggestion {
         let innerX = (paperX.lowerBound + insetX)..<(paperX.upperBound - insetX)
         let innerY = (paperY.lowerBound + insetY)..<(paperY.upperBound - insetY)
         guard !innerX.isEmpty, !innerY.isEmpty else { return nil }
-        let inkColumns = innerX.filter { x in innerY.filter { value(x, $0) < ink }.count >= 2 }
-        let inkRows = innerY.filter { y in innerX.filter { value($0, y) < ink }.count >= 2 }
+        // En kolumn eller rad som är mörk nästan hela vägen är en skugga eller bokens kant, inte text.
+        let inkColumns = innerX.filter { x in
+            let dark = innerY.filter { value(x, $0) < ink }.count
+            return dark >= 2 && dark * 4 <= innerY.count * 3
+        }
+        let inkRows = innerY.filter { y in
+            let dark = innerX.filter { value($0, y) < ink }.count
+            return dark >= 2 && dark * 4 <= innerX.count * 3
+        }
         guard let left = inkColumns.first, let right = inkColumns.last,
               let top = inkRows.first, let bottom = inkRows.last, right > left, bottom > top else { return nil }
         // Lite luft runt texten, så att inga bokstäver hamnar i kanten.
