@@ -84,6 +84,15 @@ final class PhotoPagesTests: XCTestCase {
         XCTAssertEqual(crop.rect.maxX, 0.75, accuracy: 0.05)
         XCTAssertEqual(crop.rect.minY, 50.0 / 260.0, accuracy: 0.05)
         XCTAssertEqual(crop.rect.maxY, 170.0 / 260.0, accuracy: 0.05)
+        // Text ända ut till papperets kant: ramen stannar vid papperet och tar inte med bordet.
+        var edge = gray
+        for y in 100..<105 {
+            for x in 150..<180 {
+                edge[y * width + x] = 30
+            }
+        }
+        let atEdge = PageCropSuggestion.suggest(gray: edge, width: width, height: height)
+        XCTAssertLessThanOrEqual(atEdge?.rect.maxX ?? 1, 0.9 + 0.0001)
         // Flera sidor: ramen rymmer texten på alla.
         let wide = PageCrop(rect: CGRect(x: 0.1, y: 0.3, width: 0.8, height: 0.4))
         let union = PageCropSuggestion.union([crop, wide])

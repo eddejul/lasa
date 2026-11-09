@@ -238,7 +238,10 @@ enum PageCropSuggestion {
                           y: (Double(top) - padY) / Double(height),
                           width: (Double(right - left + 1) + 2 * padX) / Double(width),
                           height: (Double(bottom - top + 1) + 2 * padY) / Double(height))
-            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            // Aldrig utanför papperet: luften runt texten får inte ta med en remsa av bordet (provboken 9 nov).
+            .intersection(CGRect(x: Double(paperX.lowerBound) / Double(width), y: Double(paperY.lowerBound) / Double(height),
+                                 width: Double(paperX.count) / Double(width), height: Double(paperY.count) / Double(height)))
+        guard !rect.isNull, rect.width > 0, rect.height > 0 else { return nil }
         let crop = PageCrop(rect: rect).clamped()
         // Mindre än tre procent att vinna åt båda hållen: inget förslag.
         guard crop.rect.width < 0.97 || crop.rect.height < 0.97 else { return nil }
