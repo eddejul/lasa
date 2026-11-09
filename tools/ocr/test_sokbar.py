@@ -105,7 +105,8 @@ def main(argv):
         d.save(gammal)
         d.close()
         rk, ut, _ = kor(gammal, os.path.join(mapp, "ut2.pdf"), *extra)
-        kontroll(rk == 1 and "har redan text" in ut, f"sidor med text stoppas utan --ersatt-text ({ut.strip()[-80:]})")
+        kontroll(rk == 5 and ut.strip() == f"HAR_TEXT {len(facit)} {len(facit)}",
+                 f"sidor med text stoppas utan --ersatt-text ({ut.strip()[-80:]})")
         rk, ut, _ = kor(gammal, os.path.join(mapp, "ut3.pdf"), "--ersatt-text", "--sidor", "1", *extra)
         if rk == 0:
             d = fitz.open(os.path.join(mapp, "ut3.pdf"))
@@ -125,6 +126,31 @@ def main(argv):
         rk, ut, _ = kor(test, os.path.join(mapp, "ut4.pdf"), "--avbryt-fil", avbryt, "--tmp", tmp2, *extra)
         kontroll(rk == 4 and "AVBRUTEN" in ut and not os.path.exists(os.path.join(mapp, "ut4.pdf"))
                  and not os.listdir(tmp2), "avbrottsfilen stoppar körningen och inga filer blir kvar")
+
+        # Textlagret på roterade och beskurna sidor: orden ska hamna där sidbilden visar dem.
+        sys.path.insert(0, HAR)
+        import sokbar_pdf
+        sokbar_pdf.importera()
+        rader = [[("Första", 60, 90, 130, 104), ("raden", 140, 92, 190, 104)],
+                 [("Åsikter", 60, 120, 128, 134), ("här", 138, 120, 170, 134)]]
+        for vinkel in (0, 90, 180, 270):
+            d = fitz.open()
+            sida = d.new_page(width=420, height=595)
+            sida.set_cropbox(fitz.Rect(10, 20, 410, 580))
+            sida.set_rotation(vinkel)
+            sokbar_pdf.lagg_text(d, sida, [rader], 1.0)
+            d.write()
+            # get_text ger koordinater på sidan utan rotation, rotation_matrix för dem till sidbildens.
+            orden = sida.get_text("words")
+            fel_ = []
+            for (text, x0, y0, x1, y1), w in zip([o for r in rader for o in r], orden):
+                mitt = ((x0 + x1) / 2, (y0 + y1) / 2)
+                ruta = fitz.Rect(w[:4]) * sida.rotation_matrix
+                fick = ((ruta.x0 + ruta.x1) / 2, (ruta.y0 + ruta.y1) / 2)
+                if w[4] != text or abs(mitt[0] - fick[0]) > 4 or abs(mitt[1] - fick[1]) > 4:
+                    fel_.append((text, w[4], [round(v) for v in mitt], [round(v) for v in fick]))
+            kontroll(len(orden) == 4 and not fel_, f"rotation {vinkel}: orden på sina platser {fel_ or ''}")
+            d.close()
 
         tom = os.path.join(mapp, "tom-tessdata")
         os.makedirs(tom, exist_ok=True)

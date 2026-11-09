@@ -28,6 +28,7 @@ Rader till standard ut (en per rad, för Sensus förloppsruta):
   SIDA <klara> <antal> <sidnummer> <tecken> <info>
   KLAR <ut.pdf>
   FEL <text>        (returkod 1), AVBRUTEN (returkod 4), SAKNAS <vad> (returkod 3)
+  HAR_TEXT <sidor med text> <sidor>   (returkod 5: sidorna har redan text, kör med --ersatt-text)
 --kontroll skriver en rad JSON: {"ok": ..., "saknas": [...], "python": ..., "tesseract": ..., ...}.
 
 Tesseract startas med --tessdata-dir FÖRE allt annat och med -c tessedit_create_tsv=1 i stället för
@@ -60,6 +61,10 @@ class Avbruten(Exception):
 
 
 class Saknas(Exception):
+    pass
+
+
+class HarText(Exception):
     pass
 
 
@@ -624,26 +629,101 @@ def ta_bort_text(sida):
                           text=fitz.PDF_REDACT_TEXT_REMOVE)
 
 
-def lagg_text(sida, stycken, skala):
-    """Lägger orden som osynlig text (render mode 3) på sina platser, i läsordning. Varje ord sträcks i
-    sidled till sin ruta, och varje ord utom radens sista får ett mellanslag efter sig."""
-    derot = sida.derotation_matrix
+_HELV = []
+
+
+def helvetica():
+    if not _HELV:
+        _HELV.append(fitz.Font("helv"))
+    return _HELV[0]
+
+
+def _median(varden):
+    v = sorted(varden)
+    return v[len(v) // 2]
+
+
+def _tal(v):
+    return f"{v:.3f}".rstrip("0").rstrip(".") or "0"
+
+
+def till_pdf(sida):
+    """Matrisen från sidans bildkoordinater (som get_pixmap: roterad, beskuren, origo uppe till vänster) till
+    PDF:ens egna koordinater. PyMuPDF:s transformation_matrix tar inte med rotationen (och inte beskärningen i
+    sidled) på en roterad sida, så den räknas här som sidan utan rotation följd av rotation_matrix."""
     vinkel = sida.rotation
-    for stycke in stycken:
-        for rad_ in stycke:
-            topp = min(o[2] for o in rad_) / skala
-            botten = max(o[4] for o in rad_) / skala
-            hojd = max(1.0, botten - topp)
-            storlek = hojd * 0.82
-            baslinje = botten - hojd * 0.2
-            for nr, (text, x0, _, x1, _) in enumerate(rad_):
-                x0, x1 = x0 / skala, x1 / skala
-                langd = fitz.get_text_length(text, fontname="helv", fontsize=storlek)
-                sx = max(0.05, (x1 - x0) / langd) if langd > 0 else 1.0
-                start = fitz.Point(x0, baslinje) * derot
-                ord_ = text if nr == len(rad_) - 1 else text + " "
-                sida.insert_text(start, ord_, fontname="helv", fontsize=storlek, render_mode=3, rotate=vinkel,
-                                 morph=(start, fitz.Matrix(sx, 1)))
+    if vinkel % 360 == 0:
+        return ~sida.transformation_matrix
+    sida.set_rotation(0)
+    utan = sida.transformation_matrix
+    sida.set_rotation(vinkel)
+    return ~(utan * sida.rotation_matrix)
+
+
+def lagg_text(doc, sida, stycken, skala):
+    """Lägger orden som osynlig text (render mode 3) på sina platser, i läsordning, som en egen
+    innehållsström sist på sidan. Nära Tesseracts egen PDF, som PDFKit på iPaden läser bra:
+    * ett textblock (BT) för hela sidan och en teckenstorlek per rad,
+    * varje ord placeras med Tm och sträcks till sin ruta med Tz (inte med cm per ord: när CTM byter skala
+      mellan orden slår pdf.js ihop orden utan mellanslag, provat 9 november),
+    * ordet och ett mellanslag (utom radens sista) pressas in i ordets ruta. PDFKit och MuPDF får
+      mellanslaget, och pdf.js, som hoppar över ett mellanslag sist i en textbit, ser glappet till nästa ord,
+    * orden står vågrätt, men varje ord på radens lutande baslinje (en trappa). Med lutningen i textmatrisen
+      (som Tesseract gör) kände pdf.js inte alltid igen radbytet, och sista ordet på en rad flöt ihop med
+      första ordet på nästa. Vågrätt gav 0 hopslagna ord på en riktig Lindqvist-sida (550 ord), lutande 4.
+    Helvetica med WinAnsi-kodning, så å, ä och ö följer med. Sidans koordinater (som sidbilden) räknas om till
+    PDF:ens med sidans transformation_matrix, så att roterade och beskurna sidor också blir rätt."""
+    rader = [r for s in stycken for r in s if r]
+    if not rader:
+        return
+    sida.insert_font(fontname="helv")
+    sida.wrap_contents()
+    inv = till_pdf(sida)
+    lin = fitz.Matrix(inv.a, inv.b, inv.c, inv.d, 0, 0)
+    ops = ["q", "BT", "3 Tr"]
+    for rad_ in rader:
+        ord_ = [(t, x0 / skala, y0 / skala, x1 / skala, y1 / skala) for t, x0, y0, x1, y1 in rad_]
+        storlek = max(1.0, _median(o[4] - o[2] for o in ord_))
+        # Radens lutning ur ordens nederkant (minsta kvadrat), baslinjen ur medianen: ord med nedstapel (g, p)
+        # är färre än ord utan.
+        xs = [(o[1] + o[3]) / 2 for o in ord_]
+        ys = [o[4] for o in ord_]
+        lut = 0.0
+        if len(ord_) >= 2 and max(xs) - min(xs) > 1:
+            mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+            namnare = sum((x - mx) ** 2 for x in xs)
+            lut = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / namnare if namnare else 0.0
+            lut = max(-0.15, min(0.15, lut))
+        bas = _median(y - lut * x for x, y in zip(xs, ys)) - storlek * 0.12
+        u = fitz.Point(1, 0) * lin
+        v = fitz.Point(0, -1) * lin  # uppåt på sidan
+        lu, lv = abs(u), abs(v)
+        u, v = fitz.Point(u.x / lu, u.y / lu), fitz.Point(v.x / lv, v.y / lv)
+        ops.append(f"/helv {_tal(storlek)} Tf")
+        for nr, (text, x0, _, x1, _) in enumerate(ord_):
+            text_ = text if nr == len(ord_) - 1 else text + " "
+            # Bara tecken som finns i WinAnsi (cp1252), andra blir ?. Längden mäts med fitz.Font: fitz.get_text_length
+            # räknar fel på å, ä och ö (PyMuPDF 1.28, "åäö" ger 1,112 em i stället för 1,668), och då sträcks
+            # orden för långt och flyter ihop med nästa ord i pdf.js.
+            text_ = text_.encode("cp1252", errors="replace").decode("cp1252")
+            langd = helvetica().text_length(text_, fontsize=storlek)
+            # Är glappet till nästa ord mindre än en femtedel av teckenstorleken kortas ordet, så att pdf.js ser ett
+            # mellanslag (annars blir två ord ett).
+            slut = x1
+            if nr < len(ord_) - 1:
+                slut = max(x0 + 0.5 * (x1 - x0), min(x1, ord_[nr + 1][1] - 0.2 * storlek))
+            bredd = slut - x0
+            tz = max(5.0, 100.0 * bredd / langd) if langd > 0 else 100.0
+            o = fitz.Point(x0, bas + lut * x0) * inv
+            kod = text_.encode("cp1252").hex()
+            ops.append(f"{_tal(u.x)} {_tal(u.y)} {_tal(v.x)} {_tal(v.y)} {_tal(o.x)} {_tal(o.y)} Tm "
+                       f"{_tal(tz)} Tz <{kod}> Tj")
+    ops += ["ET", "Q"]
+    xref = doc.get_new_xref()
+    doc.update_object(xref, "<< >>")
+    doc.update_stream(xref, ("\n".join(ops) + "\n").encode("ascii"))
+    innehall = sida.get_contents() + [xref]
+    doc.xref_set_key(sida.xref, "Contents", "[" + " ".join(f"{x} 0 R" for x in innehall) + "]")
 
 
 def textfil(stycken):
@@ -713,8 +793,7 @@ def kor(args, fria):
     if not args.get("ersatt-text"):
         med_text = [i for i in sidor if len(doc[i].get_text().strip()) > 20]
         if med_text:
-            raise RuntimeError(f"{len(med_text)} av {len(sidor)} sidor har redan text. Kör med --ersatt-text "
-                               "för att byta textlagret.")
+            raise HarText(f"{len(med_text)} {len(sidor)}")
     rotmapp = args.get("tmp") or None
     if rotmapp:
         os.makedirs(rotmapp, exist_ok=True)
@@ -762,7 +841,7 @@ def kor(args, fria):
             s = doc[i]
             if args.get("ersatt-text"):
                 ta_bort_text(s)
-            lagg_text(s, stycken, skala)
+            lagg_text(doc, s, stycken, skala)
             texter.append(f"--- sida {i + 1} ---\n{textfil(stycken)}")
         meta = {k: v for k, v in (doc.metadata or {}).items()
                 if k in ("title", "author", "subject", "keywords", "creator", "creationDate", "modDate") and v}
@@ -802,6 +881,10 @@ def main(argv):
     except Saknas as fel:
         rad("SAKNAS", fel)
         return 3
+    except HarText as fel:
+        rad("HAR_TEXT", fel)
+        print("Sidorna har redan text. Kör med --ersatt-text för att byta textlagret.", file=sys.stderr)
+        return 5
     except Avbruten:
         rad("AVBRUTEN")
         return 4
