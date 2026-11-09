@@ -57,7 +57,7 @@ Så blev den (7 november 2026, detaljer i `windows/README.md`):
 * **EPUB och text:** foliate-js med CSS-kolumner, två kolumner i brett fönster. Textfiler görs om till HTML med samma regler som TextBookConverter.swift. Content-Security-Policy stoppar skript i EPUB-filer.
 * **Böcker** identifieras med SHA-256 av filens innehåll (gemener hex), samma id som synken i fas 6 ska använda. Sparade ord har kolumnerna `uuid` och `book_id` utöver iPadens.
 * **Bygget:** workflow `Windows build`, ordboken med samma cache som iOS-bygget, installationsfiler (NSIS och MSI) i artefakten `Lasa-windows`. Osignerade.
-* **Synk (fas 6):** läspositioner (PDF och EPUB, inte textfiler) och sparade ord enligt `docs/SYNK.md`, i `windows/src/js/sync.js`. Publik nyckel och förnyelsetoken i Windows Autentiseringshanteraren (crate keyring). Markeringar och bokmärken synkas inte till Windows.
+* **Synk (F1, våg 9):** läspositioner (PDF och EPUB, inte textfiler) och sparade ord via en fil per enhet i en mapp i iCloud Drive (iCloud för Windows), enligt `docs/SYNK.md`, i `windows/src/js/sync.js` och `syncfile.js`. iPadens markeringar och bokmärken följer med oförändrade i datorns fil men visas inte där.
 * **Natten 8 november 2026 (version 0.7.0):** markeringar i fyra färger med anteckningar och bokmärken (i `bibliotek.sqlite`, ingen synk ännu), sök i boken (Ctrl+F), repetition av sparade ord, AI-knappen, Öppna med i Utforskaren, valet Två sidor under Visning, en lista över kortkommandon (?), tema som följer systemet och stora PDF:er som läses i bitar. Detaljer i `windows/README.md`.
 * **Version 0.8.0 (8 november 2026):** böckerna har ett eget id som på iPaden (G3), Ta bort behåller markeringarna och läspositionen, PDF kan visas som Rulla (alla sidor efter varandra, bara de närmaste ritade) eller Bläddra, och appen har Sensus-ikonen.
 * **Version 0.8.1 (8 november 2026):** markeringar för böcker som togs bort i 0.7.0 eller tidigare kommer tillbaka när samma fil läggs till igen, och frågan Ny version av boken visar båda filnamnen.
@@ -204,8 +204,8 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Kortläget (U6, 9 november 2026):** kortet Repetera i biblioteket med antalet ord, en tunn framstegslinje och ett papperskort med ordet, meningen och källan, svaret tonas fram vid ett tryck och betygen ligger längst ner med intervallet under. Filter överst: alla ord, en bok eller en kurs. Svårt ger alltid kortare tid än Bra (nytt ord: 10 min, 6 tim, 1 dag, 4 dagar). Småord sparas aldrig, och ord utan svar i ordboken kommer inte med. Ingen tid för omgången, bara antal ord.
 * **Uppläsning:** byggdes med AVSpeechSynthesizer men togs bort 8 november 2026, eftersom rösterna lät som en robot. Ett bättre alternativ undersöks senare.
 * **AI-knappen:** se 5.5. Modellen är `gemini-3.5-flash-lite` från början och kan bytas under Inställningar.
-* **Synk:** se `docs/SYNK.md`. Supabase med e-post och lösenord, regler som bara släpper fram den inloggades rader, och den nyaste ändringen vinner rad för rad.
-* **Inställningar:** kugghjulet i biblioteket: bläddringsljud, AI-nyckel och modell, synkens adress, nyckel och inloggning, säkerhetskopian och Dela loggen.
+* **Synk:** se `docs/SYNK.md`. Byggdes först mot Supabase, som aldrig sattes upp, och ersattes i våg 9 (9 november 2026) av en fil per enhet i en mapp i iCloud Drive (F1). Den nyaste ändringen vinner rad för rad.
+* **Inställningar:** kugghjulet i biblioteket: bläddringsljud, AI-nyckel och modell, Synk (guiden för mappen i iCloud Drive), säkerhetskopian och Dela loggen.
 
 ### 6.6 Grunden (våg 1, 8 november 2026)
 
@@ -320,8 +320,8 @@ Varje fas är klar först när Edvin har testat den på iPaden (fas 5 på Window
 
 ### Synk (fas 6)
 
-* Bokfilerna ligger i en mapp i iCloud Drive. Den nås från iPaden via Filer och från Windows via iCloud för Windows.
-* Läsposition, markeringar och sparade ord synkas via Supabase (gratisnivån). Projektet pausas efter en veckas inaktivitet, data finns kvar.
+* Bokfilerna kan ligga i en mapp i iCloud Drive, vald per bok (B4). Den nås från iPaden via dokumentväljaren (säkerhetsbokmärke) och från Windows via iCloud för Windows.
+* Läsposition, markeringar och sparade ord synkas med en fil per enhet i samma mapp (F1, våg 9). Ingen server och inget konto.
 * Böcker identifieras med en hash av filens innehåll, inte med filnamnet.
 
 ## 9. Risker

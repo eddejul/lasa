@@ -78,7 +78,7 @@ export async function deleteBookFile(id, ext) {
   return invoke('library_delete', { id, ext });
 }
 
-/** Synkens hemligheter (sync-publishable-key, sync-refresh-token) i Windows Autentiseringshanteraren. */
+/** Hemligheter (gemini-api-key) i Windows Autentiseringshanteraren. */
 export async function secretGet(name) {
   return invoke('secret_get', { name });
 }
@@ -128,4 +128,37 @@ export function onOpenFiles(callback) {
 export async function openUrl(url) {
   if (tauri) return tauri.invoke('plugin:opener|open_url', { url });
   return http('open_url', { url });
+}
+
+// Synken (F1): filerna i undermappen "Sensus synk" i den valda mappen i iCloud Drive. Rust-delen når bara den
+// undermappen och bara filnamn som slutar på .json.
+
+/** Mappar som ser ut som iCloud Drive på datorn, de med en synkmapp först. */
+export async function syncSuggest() {
+  return invoke('sync_suggest');
+}
+
+/** Provar att skriva, läsa och ta bort en fil i mappen. Kastar ett fel med en svensk förklaring. */
+export async function syncCheck(folder) {
+  return invoke('sync_check', { folder });
+}
+
+/** Synkfilerna: [{ name, size }]. */
+export async function syncList(folder) {
+  return invoke('sync_list', { folder });
+}
+
+/** En synkfil som text. Kastar ett fel om den inte går att läsa (till exempel inte hämtad från iCloud än). */
+export async function syncRead(folder, name) {
+  return invoke('sync_read', { folder, name });
+}
+
+/** Skriver datorns synkfil atomiskt och läser tillbaka den. */
+export async function syncWrite(folder, name, text) {
+  return invoke('sync_write', { folder, name, text });
+}
+
+/** Byter namn på en egen synkfil som inte går att läsa, så att den inte skrivs över. */
+export async function syncSetAside(folder, name) {
+  return invoke('sync_set_aside', { folder, name });
 }

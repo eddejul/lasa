@@ -24,7 +24,7 @@
     ],
     "security": {
       "dangerousDisableAssetCspModification": ["style-src"],
-      "csp":"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob: data:; connect-src 'self' ipc: http://ipc.localhost blob: data: https://*.supabase.co https://generativelanguage.googleapis.com; frame-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
+      "csp":"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob: data:; connect-src 'self' ipc: http://ipc.localhost blob: data: https://generativelanguage.googleapis.com; frame-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {

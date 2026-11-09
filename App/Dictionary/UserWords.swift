@@ -731,6 +731,12 @@ struct SyncWord: Equatable {
 
 extension UserWords {
 
+    /// Falskt om anvandarord.sqlite inte gick att öppna. Då synkar inte synken (F1), så att den egna filen
+    /// aldrig skrivs utan orden.
+    var isAvailableForSync: Bool {
+        db != nil
+    }
+
     /// Alla sparade och borttagna ord, med repetitionen.
     func wordsForSync() -> [SyncWord] {
         var words: [String: SyncWord] = [:]
