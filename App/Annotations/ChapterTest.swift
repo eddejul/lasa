@@ -244,7 +244,7 @@ final class StudyCardStore {
     }
 }
 
-/// Raden som erbjuder testet när sista sidan i ett kapitel vänts (K7): Testa och ett kryss som hoppar över.
+/// Raden som erbjuder testet när sista sidan i ett kapitel vänts (K7): Testa och Hoppa över.
 /// Ligger ovanpå läsaren som raden Ångra och försvinner av sig själv. Rör inte sidans placering.
 @MainActor
 final class ChapterTestOffer: UIView {
@@ -253,7 +253,7 @@ final class ChapterTestOffer: UIView {
     private var onStart: (() -> Void)?
 
     @discardableResult
-    static func show(chapter: String, count: Int, in host: UIView, bottomInset: CGFloat = 96,
+    static func show(chapter: String, count: Int, in host: UIView, bottomInset: CGFloat = 148,
                      start: @escaping () -> Void) -> ChapterTestOffer {
         current?.removeFromSuperview()
         let offer = ChapterTestOffer(chapter: chapter, count: count, start: start)
@@ -307,11 +307,10 @@ final class ChapterTestOffer: UIView {
         test.tintColor = palette.accent
         test.addAction(UIAction { [weak self] _ in self?.startTapped() }, for: .touchUpInside)
         let skip = UIButton(type: .system)
-        skip.setImage(UIImage(systemName: "xmark"), for: .normal)
+        skip.setTitle("Hoppa över", for: .normal)
+        skip.titleLabel?.font = .systemFont(ofSize: 15)
         skip.tintColor = palette.inkSoft
-        skip.accessibilityLabel = "Hoppa över"
         skip.addAction(UIAction { [weak self] _ in self?.hide() }, for: .touchUpInside)
-        skip.widthAnchor.constraint(equalToConstant: 32).isActive = true
 
         let stack = UIStackView(arrangedSubviews: [texts, test, skip])
         stack.spacing = 14
@@ -320,7 +319,7 @@ final class ChapterTestOffer: UIView {
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
