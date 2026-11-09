@@ -170,8 +170,15 @@ enum PageCropSuggestion {
     /// Ren logik för XCTest: `gray` är en gråskalebild rad för rad uppifrån, 0 svart och 255 vitt.
     static func suggest(gray: [UInt8], width: Int, height: Int) -> PageCrop? {
         guard width > 10, height > 10, gray.count == width * height else { return nil }
+        var sorted = gray.sorted()
+        var gray = gray
+        // Mörk bakgrund (Mörkt i Aa vänder sidbilden): papperet är det mesta av bilden, så en mörk mittpunkt
+        // betyder ljus text på mörkt papper. Vänd bilden, så gäller samma regler.
+        if sorted[sorted.count / 2] < 110 {
+            gray = gray.map { 255 - $0 }
+            sorted = gray.sorted()
+        }
         // Papperets ljushet: den 85:e percentilen, så att text och mörka kanter inte drar ner den.
-        let sorted = gray.sorted()
         let paper = Int(sorted[min(Int(Double(sorted.count) * 0.85), sorted.count - 1)])
         guard paper > 90 else { return nil }
         let bright = max(paper - 40, 0)

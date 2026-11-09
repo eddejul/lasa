@@ -502,9 +502,11 @@ final class PDFCurlReaderViewController: UIViewController {
         let width = min(view.bounds.width, view.bounds.height, 820)
         let scale = displayScale
         let editor = PageCropViewController(crop: current) { completion in
-            renderer.thumbnail(for: index, width: width, scale: scale) { image in
+            let operation = renderer.thumbnail(for: index, width: width, scale: scale) { image in
                 completion(image)
             }
+            // Före förritningen till disken, som annars kan ta flera sekunder på en fotad bok.
+            operation.queuePriority = .veryHigh
         }
         editor.onSave = { [weak self] crop in
             guard let self = self else { return }
