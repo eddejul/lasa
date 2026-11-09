@@ -177,6 +177,58 @@ final class AIQuestionsTests: XCTestCase {
         XCTAssertEqual(AIQuestions.parts(of: short), [NSRange(location: 0, length: short.length)])
     }
 
+    /// Edvins data: en databas i formen efter steg 12 går upp till steg 13 utan att något försvinner.
+    func testStepThirteenKeepsTheOldData() throws {
+        let db = try SQLiteDatabase(path: ":memory:", readOnly: false)
+        try db.migrate(Array(AnnotationStore.migrations.prefix(12)))
+        XCTAssertEqual(try db.userVersion(), 12)
+        try db.execute("""
+            INSERT INTO question_answers (book, question, status, answered, updated) VALUES ('bok', 's1a', 'kan', 3, 7)
+            """)
+        try db.execute("""
+            INSERT INTO chapter_explanations (id, book, section, chapter, text, covered, missing, feedback, model,
+                created, updated, deleted)
+            VALUES ('e1', 'bok', 3, 'Kapitel 3', 'Min förklaring', 'b:ethos', 'n:logos', '', '', 1, 1, 0)
+            """)
+        try db.execute("""
+            INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+            VALUES ('h1', 'bok', 2, 5, 10, 'Ett citat', 'yellow', 'En anteckning', 1, 1, 0)
+            """)
+        try db.migrate(AnnotationStore.migrations)
+        XCTAssertGreaterThanOrEqual(AnnotationStore.migrations.count, 13)
+        XCTAssertEqual(try db.userVersion(), AnnotationStore.migrations.count)
+        var answer = ""
+        try db.query("SELECT status, answered, my_answer, feedback FROM question_answers WHERE question = 's1a'") {
+            answer = "\($0.string(0))|\($0.int(1))|\($0.string(2))|\($0.string(3))"
+        }
+        XCTAssertEqual(answer, "kan|3||")
+        var explanation = ""
+        try db.query("SELECT text FROM chapter_explanations WHERE id = 'e1'") { explanation = $0.string(0) }
+        XCTAssertEqual(explanation, "Min förklaring")
+        var note = ""
+        try db.query("SELECT note FROM highlights WHERE id = 'h1'") { note = $0.string(0) }
+        XCTAssertEqual(note, "En anteckning")
+        // Steg 13: frågorna per kapitel och del, och svaret med bedömningen.
+        let question = AIStoredQuestion(id: "ai1", typ: "varfor", nar: "efter", fraga: "Varför då?", svar: ["Därför."],
+                                        oppen: false, plats: "nästa gång", kalla: "ett svar", bok: "", position: 305,
+                                        avsnitt: 3, ankare: "nästa gång", kallaAvsnitt: 3, kallaAnkare: "ett svar")
+        try db.execute("""
+            INSERT INTO ai_questions (book, chapter, part, chapter_title, model, created, summary, concepts, questions)
+            VALUES ('bok', 'k3', 1, 'Slingan', 'gemini', 1, 'Kort.', ?, ?)
+            """, [AIQuestionStore.encode(["vana"]), AIQuestionStore.encode([question])])
+        var stored = ""
+        try db.query("SELECT questions FROM ai_questions WHERE book = 'bok' AND chapter = 'k3' AND part = 1") {
+            stored = $0.string(0)
+        }
+        let decoded = try JSONDecoder().decode([AIStoredQuestion].self, from: Data(stored.utf8))
+        XCTAssertEqual(decoded, [question])
+        try db.execute("UPDATE question_answers SET my_answer = 'Mitt svar', feedback = '{}' WHERE question = 's1a'")
+        // Ett kapitel kan inte sparas två gånger med samma del.
+        XCTAssertThrowsError(try db.execute("""
+            INSERT INTO ai_questions (book, chapter, part, created) VALUES ('bok', 'k3', 1, 2)
+            """))
+    }
+
     func testChapterKeysAndOrder() {
         XCTAssertEqual(AIQuestions.chapterKey(chapter: 3), "k3")
         XCTAssertEqual(AIQuestions.chapterKey(firstPage: 11, lastPage: 20), "p11-20")

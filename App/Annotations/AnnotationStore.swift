@@ -300,6 +300,25 @@ final class AnnotationStore {
             );
             CREATE INDEX IF NOT EXISTS chapter_explanations_book ON chapter_explanations (book);
             """,
+        // Steg 13 (K6b): AI-frågorna per bok, kapitel (`k3` eller `p11-20`) och del. `questions` är de behållna
+        // frågorna som JSON, `concepts` en JSON-lista. Ett för kort kapitel sparas med tom lista. Svaret som
+        // skrivits (`my_answer`) och Jämförs bedömning (`feedback`, JSON) sparas med hur det gick. Ingen synk.
+        """
+            CREATE TABLE IF NOT EXISTS ai_questions (
+                book TEXT NOT NULL,
+                chapter TEXT NOT NULL,
+                part INTEGER NOT NULL,
+                chapter_title TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                created REAL NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                concepts TEXT NOT NULL DEFAULT '[]',
+                questions TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY (book, chapter, part)
+            );
+            ALTER TABLE question_answers ADD COLUMN my_answer TEXT NOT NULL DEFAULT '';
+            ALTER TABLE question_answers ADD COLUMN feedback TEXT NOT NULL DEFAULT '';
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.
