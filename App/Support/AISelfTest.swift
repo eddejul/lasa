@@ -146,6 +146,8 @@ enum AISelfTest {
         await pause(7.0)
         library.presentedViewController?.dismiss(animated: false)
         await pause(0.5)
+        // K6b: AI-frågorna i en EPUB och en PDF.
+        await AIQuestionsSelfTest.run(navigation: navigation)
         SelfTest.finish()
     }
 
