@@ -169,7 +169,7 @@ export async function deleteBookmark(id) {
  *  byts mot de senaste. uuid sätts första gången och ändras aldrig. Ett borttaget ord blir sparat igen.
  *  U6: småord (att, det, och, the, of) sparas aldrig, som på iPaden. */
 export async function saveWord({ word, lemma, language, sentence, book, page, bookId }) {
-  if (isStopWord(word, lemma, language)) return;
+  if (isStopWord(word, language)) return;
   const time = now();
   await write('word_save', [word, lemma, language, sentence, book, page, time, time, crypto.randomUUID(), bookId ?? '']);
 }

@@ -312,7 +312,7 @@ final class WordReviewViewController: UIViewController {
     /// Böckerna och kurserna som har sparade ord. Ett sparat filter för en bok eller kurs utan ord visar alla.
     private func loadQueue() {
         let words = UserWords.shared.savedWords()
-            .filter { !ReviewStopWords.contains(word: $0.word, lemma: $0.lemma, language: $0.language) }
+            .filter { !ReviewStopWords.contains(word: $0.word, language: $0.language) }
         let wordBooks = Set(words.map(\.bookID).filter { !$0.isEmpty })
         let records = BookRegistry.shared.records()
         let titles = Dictionary(records.map { ($0.id, $0.displayTitle) }, uniquingKeysWith: { first, _ in first })

@@ -9,6 +9,7 @@ import { dictionary, lookupStats } from './context.js';
 import { explain, isConfigured as aiConfigured } from './gemini.js';
 import { englishPos, guessLanguage } from './language.js';
 import { RARE_ZIPF, TOP_SYNONYMS, normalize } from './lookup.js';
+import { isStopWord } from './review.js';
 import { hidden, hidePair, isSaved, saveWord, unsaveWord } from './store.js';
 import { el, replace } from './ui.js';
 
@@ -256,7 +257,8 @@ async function renderWord(page, body) {
         }
       } }));
   }
-  if (context.book && entry && await isSaved(entry.lemma, language)) {
+  const saved = Boolean(context.book && entry && await isSaved(entry.lemma, language));
+  if (saved) {
     actions.push(row({ text: 'Ta bort från Sparade ord', action: true, danger: true, testid: 'unsave',
       onclick: async () => {
         await unsaveWord(entry.lemma, language);
@@ -269,7 +271,13 @@ async function renderWord(page, body) {
       closeWordPopup();
       openAboutHandler?.();
     } }));
-  const footer = context.book && lookup && !context.removed ? 'Ordet är sparat i Sparade ord.' : null;
+  // Granskning 5, M1: fottexten säger Sparat bara när ordet verkligen är sparat. Ett småord (att, och, det)
+  // sparas aldrig, och då står det varför.
+  let footer = null;
+  if (context.book && lookup && !context.removed) {
+    if (saved) footer = 'Ordet är sparat i Sparade ord.';
+    else if (isStopWord(lookup.word, language)) footer = 'Småord som att, och och det sparas inte i Sparade ord.';
+  }
   sections.push(section(null, actions, footer));
   body.append(...sections);
 }

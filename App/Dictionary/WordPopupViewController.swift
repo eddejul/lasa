@@ -242,8 +242,10 @@ final class WordPopupViewController: UIViewController {
                         onDismiss: @escaping () -> Void) {
         let popup = WordPopupViewController(lookup: lookup, context: context)
         popup.onReady = onReady
-        // Ett ord som slagits upp i en bok sparas med meningen.
-        if context.book != nil, context.savesWord, let lookup = lookup, let lemma = lookup.entries.first?.lemma {
+        // Ett ord som slagits upp i en bok sparas med meningen. Ett småord sparas aldrig (U6), så då väntar
+        // ingen sparning och kortet säger inte Sparat.
+        if context.book != nil, context.savesWord, let lookup = lookup, let lemma = lookup.entries.first?.lemma,
+           !ReviewStopWords.contains(word: lookup.word, language: lookup.language) {
             popup.pendingSave = (lookup.word, lemma, lookup.language)
         }
         let navigation = WordPopupNavigationController(rootViewController: popup)
@@ -377,6 +379,16 @@ final class WordPopupViewController: UIViewController {
         }
         return UserWords.shared.isSaved(lemma: lemma, language: language)
     }
+
+    /// U6: ordet som det stod i texten är ett småord (att, och, det) och sparas aldrig. Kortet säger det i
+    /// stället för Sparat, och Spara säger varför inget sparas.
+    private var isStopWord: Bool {
+        guard let lookup = lookup else { return false }
+        return ReviewStopWords.contains(word: lookup.word, language: lookup.language)
+    }
+
+    /// Spara har tryckts på ett småord: knappen säger då att småord inte sparas.
+    private var stopWordExplained = false
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -631,8 +643,12 @@ final class WordPopupViewController: UIViewController {
 
         var rows: [UIView] = [sentenceLabel]
         var source = WordText.source(book: context.book, pageIndex: context.pageIndex) ?? ""
-        if context.book != nil, let lemma = entry?.lemma, isSaved(lemma: lemma) {
-            source += source.isEmpty ? "Sparat" : ", sparat"
+        if context.book != nil, let lemma = entry?.lemma {
+            if isSaved(lemma: lemma) {
+                source += source.isEmpty ? "Sparat" : ", sparat"
+            } else if context.savesWord, isStopWord {
+                source += source.isEmpty ? "Sparas inte (småord)" : ", sparas inte (småord)"
+            }
         }
         if !source.isEmpty {
             rows.append(makeLabel(source, font: .preferredFont(forTextStyle: .footnote), color: palette.inkSoft))
@@ -736,7 +752,7 @@ final class WordPopupViewController: UIViewController {
     /// O7: alla betydelser. Ett tryck väljer den som passar meningen, och kortet visar sedan bara den.
     private func addSenseList(_ entry: WordEntry) {
         let palette = self.palette
-        let saved = context.book != nil || isSaved(lemma: entry.lemma)
+        let saved = (context.book != nil && !isStopWord) || isSaved(lemma: entry.lemma)
         stack.addArrangedSubview(sectionLabel("Betydelser"))
         stack.setCustomSpacing(4, after: stack.arrangedSubviews.last!)
         stack.addArrangedSubview(makeLabel(saved
@@ -831,7 +847,12 @@ final class WordPopupViewController: UIViewController {
         }
         if let lookup = lookup, let entry = entry {
             let saved = isSaved(lemma: entry.lemma)
-            if context.book != nil || saved || removedWord != nil {
+            if !saved, removedWord == nil, stopWordExplained {
+                // U6: Spara på ett småord sparar inget, och knappen säger det (raden ovanför säger varför).
+                buttons.append(barButton("Sparas inte", symbol: "bookmark.slash", tint: palette.inkSoft) { [weak self] in
+                    self?.toggleSaved()
+                })
+            } else if context.book != nil || saved || removedWord != nil {
                 buttons.append(barButton(saved ? "Sparat" : "Spara", symbol: saved ? "bookmark.fill" : "bookmark",
                                          tint: saved ? palette.success : nil) { [weak self] in
                     self?.toggleSaved()
@@ -984,6 +1005,7 @@ final class WordPopupViewController: UIViewController {
         aiState = .idle
         chosenSenseID = nil
         sensesExpanded = false
+        stopWordExplained = false
         if let entry = other.entries.first,
            let saved = UserWords.shared.senseID(lemma: entry.lemma, language: other.language),
            entry.senses.contains(where: { $0.id == saved }) {
@@ -1002,6 +1024,9 @@ final class WordPopupViewController: UIViewController {
             // Spara direkt efter Sparat i samma kort: ordet kommer tillbaka med repetitionen och bokens id,
             // precis som med Ångra (kortet från ett streck har inget bok-id att spara med).
             restoreRemovedWord()
+        } else if isStopWord {
+            // U6: småord sparas aldrig. Knappen och raden med källan säger det, i stället för att ingenting händer.
+            stopWordExplained = true
         } else if let book = context.book {
             UserWords.shared.save(word: lookup.word, lemma: entry.lemma, language: lookup.language,
                                   sentence: context.sentence, book: book, pageIndex: context.pageIndex ?? 0,
@@ -1114,6 +1139,18 @@ final class WordPopupViewController: UIViewController {
     /// Trycker på Sparat eller Spara, till självtestet (D3-1).
     func toggleSavedForTest() {
         toggleSaved()
+    }
+
+    /// Självtestet (granskning 5, M1): vad kortet säger om sparningen.
+    var saveTextForTest: String {
+        guard let entry = entry else { return "inget ord" }
+        if isSaved(lemma: entry.lemma) {
+            return "Sparat"
+        }
+        if stopWordExplained {
+            return "Sparas inte (småord), knappen säger det"
+        }
+        return isStopWord ? "sparas inte (småord)" : "Spara"
     }
 
     /// Fäller ut betydelserna, till självtestet.

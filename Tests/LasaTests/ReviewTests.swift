@@ -74,20 +74,50 @@ final class ReviewTests: XCTestCase {
     // MARK: Småorden
 
     func testStopWords() {
-        for word in ["att", "det", "och", "en", "ett", "i", "på", "som", "är", "vara", "Det", "ÄR", "att,"] {
-            XCTAssertTrue(ReviewStopWords.contains(word: word, lemma: word, language: .swedish), word)
+        for word in ["att", "det", "och", "en", "ett", "i", "på", "som", "är", "vara", "Det", "ÄR", "att,", "Dem"] {
+            XCTAssertTrue(ReviewStopWords.contains(word: word, language: .swedish), word)
         }
         for word in ["the", "a", "of", "to", "The", "was"] {
-            XCTAssertTrue(ReviewStopWords.contains(word: word, lemma: word, language: .english), word)
+            XCTAssertTrue(ReviewStopWords.contains(word: word, language: .english), word)
         }
-        // Grundformen räcker: "dem" har grundformen "de".
-        XCTAssertTrue(ReviewStopWords.contains(word: "Dem", lemma: "de", language: .swedish))
         // Vanliga innehållsord är inte med, och språket spelar roll.
-        for (word, lemma) in [("kunskap", "kunskap"), ("mitt", "mitt"), ("min", "min"), ("vacker", "vacker")] {
-            XCTAssertFalse(ReviewStopWords.contains(word: word, lemma: lemma, language: .swedish), word)
+        for word in ["kunskap", "mitt", "min", "vacker", "vår", "här", "för", "men", "vad", "väl"] {
+            XCTAssertFalse(ReviewStopWords.contains(word: word, language: .swedish), word)
         }
-        XCTAssertFalse(ReviewStopWords.contains(word: "den", lemma: "den", language: .english))
-        XCTAssertFalse(ReviewStopWords.contains(word: "difficulties", lemma: "difficulty", language: .english))
+        XCTAssertFalse(ReviewStopWords.contains(word: "den", language: .english))
+        XCTAssertFalse(ReviewStopWords.contains(word: "difficulties", language: .english))
+        XCTAssertFalse(ReviewStopWords.contains(word: "might", language: .english))
+        XCTAssertFalse(ReviewStopWords.contains(word: "being", language: .english))
+    }
+
+    /// Granskning 5, M1: bara ordet som det stod i texten jämförs. Innehållsord vars grundform är ett småord
+    /// (jaget, våren, hären, fören, varor, varade) och innehållsord som förut stod i listan (väl, might) sparas och
+    /// kommer med i kön. Att, och och det sparas inte.
+    func testContentWordsWithStopWordLemmaAreSaved() {
+        let words = UserWords(fileURL: url)
+        let content: [(String, String, WordLanguage)] = [
+            ("jaget", "jag", .swedish), ("våren", "vår", .swedish), ("hären", "här", .swedish),
+            ("fören", "för", .swedish), ("väl", "väl", .swedish), ("varor", "vara", .swedish),
+            ("might", "might", .english),
+        ]
+        for (word, lemma, language) in content {
+            words.save(word: word, lemma: lemma, language: language, sentence: "En mening med \(word).",
+                       book: "Kursboken", pageIndex: 1, bookID: "bok-1")
+            XCTAssertTrue(words.isSaved(lemma: lemma, language: language), word)
+        }
+        // Varade har samma grundform som varor och räknas upp på samma rad.
+        words.save(word: "varade", lemma: "vara", language: .swedish, sentence: "Det varade länge.",
+                   book: "Kursboken", pageIndex: 2, bookID: "bok-1")
+        XCTAssertEqual(words.savedWords().first { $0.lemma == "vara" }?.word, "varade")
+        XCTAssertEqual(words.savedWords().first { $0.lemma == "vara" }?.lookups, 2)
+        for (word, lemma) in [("att", "att"), ("och", "och"), ("det", "det"), ("Det", "den")] {
+            words.save(word: word, lemma: lemma, language: .swedish, sentence: "Det är svårt att veta.",
+                       book: "Kursboken", pageIndex: 1, bookID: "bok-1")
+            XCTAssertFalse(words.isSaved(lemma: lemma, language: .swedish), word)
+        }
+        XCTAssertEqual(words.savedWords().count, content.count)
+        let queue = Set(words.reviewQueue(hasAnswer: { _ in true }).map(\.word.lemma))
+        XCTAssertEqual(queue, Set(content.map { $0.1 }))
     }
 
     func testStopWordsAreNeverSaved() {

@@ -351,6 +351,30 @@ enum Fas6SelfTest {
                      + (ok ? "Rätt" : "FEL"))
         unmount(wrapper)
 
+        // Granskning 5, M1: Spara på ett småord sparar inget och säger det. Ett innehållsord vars grundform är
+        // ett småord (jaget, grundform jag) sparas.
+        for (stopWord, stopSentence) in [("att", "Det är svårt att veta."), ("jaget", "Det moderna jaget är splittrat.")] {
+            let stopCard = card(stopWord, stopSentence)
+            wrapper = await mount(stopCard)
+            let shownBefore = stopCard.saveTextForTest
+            stopCard.toggleSavedForTest()
+            await pause(0.3)
+            let shownAfter = stopCard.saveTextForTest
+            let stopLemma = dictionary.lookup(stopWord, sentence: stopSentence)?.entries.first?.lemma ?? stopWord
+            let isSaved = UserWords.shared.isSaved(lemma: stopLemma, language: .swedish)
+            let expected = stopWord == "att" ? !isSaved && shownAfter.hasPrefix("Sparas inte")
+                : isSaved && shownAfter == "Sparat"
+            SelfTest.log("Spara i ordkortet (M1) \(stopWord): före \(shownBefore), efter \(shownAfter), "
+                         + "\(isSaved ? "sparat" : "inte sparat") som \(stopLemma). " + (expected ? "Rätt" : "FEL"))
+            if stopWord == "att" {
+                SelfTest.saveScreen(host.view, name: "07i-ordkort-smaord")
+            }
+            unmount(wrapper)
+            if isSaved, stopWord != "att" {
+                UserWords.shared.delete(lemma: stopLemma, language: .swedish)
+            }
+        }
+
         UserWords.shared.delete(lemma: entry.lemma, language: lookup.language)
         navigation.popToRootViewController(animated: false)
         await pause(0.3)

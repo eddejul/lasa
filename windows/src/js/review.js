@@ -9,23 +9,25 @@ export const MINIMUM_EASE = 1.3;
 const DAY = 86400;
 
 // U6: småord (funktionsord) som aldrig sparas och aldrig repeteras. Samma listor som ReviewStopWords i
-// UserWords.swift, och review.test.mjs jämför dem.
+// UserWords.swift, och review.test.mjs jämför dem. Granskning 5 (M1): bara ordet som det stod i texten jämförs,
+// aldrig grundformen (jaget, våren, fören och varor sparas), och innehållsord som vår, här, för, men, vad, väl,
+// might och being är inte med.
 export const STOP_WORDS = {
   sv: new Set([
-    'att', 'och', 'i', 'på', 'som', 'är', 'en', 'ett', 'det', 'den', 'de', 'dem', 'av', 'för', 'med', 'till',
-    'från', 'om', 'men', 'eller', 'så', 'inte', 'också', 'har', 'hade', 'haft', 'ha', 'var', 'vara', 'varit', 'blir',
+    'att', 'och', 'i', 'på', 'som', 'är', 'en', 'ett', 'det', 'den', 'de', 'dem', 'av', 'med', 'till',
+    'från', 'om', 'eller', 'så', 'inte', 'också', 'har', 'hade', 'haft', 'ha', 'var', 'vara', 'varit', 'blir',
     'bli', 'blev', 'blivit', 'kan', 'kunde', 'ska', 'skall', 'skulle', 'vill', 'ville', 'måste', 'jag', 'du',
     'han', 'hon', 'hen', 'vi', 'ni', 'sig', 'sin', 'sitt', 'sina', 'din', 'ditt', 'dina', 'hans', 'hennes',
-    'deras', 'vår', 'vårt', 'våra', 'er', 'ert', 'mig', 'dig', 'honom', 'henne', 'oss', 'denna', 'detta',
-    'dessa', 'där', 'här', 'nu', 'då', 'när', 'vad', 'vem', 'vilken', 'vilket', 'vilka', 'hur', 'varför', 'än',
+    'deras', 'vårt', 'våra', 'er', 'ert', 'mig', 'dig', 'honom', 'henne', 'oss', 'denna', 'detta',
+    'dessa', 'dess', 'där', 'nu', 'då', 'när', 'vem', 'vilken', 'vilket', 'vilka', 'hur', 'varför', 'än',
     'efter', 'mot', 'utan', 'genom', 'hos', 'mellan', 'ut', 'upp', 'in', 'ner', 'ju', 'nog', 'bara', 'mycket',
     'många', 'alla', 'allt', 'något', 'någon', 'några', 'inget', 'ingen', 'inga', 'eftersom', 'medan', 'både',
-    'samt', 'ej', 'ens', 'väl', 'redan', 'dock',
+    'samt', 'ej', 'ens', 'redan', 'dock',
   ]),
   en: new Set([
     'the', 'a', 'an', 'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'from', 'into', 'onto', 'about', 'and',
     'or', 'but', 'nor', 'if', 'as', 'than', 'then', 'so', 'not', 'no', 'is', 'are', 'was', 'were', 'be', 'been',
-    'being', 'am', 'do', 'does', 'did', 'have', 'has', 'had', 'could', 'would', 'should', 'might', 'shall', 'it',
+    'am', 'do', 'does', 'did', 'doing', 'have', 'has', 'had', 'having', 'could', 'would', 'should', 'shall', 'it',
     'its', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'we', 'they', 'me', 'him', 'her', 'us',
     'them', 'my', 'your', 'his', 'our', 'their', 'there', 'here', 'what', 'which', 'who', 'whom', 'whose',
     'when', 'where', 'why', 'how', 'up', 'out', 'all', 'any', 'some', 'each', 'also', 'very', 'too', 'because',
@@ -33,10 +35,11 @@ export const STOP_WORDS = {
   ]),
 };
 
-/** Sant om ordet som det stod i texten, eller dess grundform, är ett småord på ordets språk. */
-export function isStopWord(word, lemma, language) {
+/** Sant om ordet som det stod i texten är ett småord på ordets språk. Grundformen räknas inte: "jaget" har
+ *  grundformen "jag" men är ett innehållsord (som ReviewStopWords.contains på iPaden). */
+export function isStopWord(word, language) {
   const list = language === 'en' ? STOP_WORDS.en : STOP_WORDS.sv;
-  return list.has(normalize(word ?? '')) || list.has(normalize(lemma ?? ''));
+  return list.has(normalize(word ?? ''));
 }
 
 export const GRADES = [
@@ -103,7 +106,7 @@ export function buildQueue(words, now, limit = 200) {
   const due = [];
   const fresh = [];
   for (const word of words) {
-    if (isStopWord(word.word, word.lemma, word.language)) {
+    if (isStopWord(word.word, word.language)) {
       // Ett småord som repeterats före U6 räknas ändå bland orden som påbörjats i dag, som på iPaden.
       if (word.due !== null && word.due !== undefined && (word.introduced ?? 0) >= midnight) introducedToday += 1;
       continue;

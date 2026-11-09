@@ -97,13 +97,10 @@ test('kön: ord på tur först (äldst först), sedan högst 20 nya per dag med 
 });
 
 test('småord sparas aldrig och kommer inte med i kön (U6)', () => {
-  for (const word of ['att', 'Det', 'och', 'i', 'på', 'är', 'vara', 'att,']) assert.ok(isStopWord(word, word, 'sv'), word);
-  for (const word of ['the', 'The', 'of', 'was']) assert.ok(isStopWord(word, word, 'en'), word);
-  assert.ok(isStopWord('Dem', 'de', 'sv'));
-  for (const [word, lemma] of [['kunskap', 'kunskap'], ['mitt', 'mitt'], ['min', 'min']]) {
-    assert.ok(!isStopWord(word, lemma, 'sv'), word);
-  }
-  assert.ok(!isStopWord('den', 'den', 'en'));
+  for (const word of ['att', 'Det', 'och', 'i', 'på', 'är', 'vara', 'att,', 'Dem']) assert.ok(isStopWord(word, 'sv'), word);
+  for (const word of ['the', 'The', 'of', 'was']) assert.ok(isStopWord(word, 'en'), word);
+  for (const word of ['kunskap', 'mitt', 'min']) assert.ok(!isStopWord(word, 'sv'), word);
+  assert.ok(!isStopWord('den', 'en'));
   const now = 1_800_000_000;
   const midnight = startOfDay(now);
   const words = [
@@ -112,6 +109,38 @@ test('småord sparas aldrig och kommer inte med i kön (U6)', () => {
     { word: 'the', lemma: 'the', language: 'en', due: now - 10, introduced: midnight + 5, interval: 1, ease: 2.5, reps: 1, lapses: 0 },
   ];
   assert.deepEqual(buildQueue(words, now).map((c) => c.word.lemma), ['kunskap']);
+});
+
+test('innehållsord med ett småord som grundform sparas och repeteras (granskning 5, M1)', () => {
+  // Bara ordet som det stod i texten jämförs, inte grundformen.
+  const content = [['jaget', 'jag', 'sv'], ['våren', 'vår', 'sv'], ['hären', 'här', 'sv'], ['fören', 'för', 'sv'],
+    ['väl', 'väl', 'sv'], ['varor', 'vara', 'sv'], ['varade', 'vara', 'sv'], ['might', 'might', 'en'],
+    ['being', 'be', 'en']];
+  for (const [word, , language] of content) assert.ok(!isStopWord(word, language), word);
+  for (const word of ['vår', 'här', 'för', 'men', 'vad', 'väl']) assert.ok(!isStopWord(word, 'sv'), word);
+  for (const word of ['att', 'och', 'det', 'Det']) assert.ok(isStopWord(word, 'sv'), word);
+  const now = 1_800_000_000;
+  const words = content.map(([word, lemma, language]) => ({ word, lemma: `${lemma}-${word}`, language, due: null }))
+    .concat([{ word: 'att', lemma: 'att', language: 'sv', due: null }, { word: 'och', lemma: 'och', language: 'sv', due: null }]);
+  const queue = buildQueue(words, now).map((c) => c.word.word);
+  assert.deepEqual(queue.sort(), content.map(([word]) => word).sort());
+});
+
+test('saveWord sparar innehållsord och hoppar över småord (granskning 5, M1)', async () => {
+  // store.js skriver via backend.js. Här fångas skrivningarna, så att testet inte behöver Tauri.
+  const writes = [];
+  globalThis.__TAURI__ = { core: { invoke: async (command, args) => { writes.push({ command, args }); return []; } } };
+  const store = await import('../src/js/store.js');
+  for (const word of ['jaget', 'våren', 'hären', 'fören', 'väl', 'varor', 'varade']) {
+    await store.saveWord({ word, lemma: word, language: 'sv', sentence: '', book: 'Bok', page: 1, bookId: 'b' });
+  }
+  await store.saveWord({ word: 'might', lemma: 'might', language: 'en', sentence: '', book: 'Bok', page: 1, bookId: 'b' });
+  const before = writes.length;
+  for (const word of ['att', 'och', 'det']) {
+    await store.saveWord({ word, lemma: word, language: 'sv', sentence: '', book: 'Bok', page: 1, bookId: 'b' });
+  }
+  assert.equal(writes.length, before, 'småord ska inte skrivas');
+  assert.ok(before >= 8, `innehållsorden ska skrivas (${before} skrivningar)`);
 });
 
 test('småordslistorna är desamma som i UserWords.swift', () => {

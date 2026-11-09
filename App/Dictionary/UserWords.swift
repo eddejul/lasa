@@ -210,10 +210,11 @@ final class UserWords {
     // MARK: Sparade ord
 
     /// Sparar ett uppslaget ord. Har det slagits upp förut räknas det upp, och meningen byts mot den senaste.
-    /// U6: småord (att, det, och, the, of) sparas aldrig.
+    /// U6: småord (att, det, och, the, of) sparas aldrig. Ordrutan säger då "sparas inte (småord)" i stället för
+    /// Sparat (`ReviewStopWords`, bara ordet som det stod i texten jämförs).
     func save(word: String, lemma: String, language: WordLanguage, sentence: String, book: String, pageIndex: Int,
               bookID: String? = nil) {
-        guard !ReviewStopWords.contains(word: word, lemma: lemma, language: language) else { return }
+        guard !ReviewStopWords.contains(word: word, language: language) else { return }
         let now = Date().timeIntervalSince1970
         write("ordet") { db in
             try db.execute("""
@@ -518,37 +519,40 @@ enum ReviewSchedule {
 }
 
 /// U6: småord (funktionsord) som aldrig sparas och aldrig repeteras. De hamnar i Sparade ord när fingret råkar
-/// landa på dem, och ordboken har sällan något svar. Ord som också är vanliga innehållsord (min, mitt, under, vid,
-/// era, will, may, can, just) är inte med. Vara är med, fast varor då inte heller sparas (grundformen vara).
-/// Samma listor finns i `windows/src/js/review.js`, och `review.test.mjs` jämför dem.
+/// landa på dem, och ordboken har sällan något svar. Bara ordet som det stod i texten jämförs, aldrig grundformen,
+/// så att jaget, våren, fören, varor och varade sparas fast grundformen är ett småord. Ord som också är vanliga
+/// innehållsord är inte med: min, mitt, under, vid, era, vår (våren), här (en här), för (fören), men (ta men),
+/// vad (slå vad), väl (för vårt väl), will, may, can, just, might (makt) och being (a being). Vara är med,
+/// eftersom verbet är så vanligt. Samma listor finns i `windows/src/js/review.js`, och `review.test.mjs` jämför dem.
 enum ReviewStopWords {
 
     static let swedish: Set<String> = [
-        "att", "och", "i", "på", "som", "är", "en", "ett", "det", "den", "de", "dem", "av", "för", "med", "till",
-        "från", "om", "men", "eller", "så", "inte", "också", "har", "hade", "haft", "ha", "var", "vara", "varit", "blir",
+        "att", "och", "i", "på", "som", "är", "en", "ett", "det", "den", "de", "dem", "av", "med", "till",
+        "från", "om", "eller", "så", "inte", "också", "har", "hade", "haft", "ha", "var", "vara", "varit", "blir",
         "bli", "blev", "blivit", "kan", "kunde", "ska", "skall", "skulle", "vill", "ville", "måste", "jag", "du",
         "han", "hon", "hen", "vi", "ni", "sig", "sin", "sitt", "sina", "din", "ditt", "dina", "hans", "hennes",
-        "deras", "vår", "vårt", "våra", "er", "ert", "mig", "dig", "honom", "henne", "oss", "denna", "detta",
-        "dessa", "där", "här", "nu", "då", "när", "vad", "vem", "vilken", "vilket", "vilka", "hur", "varför", "än",
+        "deras", "vårt", "våra", "er", "ert", "mig", "dig", "honom", "henne", "oss", "denna", "detta",
+        "dessa", "dess", "där", "nu", "då", "när", "vem", "vilken", "vilket", "vilka", "hur", "varför", "än",
         "efter", "mot", "utan", "genom", "hos", "mellan", "ut", "upp", "in", "ner", "ju", "nog", "bara", "mycket",
         "många", "alla", "allt", "något", "någon", "några", "inget", "ingen", "inga", "eftersom", "medan", "både",
-        "samt", "ej", "ens", "väl", "redan", "dock",
+        "samt", "ej", "ens", "redan", "dock",
     ]
 
     static let english: Set<String> = [
         "the", "a", "an", "of", "to", "in", "on", "at", "by", "for", "with", "from", "into", "onto", "about", "and",
         "or", "but", "nor", "if", "as", "than", "then", "so", "not", "no", "is", "are", "was", "were", "be", "been",
-        "being", "am", "do", "does", "did", "have", "has", "had", "could", "would", "should", "might", "shall", "it",
+        "am", "do", "does", "did", "doing", "have", "has", "had", "having", "could", "would", "should", "shall", "it",
         "its", "this", "that", "these", "those", "i", "you", "he", "she", "we", "they", "me", "him", "her", "us",
         "them", "my", "your", "his", "our", "their", "there", "here", "what", "which", "who", "whom", "whose",
         "when", "where", "why", "how", "up", "out", "all", "any", "some", "each", "also", "very", "too", "because",
         "while",
     ]
 
-    /// Sant om ordet som det stod i texten, eller dess grundform, är ett småord på ordets språk.
-    static func contains(word: String, lemma: String, language: WordLanguage) -> Bool {
+    /// Sant om ordet som det stod i texten är ett småord på ordets språk. Grundformen räknas inte: "jaget" har
+    /// grundformen "jag" men är ett innehållsord.
+    static func contains(word: String, language: WordLanguage) -> Bool {
         let list = language == .english ? english : swedish
-        return list.contains(WordDictionary.normalize(word)) || list.contains(WordDictionary.normalize(lemma))
+        return list.contains(WordDictionary.normalize(word))
     }
 }
 
@@ -629,7 +633,7 @@ extension UserWords {
         let saved = savedWords()
         let all = saved.filter { word in
             ReviewLogic.belongs(word, to: books)
-                && !ReviewStopWords.contains(word: word.word, lemma: word.lemma, language: word.language)
+                && !ReviewStopWords.contains(word: word.word, language: word.language)
                 && answers(word)
         }
         let elapsed = Date().timeIntervalSince(started) * 1000
