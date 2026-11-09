@@ -289,13 +289,21 @@ final class PDFCurlReaderViewController: UIViewController {
 
     /// Marginalerna runt sidan. De följer skärmens hörn och kanter, men inte menyraden eller statusfältet.
     /// Överkanten får alltid plats för statusfältet, så att sidan inte hoppar när det visas eller döljs.
+    /// Våg 10b: med ramen på (P3) fyller den beskurna sidan ytan, och då får sidan samma fasta marginaler som i
+    /// EPUB, menyradens höjd upptill och nederkantens nedtill, så att menyn bara ligger över marginalen. Fasta mått,
+    /// aldrig menyns läge, så att sidan står still när menyn visas och döljs.
     private func stableInsets(for size: CGSize) -> UIEdgeInsets {
         let window = view.window?.safeAreaInsets ?? .zero
         if size != lastLayoutSize {
             seenTopInset = 0
         }
         seenTopInset = max(seenTopInset, window.top, 20)
-        return UIEdgeInsets(top: seenTopInset, left: window.left, bottom: window.bottom, right: window.right)
+        var insets = UIEdgeInsets(top: seenTopInset, left: window.left, bottom: window.bottom, right: window.right)
+        if renderer.crop != .full {
+            insets.top += ReflowReaderViewController.navigationBarHeight(for: traitCollection)
+            insets.bottom += ReaderBottomBar.height
+        }
+        return insets
     }
 
     private func preferredMode(for size: CGSize) -> Mode {
@@ -496,7 +504,12 @@ final class PDFCurlReaderViewController: UIViewController {
     /// Ritar om sidorna med ramen som gäller. Den gamla bilden står kvar tills den nya är ritad (i bakgrunden).
     private func applyCrop() {
         renderer.setCrop(PageCropStore.active(bookID: book.id))
-        refreshVisiblePages()
+        // Våg 10b: ramen på eller av ändrar sidans fasta marginaler, och då ritas sidorna om i den nya storleken.
+        let before = contentInsets
+        updateLayoutIfNeeded()
+        if contentInsets == before {
+            refreshVisiblePages()
+        }
         keepNeighbours()
         chrome.refreshMoreMenu()
         AppLog.shared.write("Beskärning (P3): " + (PageCropStore.saved(bookID: book.id).map(PageCropStore.format) ?? "ingen"))
@@ -620,6 +633,7 @@ final class PDFCurlReaderViewController: UIViewController {
                      + "\(Int(croppedFrame.height)), texten \(String(format: "%.2f", Double(growth))) gånger större, "
                      + "variant på disk: \(renderer.diskCount()) sidbilder")
         let cropOK = selfTestCropWord("beskuren")
+        selfTestCroppedChrome()
         SelfTest.saveScreen(view, name: "03-beskuren")
         if let page = visiblePages.first(where: { !$0.isBlank }), let pdfPage = document.page(at: page.pageIndex),
            let string = pdfPage.string {
@@ -2391,6 +2405,38 @@ extension PDFCurlReaderViewController {
         SelfTest.log("Menyn över PDF-sidan (U3): sidbilden \(Int(frame.minY)) till \(Int(frame.maxY)), menyraden täcker "
                      + "\(Int(top)) punkter (\(share(top)) procent av sidhöjden), nederkanten \(Int(bottom)) punkter "
                      + "(\(share(bottom)) procent)")
+        if wasHidden {
+            setChromeHidden(true, animated: false)
+        }
+    }
+
+    /// Våg 10b: med ramen på ska menyraden och nederkanten bara ligga över marginalen, och sidan stå still när menyn
+    /// visas och döljs. I simulatorn kan menyraden vara högre än det fasta måttet (iOS 26), det räknas av.
+    fileprivate func selfTestCroppedChrome() {
+        let wasHidden = chromeHidden
+        setChromeHidden(true, animated: false)
+        navigationController?.view.layoutIfNeeded()
+        view.layoutIfNeeded()
+        let page = visiblePages.first(where: { !$0.isBlank && $0.imageFrame != nil })
+        let hiddenFrame = page.flatMap { shown in shown.imageFrame.map { shown.view.convert($0, to: view) } }
+        setChromeHidden(false, animated: false)
+        navigationController?.view.layoutIfNeeded()
+        view.layoutIfNeeded()
+        guard let bar = navigationController?.navigationBar, let page = page, let local = page.imageFrame,
+              let before = hiddenFrame else {
+            SelfTest.log("FEL: ingen menyrad eller sidbild för mätningen av den beskurna sidan (våg 10b)")
+            return
+        }
+        let frame = page.view.convert(local, to: view)
+        let barFrame = bar.convert(bar.bounds, to: view)
+        let top = max(barFrame.maxY - frame.minY, 0)
+        let bottom = max(frame.maxY - bottomBar.convert(bottomBar.bounds, to: view).minY, 0)
+        let extra = max(barFrame.height - ReflowReaderViewController.navigationBarHeight(for: traitCollection), 0)
+        let still = abs(frame.minY - before.minY) < 0.5 && abs(frame.height - before.height) < 0.5
+        SelfTest.log("Menyn över den beskurna sidan (våg 10b): sidbilden \(Int(frame.minY)) till \(Int(frame.maxY)), "
+                     + "menyraden täcker \(Int(top)) punkter (menyraden \(Int(barFrame.height)) hög, \(Int(extra)) över "
+                     + "det fasta måttet), nederkanten \(Int(bottom)), sidan står still \(still ? "ja" : "NEJ"). "
+                     + (top <= extra + 1 && bottom <= 1 && still ? "Rätt" : "FEL"))
         if wasHidden {
             setChromeHidden(true, animated: false)
         }
