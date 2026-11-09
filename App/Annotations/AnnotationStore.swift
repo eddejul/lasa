@@ -252,6 +252,18 @@ final class AnnotationStore {
             );
             CREATE INDEX IF NOT EXISTS concepts_book ON concepts (book);
             """,
+        // Steg 10 (K6): hur det gick på frågorna i marginalen, en rad per bok och fråga (frågans id i
+        // frågefilen). Senaste svaret (kan, osaker, kan_inte) och hur många gånger frågan besvarats. Ingen synk.
+        """
+            CREATE TABLE IF NOT EXISTS question_answers (
+                book TEXT NOT NULL,
+                question TEXT NOT NULL,
+                status TEXT NOT NULL,
+                answered INTEGER NOT NULL DEFAULT 1,
+                updated REAL NOT NULL,
+                PRIMARY KEY (book, question)
+            );
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.
