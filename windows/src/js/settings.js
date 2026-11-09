@@ -1,10 +1,10 @@
-// Inställningar: synken med iPaden (fas 6). Hur projektet skapas står i docs/SYNK.md.
+// Inställningar: synken med iPaden via en mapp i iCloud Drive (F1, docs/SYNK.md), AI-nyckeln och Gör sökbar.
 
-import { secretGet, secretSet } from './backend.js';
+import { secretGet, secretSet, syncSuggest } from './backend.js';
 import { DEFAULT_MODEL, GEMINI_SECRET, testKey } from './gemini.js';
 import { DEFAULT_PYTHON, DEFAULT_TESSERACT, checkOcr, missingLines, saveOcrTools } from './ocr.js';
 import { setSetting, settings } from './store.js';
-import { isSignedIn, reportText, signIn, signOut, syncNow, syncState } from './sync.js';
+import { chooseFolder, forgetFolder, isConfigured, reportText, syncNow, syncState } from './sync.js';
 import { el, replace } from './ui.js';
 
 function formatTime(seconds) {
@@ -13,23 +13,17 @@ function formatTime(seconds) {
 }
 
 export async function renderSettings(container) {
-  const signedIn = await isSignedIn();
-  const key = (await secretGet('sync-publishable-key')) ?? '';
+  const configured = isConfigured();
   const message = el('p', { class: 'settings-message', role: 'status', dataset: { testid: 'sync-message' } });
   const field = (label, input, note = null) => el('label', { class: 'settings-field' },
     el('span', { class: 'settings-label' }, label), input, note ? el('span', { class: 'settings-note' }, note) : null);
-  const url = el('input', { type: 'url', class: 'text-input', value: settings.syncUrl ?? '', placeholder: 'https://xxxx.supabase.co',
-    dataset: { testid: 'sync-url' }, spellcheck: 'false' });
-  const publishable = el('input', { type: 'text', class: 'text-input', value: key, placeholder: 'sb_publishable_...',
-    dataset: { testid: 'sync-key' }, spellcheck: 'false' });
-  const email = el('input', { type: 'email', class: 'text-input', value: settings.syncEmail ?? '', dataset: { testid: 'sync-email' } });
-  const password = el('input', { type: 'password', class: 'text-input', value: '', dataset: { testid: 'sync-password' },
-    autocomplete: 'current-password' });
+  const folder = el('input', { type: 'text', class: 'text-input', value: settings.syncFolder ?? '',
+    placeholder: 'C:\\Users\\namn\\iCloudDrive\\Sensus', dataset: { testid: 'sync-folder' }, spellcheck: 'false' });
 
   const run = async (button, action) => {
     button.disabled = true;
     message.textContent = '';
-    message.classList.remove('error');
+    message.classList.remove('error', 'success');
     try {
       await action();
     } catch (error) {
@@ -42,17 +36,35 @@ export async function renderSettings(container) {
     return true;
   };
 
-  const signInButton = el('button', { class: 'button primary', dataset: { testid: 'sync-sign-in' }, onclick: async () => {
-    const ok = await run(signInButton, () => signIn({ url: url.value, key: publishable.value, email: email.value, password: password.value }));
-    password.value = '';
+  // Hitta iCloud Drive: mappen med en synkmapp först, annars iCloud Drive själv.
+  const findButton = el('button', { class: 'button', dataset: { testid: 'sync-find' }, onclick: async () => {
+    const found = await syncSuggest();
+    if (found.length) {
+      folder.value = found[0];
+      message.classList.remove('error');
+      message.textContent = found.length > 1 && !found[0].toLowerCase().endsWith('iclouddrive')
+        ? 'Mappen med Sensus synk hittades. Tryck Spara och prova.'
+        : 'iCloud Drive hittades. Lägg till mappen du valde på iPaden (till exempel \\Sensus) och tryck Spara och prova.';
+    } else {
+      message.textContent = 'iCloud Drive hittades inte. Installera iCloud för Windows och slå på iCloud Drive, eller skriv in mappen.';
+      message.classList.add('error');
+    }
+  } }, 'Hitta iCloud Drive');
+  const saveButton = el('button', { class: 'button primary', dataset: { testid: 'sync-save' }, onclick: async () => {
+    const ok = await run(saveButton, () => chooseFolder(folder.value));
     if (!ok) return;
     await renderSettings(container);
+    const done = container.querySelector('[data-testid="sync-message"]');
+    if (done) {
+      done.textContent = 'Mappen fungerar. Sensus kunde skriva och läsa där.';
+      done.classList.add('success');
+    }
     syncNow().catch(() => {});
-  } }, 'Logga in');
-  const signOutButton = el('button', { class: 'button', dataset: { testid: 'sync-sign-out' }, onclick: async () => {
-    await signOut();
+  } }, 'Spara och prova');
+  const forgetButton = el('button', { class: 'button', dataset: { testid: 'sync-forget' }, onclick: async () => {
+    await forgetFolder();
     await renderSettings(container);
-  } }, 'Logga ut');
+  } }, 'Sluta synka');
   const syncButton = el('button', { class: 'button primary', dataset: { testid: 'sync-now' }, disabled: syncState.running,
     onclick: async () => {
       if (await run(syncButton, () => syncNow())) renderStatus();
@@ -61,10 +73,15 @@ export async function renderSettings(container) {
   const status = el('div', { class: 'list-group', dataset: { testid: 'sync-status' } });
   const renderStatus = () => {
     const rows = [
-      ['Inloggad', signedIn ? `ja, som ${settings.syncEmail || 'okänd e-post'}` : 'nej'],
+      ['Mappen', configured ? settings.syncFolder : 'ingen vald'],
       ['Senast synkad', formatTime(settings.syncLast)],
       ['Senaste synken', syncState.running ? 'pågår' : (reportText(settings.syncReport) || 'ingen än')],
     ];
+    for (const peer of syncState.peers) {
+      rows.push([peer.platform === 'ios' ? 'iPad eller iPhone' : 'Annan dator',
+        `${peer.name || 'utan namn'}, senast ${formatTime(peer.written)}`]);
+    }
+    for (const line of syncState.skipped) rows.push(['Hoppades över', line]);
     if (settings.syncError) rows.push(['Fel', settings.syncError]);
     replace(status, rows.map(([name, value]) => el('div', { class: 'list-row settings-status-row' },
       el('span', { class: 'list-secondary' }, name), el('span', { class: name === 'Fel' ? 'list-text error' : 'list-text' }, value))));
@@ -160,14 +177,14 @@ export async function renderSettings(container) {
     el('section', { class: 'list-section' },
       el('h3', {}, 'Synk med iPaden'),
       el('div', { class: 'list-group settings-form' },
-        el('p', { class: 'list-secondary' }, 'Läspositioner och sparade ord synkas med iPaden via ditt eget Supabase-projekt. '
-          + 'Hur projektet skapas står i docs/SYNK.md i repot. Markeringar och bokmärken synkas inte till datorn än.'),
-        field('Projektets adress', url),
-        field('Publik nyckel', publishable, 'Börjar med sb_publishable_ (eller den äldre anon-nyckeln). Använd aldrig secret-nyckeln.'),
-        field('E-post', email),
-        field('Lösenord', password, 'Lösenordet sparas inte. Inloggningen sparas i Windows Autentiseringshanteraren.'),
-        el('div', { class: 'row-buttons settings-buttons' }, signInButton, signedIn ? signOutButton : null,
-          signedIn ? syncButton : null),
+        el('p', { class: 'list-secondary' }, 'Läspositioner och sparade ord synkas med iPaden via en mapp i iCloud Drive, '
+          + 'med en liten fil per enhet. Inget konto och ingen nyckel. Installera iCloud för Windows, slå på iCloud Drive och '
+          + 'välj samma mapp som på iPaden (Inställningar, Synk). Markeringar och bokmärken från iPaden följer med i '
+          + 'filen men visas inte på datorn än.'),
+        field('Mappen i iCloud Drive', folder, 'Sensus skriver bara i undermappen Sensus synk. Inget tas bort för att en '
+          + 'fil saknas eller inte går att läsa.'),
+        el('div', { class: 'row-buttons settings-buttons' }, findButton, saveButton, configured ? syncButton : null,
+          configured ? forgetButton : null),
         message)),
     el('section', { class: 'list-section' },
       el('h3', {}, 'Status'),

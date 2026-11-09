@@ -112,32 +112,33 @@ Oavgjort blir svenska, som på iPaden. För engelska ord avgör ordet före vilk
 
 Ett avstavat ord över en radbrytning i en PDF ("kun-" och "skap") slås ihop till "kunskap", som på iPaden.
 
-## Synk med iPaden (fas 6)
+## Synk med iPaden (F1)
 
-Läspositioner och sparade ord synkas med iPaden via ditt eget Supabase-projekt (gratisnivån). Hur projektet
-skapas, och hur synken fungerar, står i [docs/SYNK.md](../docs/SYNK.md). Böckerna själva synkas inte: lägg
-samma fil i Läsa på båda ställena. Böckerna känns igen på filens innehåll (SHA-256), inte på namnet.
+Läspositioner och sparade ord synkas med iPaden via en mapp i iCloud Drive, med en liten fil per enhet. Inget
+konto och ingen nyckel. Formatet och hur synken fungerar står i [docs/SYNK.md](../docs/SYNK.md). Böckerna
+själva synkas inte här: lägg samma fil i Sensus på båda ställena. Böckerna känns igen på filens innehåll
+(SHA-256), inte på namnet.
 
-1. Fliken **Inställningar**, Synk med iPaden.
-2. Fyll i projektets adress (`https://...supabase.co`), den publika nyckeln (börjar med `sb_publishable_`,
-   eller den äldre anon-nyckeln, aldrig secret-nyckeln), e-post och lösenord. Samma som på iPaden.
-3. Klicka **Logga in**. Läsa synkar direkt, och statusen visar vad som skickades och hämtades.
+1. Installera iCloud för Windows och slå på iCloud Drive. Mappen syns som `C:\Users\<namn>\iCloudDrive`.
+2. Välj en mapp där på iPaden först (Inställningar, Synk), till exempel `Sensus`.
+3. Fliken **Inställningar**, Synk med iPaden: tryck **Hitta iCloud Drive** (eller skriv in mappen, till
+   exempel `C:\Users\<namn>\iCloudDrive\Sensus`) och **Spara och prova**. Sensus provar att skriva och läsa
+   där, synkar direkt och visar iPaden under Status.
 
-Lösenordet sparas aldrig. Den publika nyckeln och inloggningen (förnyelsetoken) sparas i Windows
-Autentiseringshanteraren (Kontrollpanelen, Autentiseringshanteraren, Windows-autentiseringsuppgifter, namn
-som börjar med `sync-` och slutar med `se.edvin.lasa`). Logga ut tar bort inloggningen.
-
-* Läsa synkar när appen startar, när du stänger en bok (högst en gång i minuten) och med **Synka nu**.
-  Utan inställningar händer ingenting.
+* Sensus skriver bara i undermappen `Sensus synk`, och bara sin egen fil (`<datorns id>.json`, id:t ligger i
+  inställningarna som `syncDevice`). Filen skrivs först som `.tmp` och byter sedan namn.
+* Sensus synkar när appen startar, när du stänger en bok (högst en gång i minuten) och med **Synka nu**.
+  Utan vald mapp händer ingenting.
 * Den nyaste ändringen vinner, rad för rad. En nyare position från iPaden gäller nästa gång boken öppnas.
-  Är boken öppen när synken kommer hoppar den inte, och den skriver inte över iPadens position om du inte
-  bläddrar.
-* PDF synkar sidan. EPUB synkar kapitlet och hur långt in i kapitlet du är, så på andra enheten hamnar du
-  på samma ställe i kapitlet men inte alltid exakt samma rad. Textfiler (txt, md) synkar inte positionen,
-  eftersom iPaden delar dem i kapitel på sitt eget sätt.
+  Är boken öppen när synken kommer hoppar den inte.
+* En fil som inte går att läsa (tom, trasig, från en nyare version, eller inte hämtad från iCloud inom 15
+  sekunder) hoppas över och syns under Status. Inget tas bort för att en fil saknas.
+* PDF synkar sidan. EPUB synkar kapitlet och hur långt in i kapitlet du är. Textfiler (txt, md) synkar inte
+  positionen, eftersom iPaden delar dem i kapitel på sitt eget sätt.
 * Ett ord som tas bort i Sparade ord tas bort på iPaden också. Repetitionen synkas åt båda hållen.
-* Markeringar och bokmärken synkas inte än, och iPadens rader rörs inte. Synken byts mot filer i iCloud
-  Drive (F1), och då kommer markeringarna med.
+* Markeringar och bokmärken från iPaden följer med oförändrade i datorns fil men visas inte här än.
+  Datorns egna markeringar synkas inte än.
+* **Sluta synka** glömmer mappen. Inga filer tas bort.
 
 ## Var allt sparas
 
@@ -169,7 +170,7 @@ Ordboken (`lasa-ordbok.sqlite`) ligger bland programfilerna och ändras aldrig.
 * En PDF över 16 MB läses i bitar (bara det pdf.js behöver), en mindre läses hel. Hur mycket som slipper
   läsas beror på PDF:en: om alla sidor delar en resurslista (som PDF:er från reportlab) läses ändå nästan
   allt. Minnet hålls nere med högst 4 ritade sidor (6 i uppslag) och högst 8 miljoner bildpunkter per sida.
-* Synken är provad mot en låtsas-Supabase, inte mot ett riktigt Supabase-projekt.
+* Synken (F1) är provad mot en vanlig mapp med påhittade iPad-filer, inte mot iCloud för Windows.
 * Skannade PDF:er utan textlager: sidorna visas, men ord går inte att slå upp förrän boken gjorts sökbar
   (Gör sökbar). Appen säger till.
 * Språkgissningen och den engelska ordklassen är enklare än iPadens, som använder Apples språkverktyg.
@@ -226,11 +227,12 @@ lägg den där och anropa `read('namn', [...])` eller `write(...)` i `src/js/sto
   `python windows/tests/e2e.py --books <mapp> --out <mapp för bilder>`: lägger till böcker, bläddrar,
   slår upp ord, provar teman, zoom, Sparade ord, läspositionen efter omladdning och att skript i EPUB
   stoppas, i huvudlös Chrome mot `dev/server.py` med tom datamapp.
-* `python windows/tests/e2e_sync.py --books <mapp> --out <mapp>` (också mot `dev/server.py` med tom
-  datamapp): startar `tests/mock_supabase.py` på port 8956 med ett frö, loggar in, synkar och kontrollerar
-  vad som hamnar i appen och på servern, att en andra synk skickar och hämtar noll rader, att borttaget blir
-  `deleted = true`, att en öppen bok inte hoppar och att markeringar aldrig rörs. Provservern låter sidan
-  anropa 127.0.0.1 (bara den, appen får bara anropa `https://*.supabase.co`).
+* `python windows/tests/e2e_sync.py --url http://127.0.0.1:8968/ --books <mapp> --out <mapp>` (mot
+  `dev/server.py` med tom datamapp): gör en synkmapp i `--out` med en påhittad iPad-fil och tre filer som ska
+  hoppas över, väljer mappen, synkar och kontrollerar appen och datorns egen fil, att en andra synk inte skriver
+  om filen, att borttaget blir `deleted = true`, att en öppen bok inte hoppar, att iPadens markering följer med
+  oförändrad och att Sluta synka inte tar bort något. `node --test windows/tests/syncfile.test.mjs` provar
+  formatet och sammanslagningen mot `App/Sync/SyncFile.swift` (körs i bygget).
 * `python windows/tests/e2e_fas7.py --books <mapp> --out <mapp> --data <serverns datamapp>` (mot
   `dev/server.py` med tom datamapp): tema och Följ systemet, förlopp och fel vid import, rtf och html,
   synkadressen, sök, genvägarna, markeringar och bokmärken i PDF och EPUB, minnestaket, repetitionen,

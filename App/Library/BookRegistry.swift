@@ -401,8 +401,10 @@ final class BookRegistry {
     /// Läser Böcker (med undermappar) och ger varje fil som går att känna igen ett id. Nya böcker läggs in
     /// i registret direkt när inget behöver räknas. Filer som behöver sin kontrollsumma kommer i `pending`,
     /// de räknas av `resolve`. Gamla nycklar flyttas till id:t första gången (se `migrateLegacyIfNeeded`).
-    func scan(files: [BookFile], urls: [String: URL]) -> (books: [Book], pending: [BookFile]) {
-        let present = Set(files.map(\.path))
+    /// `present`: platserna som räknas som närvarande, utöver filerna (B4: böcker i iCloud-mappen som hämtas,
+    /// eller alla där när mappen inte går att nå). De markeras inte som borta.
+    func scan(files: [BookFile], urls: [String: URL], present extra: Set<String> = []) -> (books: [Book], pending: [BookFile]) {
+        let present = Set(files.map(\.path)).union(extra)
         var records = self.records()
         var books: [Book] = []
         var pending: [BookFile] = []
@@ -482,7 +484,7 @@ final class BookRegistry {
             return result
         }.value
         var records = self.records()
-        let present = Set(LibraryStore.shared.listFiles().files.map(\.path))
+        let present = LibraryStore.shared.presentPaths()
         var changed: [BookRecord] = []
         var questions: [VersionQuestion] = []
         for (file, _) in targets {
@@ -548,7 +550,7 @@ final class BookRegistry {
     /// Lägger in en fil som just importerats och vars kontrollsumma redan är räknad (G10).
     /// En fil med samma innehåll som en bok som inte finns längre får dess id tillbaka.
     func register(_ file: BookFile, hash: String) -> String {
-        let present = Set(LibraryStore.shared.listFiles().files.map(\.path))
+        let present = LibraryStore.shared.presentPaths()
         let records = self.records()
         switch BookMatcher.match(file, hash: hash, records: records, present: present) {
         case .known(let id), .moved(let id):
@@ -590,7 +592,7 @@ final class BookRegistry {
     /// samma plats (en platshållare eller en borttagen bok) eller ett liknande namn. Då ställs frågan Ny version
     /// i stället för att filen tyst tar över bokens markeringar (granskning 2, N2).
     func importQuestion(for file: BookFile, hash: String) -> VersionQuestion? {
-        let present = Set(LibraryStore.shared.listFiles().files.map(\.path))
+        let present = LibraryStore.shared.presentPaths()
         let records = self.records()
         guard case .newVersion(let id) = BookMatcher.match(file, hash: hash, records: records, present: present),
               let record = records.first(where: { $0.id == id }), record.missing || record.file != file.path else {

@@ -1,43 +1,70 @@
-# Synken (fas 6)
+# Synken (F1, våg 9)
 
-Läsposition, markeringar med anteckningar, bokmärken och sparade ord (med repetitionen) synkas mellan iPaden och Windows-appen via ett eget Supabase-projekt på gratisnivån. Böckerna själva synkas inte här: lägg dem i en mapp i iCloud Drive och öppna samma fil på båda ställena.
+Läsposition, markeringar med anteckningar, bokmärken och sparade ord (med repetitionen) synkas mellan iPaden och Windows-appen via en mapp i iCloud Drive, med en liten fil per enhet. Inget konto, ingen nyckel och ingen server. Den gamla Supabase-synken (fas 6) är borttagen och sattes aldrig upp.
 
 ## Ställa in (en gång)
 
-Namnen i Supabase kontrollerades mot Supabases egna sidor 7 november 2026. Knapptexter kan ändras, så leta efter något liknande om ett namn inte stämmer.
+1. I appen Filer på iPaden: skapa en mapp i iCloud Drive, till exempel `Sensus`.
+2. iPaden: Inställningar, Synk, Välj mapp i iCloud Drive. Välj mappen och tryck Öppna. Appen provar att skriva och läsa där och visar en grön bock.
+3. Datorn: installera iCloud för Windows och slå på iCloud Drive. Mappen syns då som `C:\Users\<namn>\iCloudDrive\Sensus`. I Sensus för Windows: Inställningar, Synk, fyll i mappen (eller tryck Hitta iCloud Drive) och tryck Spara och prova.
 
-1. Skapa ett gratis konto på supabase.com och ett nytt projekt (välj en region i EU).
-2. Öppna SQL Editor, klistra in hela `tools/supabase/schema.sql` och kör den. Det skapar fyra tabeller och regler som gör att bara den inloggade ser sina rader.
-3. Lägg till dig själv som användare under Authentication, Users (Add user), med e-post och lösenord, och bekräfta användaren direkt.
-4. Stäng av "Allow new users to sign up" under Authentication, så att ingen annan kan skapa ett konto i projektet.
-5. Hämta projektets adress och den publika nyckeln (publishable key, börjar med `sb_publishable_`, eller den äldre anon-nyckeln) under Settings, API Keys, eller i dialogen Connect. Använd aldrig secret-nyckeln i apparna.
-6. iPaden: Bibliotek, kugghjulet, Synk med Windows-appen. Fyll i adress, publik nyckel, e-post och lösenord, och tryck Logga in. Lösenordet sparas inte, bara inloggningen (i nyckelringen).
+Mappen sparas på iPaden som ett säkerhetsbokmärke. Går den inte att nå (mappen borttagen eller flyttad till papperskorgen, bokmärket för gammalt) står det i orange i biblioteket och under Synk, och ingenting tas bort.
 
-Gratisprojekt pausas efter en veckas inaktivitet. Data finns kvar, och projektet startas igen från Supabase.
+## Böcker i mappen (B4)
+
+Böcker som ligger i mappen (också i undermappar, som blir kurser som i Böcker) syns i biblioteket på iPaden och finns på alla enheter. Böcker i appens egen mapp Böcker finns bara på iPaden. Valet görs per bok i hållmenyn: Flytta till iCloud-mappen eller Flytta till bara iPaden. Flytten kopierar först, läser kopian igen och jämför kontrollsumman, och tar bort originalet först sedan. Bokens id i bokregistret följer med, och därmed markeringar, bokmärken, läsposition och sparade ord. I registret har en bok i mappen sökvägen `/iCloud/<sökväg i mappen>`. En sökväg i Böcker börjar aldrig med snedstreck, så de två går aldrig ihop.
+
+En bok som iCloud inte hämtat än (en platshållare, `.Bok.pdf.icloud` i iOS 15) börjar hämtas och visas när den är hämtad. Biblioteket säger Hämtar 2 böcker från iCloud så länge. Undermappen `Sensus synk` och filer som inte är böcker visas inte. Windows-appen läser inte böcker ur mappen än, där läggs böckerna in som förut.
 
 ## Hur det fungerar
 
-* Appen synkar när den kommer fram, när man stänger en bok (högst en gång i minuten) och med Synka nu.
-* Varje rad har en ändringstid i UTC med millisekunder. Den nyaste vinner, rad för rad. För ett sparat ord jämförs ordet och repetitionen var för sig.
-* Borttaget raderas inte i Supabase utan får `deleted = true`, så att det försvinner på alla enheter.
-* Allt läses och jämförs varje gång. Det är små mängder, och det gör synken enkel och tålig.
+* Varje enhet skriver bara sin egen fil, `Sensus synk/<enhetens id>.json`. Ingen annan skriver i den, så filerna krockar aldrig i iCloud.
+* Filen är enhetens hela sammanslagna bild: de egna raderna och allt den läst från de andra filerna, också rader för böcker som inte finns på enheten (de sparas när boken läggs in). En ny enhet får därför allt från vilken fil som helst.
+* Den nyaste ändringen vinner, rad för rad, räknat i hela millisekunder. Vid lika tid vinner det som redan finns på enheten. För ett sparat ord jämförs ordet och repetitionen var för sig. Ett borttaget ord har ingen repetition.
+* Borttaget raderas aldrig ur filen: raden får `deleted: true` och en ny tid. En rad som saknas i en fil betyder aldrig borttagen, så en tom, trasig eller halvt hämtad fil kan inte ta bort något.
+* Filen skrivs atomiskt: först `<id>.json.tmp`, sedan byts namnet (rename), och sist läses filen tillbaka och jämförs. Den skrivs när något ändrats och annars högst var sjätte timme.
+* En fil som inte går att läsa hoppas över med en rad i loggen (`Documents/Diagnostik/logg.txt` på iPaden) och under Synk: tom, trasig JSON (halvt hämtad), inte en synkfil, ett format som är nyare än appen, eller inte hämtad från iCloud än (då begärs hämtningen och filen kommer med nästa gång). Enstaka rader som inte går att läsa hoppas över, resten av filen används.
+* Den egna filen: är den inte hämtad skrivs den inte över den gången. Är den trasig sparas den undan som `<id>.trasig-<datum tid>` innan en ny skrivs. Är den från en nyare version av appen rörs den inte, och synken säger till.
+* Synken går när appen kommer fram, när man stänger en bok (högst en gång i minuten) och med Synka nu. Efter en återställning från säkerhetskopian är den pausad tills den startas igen under Inställningar, Synk.
+* Enhetens id är ett UUID som sparas en gång. På iPaden byts det om `identifierForVendor` ändras (appen förd till en ny iPad via en säkerhetskopia), så att två enheter aldrig skriver samma fil.
 
-## Protokollet (för Windows-appen)
+## Filformatet (för Windows-appen)
 
-Anropen är vanlig Supabase REST, utan bibliotek:
+En JSON-fil i UTF-8. Läsare hoppar över fält de inte känner till. `format` höjs bara när en äldre app inte längre kan läsa filen rätt, och en fil med högre `format` än appen känner till läses inte.
 
-* Inloggning: `POST {adress}/auth/v1/token?grant_type=password` med rubriken `apikey: <publik nyckel>` och `{"email", "password"}`. Svaret har `access_token`, `refresh_token`, `expires_in` och `user.id`. Förnyelse: samma adress med `grant_type=refresh_token` och `{"refresh_token"}`.
-* Läsa: `GET {adress}/rest/v1/<tabell>?select=*&order=updated_at.asc&limit=1000&offset=<n>` med `apikey` och `Authorization: Bearer <access_token>`.
-* Skriva: `POST {adress}/rest/v1/<tabell>?on_conflict=<kolumner>` med `Prefer: resolution=merge-duplicates,return=minimal` och en lista med rader som alla har samma nycklar. Kolumnerna: `user_id,book_id` (positions), `id` (highlights, bookmarks), `user_id,lemma,language` (saved_words).
-* Tider skrivs som ISO 8601 i UTC med millisekunder (`2026-11-07T18:35:07.123Z`). Supabase svarar med mikrosekunder och `+00:00`. Jämför i hela millisekunder.
-* `id` för markeringar och bokmärken är UUID med gemener.
-* Bokens id: SHA-256 av hela filen, gemener, hex.
+```json
+{
+  "format": 1,
+  "app": "Sensus",
+  "device": {"id": "<uuid>", "name": "Edvins iPad", "platform": "ios"},
+  "written_at": "2026-11-09T01:23:45.678Z",
+  "positions": [{"book_id": "<sha256>", "title": "Bok", "kind": "pdf", "section": 12, "progression": 0,
+                 "updated_at": "2026-11-09T01:20:00.123Z"}],
+  "highlights": [{"id": "<uuid>", "book_id": "<sha256>", "section": 3, "start": 120, "length": 42, "text": "...",
+                  "color": "yellow", "note": "", "created_at": "...", "updated_at": "...", "deleted": false}],
+  "bookmarks": [{"id": "<uuid>", "book_id": "<sha256>", "section": 4, "progression": 0.25, "label": "...",
+                 "created_at": "...", "updated_at": "...", "deleted": false}],
+  "saved_words": [{"lemma": "bro", "language": "sv", "word": "bron", "sentence": "...", "book": "Bok", "page": 3,
+                   "lookups": 2, "created_at": "...", "updated_at": "...", "deleted": false, "due": 1794000000.5,
+                   "interval": 3, "ease": 2.5, "reps": 2, "lapses": 1, "review_updated_at": "..."}]
+}
+```
+
+* `platform`: `ios` eller `windows`.
+* Tider skrivs som ISO 8601 i UTC med millisekunder (`2026-11-07T18:35:07.123Z`). Längre bråkdelar och `+00:00` läses också och kortas till millisekunder. Jämför i hela millisekunder.
+* `id` för markeringar och bokmärken är UUID med gemener, `book_id` är SHA-256 av hela bokfilen med gemener.
+* Nycklar: `book_id` (positions), `id` (highlights, bookmarks), `language` plus `lemma` (saved_words). Samma nyckel två gånger i en fil: den nyaste gäller.
+* `progression` skrivs med högst sex decimaler.
 * Platserna i en bok:
-  * PDF: `section` är sidan från 0. Markeringens `start` och `length` gäller sidans text i UTF-16.
-  * EPUB: `section` är kapitlet i läsordningen (spine) från 0. `progression` är andelen av kapitlet (0 till 1). Markeringens `start` och `length` gäller kapitlets text: all text i body i dokumentordning utom i script och style, räknad i UTF-16. `text` är den markerade texten (blanktecken ihopslagna), så att markeringen kan letas upp när platsen inte stämmer.
-  * Textfiler delas i kapitel av iPad-appen. Deras platser stämmer bara om Windows-appen delar filen på samma sätt.
-* Sparade ord: `language` är `sv` eller `en`. Repetitionen: `due` (sekunder sedan 1970), `interval` (dagar), `ease`, `reps`, `lapses` och `review_updated_at`. Ett borttaget ord har `deleted = true` och ingen repetition.
+  * PDF: `kind` är `pdf`, `section` är sidan från 0. Markeringens `start` och `length` gäller sidans text i UTF-16.
+  * EPUB och text: `kind` är `reflow`, `section` är kapitlet i läsordningen (spine) från 0, `progression` andelen av kapitlet (0 till 1). Markeringens `start` och `length` gäller kapitlets text: all text i body i dokumentordning utom i script och style, i UTF-16. `text` är den markerade texten, så att markeringen kan letas upp när platsen inte stämmer.
+  * Textfiler delas i kapitel av iPad-appen. Deras platser stämmer bara om Windows-appen delar filen på samma sätt, och Windows synkar inte deras läspositioner.
+* Sparade ord: `language` är `sv` eller `en`. Repetitionen: `due` (sekunder sedan 1970), `interval` (dagar), `ease`, `reps`, `lapses` och `review_updated_at`. Utan repetition, och för ett borttaget ord, är de `null`.
+* Windows-appen synkar läspositioner (PDF och EPUB) och sparade ord. Markeringar och bokmärken från iPaden följer med oförändrade i Windows-appens fil, men visas inte på datorn än.
 
 ## Provat
 
-Simulatortestet i bygget (jobbet Simulatortest, `-LasaSelfTest fas6`) loggar in mot en låtsas-Supabase (`tools/simtest/mock_supabase.py`) som svarar på samma anrop, synkar tre gånger och skriver vad servern fick i `mock-supabase.json` i artefakten. Mot ett riktigt Supabase-projekt är synken inte provad än, eftersom inget projekt finns.
+* XCTest (`Tests/LasaTests/SyncFileTests.swift`): filformatet fram och tillbaka, trasiga, tomma och nyare filer, rader som inte går att läsa, krockar mellan två och tre enheter, borttaget och det som saknas, ord och repetition var för sig, den atomiska skrivningen och sökvägarna för böcker i mappen.
+* Självtestet `-LasaSelfTest fas6` (`App/Support/SyncSelfTest.swift`) med en vanlig mapp i stället för iCloud Drive (simulatorn har inget iCloud): guiden, en fil från en påhittad Windows-dator, tre filer som ska hoppas över, krockar, flytten av en bok till mappen och tillbaka, och en mapp som inte går att nå. Läs `fas6.log` och `synkmappen/` i artefakten Simulatortest.
+* Windows: `windows/tests/e2e_sync.py` mot en mapp med en påhittad iPad-fil.
+* Bara på iPaden går att prova: riktiga iCloud Drive, dokumentväljarens mapp och säkerhetsbokmärket efter omstart, platshållare som hämtas, och att Windows-appens fil når iPaden via iCloud för Windows.

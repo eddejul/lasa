@@ -103,6 +103,15 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         BookImporter.shared.onChange = { [weak self] in
             self?.updateActivity()
         }
+        // B4: flytten av en bok mellan Böcker och iCloud-mappen.
+        BookMover.shared.onChange = { [weak self] in
+            self?.updateActivity()
+        }
+        // G9: raden med synkens läge, och böckerna i iCloud-mappen när mappen byts.
+        NotificationCenter.default.addObserver(self, selector: #selector(syncChanged), name: SyncEngine.didFinish,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(syncFolderChanged), name: SyncFolder.didChange,
+                                               object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: Theme.didChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(coverUpdated), name: CoverStore.didUpdate,
                                                object: nil)
@@ -627,6 +636,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         resolvePending(scanned.pending, urls: scanned.urls)
         fillMissingHashes(scanned.books)
         prepareCovers()
+        watchCloudDownloads()
     }
 
     /// Bygger om det som visas ur böckerna och registret, utan att läsa Böcker igen.
@@ -762,6 +772,13 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         if pendingCount > 0 {
             lines.append((pendingCount == 1 ? "Läser in en ny fil" : "Läser in \(pendingCount) nya filer", nil))
         }
+        for name in BookMover.shared.moving.values.sorted() {
+            lines.append(("Flyttar \(name)", nil))
+        }
+        let waiting = LibraryStore.shared.waitingCloudBooks.count
+        if waiting > 0 {
+            lines.append((waiting == 1 ? "Hämtar en bok från iCloud" : "Hämtar \(waiting) böcker från iCloud", nil))
+        }
         return lines
     }
 
@@ -818,6 +835,133 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     /// En rad överst två dagar innan appen går ut: Sensus går ut torsdag kl. 14, förnya i Sideloadly.
     private var expiryText: String? {
         AppExpiry.warning()
+    }
+
+    // MARK: Synkens rad (G9)
+
+    private enum BannerRow {
+        case expiry(String)
+        case sync(SyncStatusText.Line)
+    }
+
+    /// Raderna överst: utgångsvarningen och, när en synkmapp är vald, synkens läge.
+    private var bannerRows: [BannerRow] {
+        var rows: [BannerRow] = []
+        if let expiry = expiryText {
+            rows.append(.expiry(expiry))
+        }
+        let status = SyncEngine.shared.status
+        if status != .off {
+            rows.append(.sync(SyncStatusText.line(status)))
+        }
+        return rows
+    }
+
+    /// Synkens rad, till självtestet.
+    var syncLineForSelfTest: String {
+        for row in bannerRows {
+            if case .sync(let line) = row {
+                return line.title + (line.detail.map { ". " + $0 } ?? "")
+            }
+        }
+        return ""
+    }
+
+    @objc private func syncChanged() {
+        guard isViewLoaded else { return }
+        UIView.performWithoutAnimation {
+            collectionView.reloadSections(IndexSet(integer: Section.banner.rawValue))
+        }
+        // Läspositioner från en annan enhet: Fortsätt läsa och andelen läst.
+        if !SyncEngine.shared.isRunning {
+            rebuildItems()
+            collectionView.reloadData()
+        }
+    }
+
+    @objc private func syncFolderChanged() {
+        guard isViewLoaded else { return }
+        reload()
+    }
+
+    // MARK: Böcker i iCloud-mappen (B4)
+
+    private var cloudTimer: Timer?
+
+    /// Medan böcker i iCloud-mappen hämtas läses biblioteket om var femte sekund, så att de syns när de är hämtade.
+    private func watchCloudDownloads() {
+        let waiting = !LibraryStore.shared.waitingCloudBooks.isEmpty
+        if waiting, cloudTimer == nil {
+            let timer = Timer(timeInterval: 5, target: self, selector: #selector(cloudTimerFired), userInfo: nil,
+                              repeats: true)
+            RunLoop.main.add(timer, forMode: .common)
+            cloudTimer = timer
+        } else if !waiting, let timer = cloudTimer {
+            timer.invalidate()
+            cloudTimer = nil
+        }
+    }
+
+    @objc private func cloudTimerFired() {
+        guard view.window != nil, presentedViewController == nil else { return }
+        let before = LibraryStore.shared.waitingCloudBooks
+        // Biblioteket läses om bara när en bok blivit hämtad, så att rutnätet inte ritas om var femte sekund.
+        guard LibraryStore.shared.listing().waiting != before else { return }
+        reload()
+        if LibraryStore.shared.waitingCloudBooks != before {
+            AppLog.shared.write("iCloud-mappen: \(LibraryStore.shared.waitingCloudBooks.count) böcker hämtas")
+        }
+    }
+
+    /// Flytta till iCloud-mappen eller till bara iPaden, i hållmenyn.
+    private func placeAction(for item: ShelfItem) -> UIAction? {
+        guard SyncFolder.shared.isChosen, BookRegistry.shared.isAvailable else { return nil }
+        let inCloud = BookPlace.isCloud(item.book.path)
+        let device = traitCollection.userInterfaceIdiom == .pad ? "iPaden" : "iPhonen"
+        let action = UIAction(title: inCloud ? "Flytta till bara \(device)" : "Flytta till iCloud-mappen",
+                              image: UIImage(systemName: inCloud ? "ipad.and.arrow.forward" : "icloud.and.arrow.up")) {
+            [weak self] _ in
+            self?.confirmMove(item, toCloud: !inCloud)
+        }
+        if SyncFolder.shared.url == nil {
+            action.attributes = .disabled
+            action.subtitle = "iCloud-mappen går inte att nå"
+        } else {
+            action.subtitle = inCloud ? "Ligger i iCloud-mappen, finns på alla enheter" : "Ligger bara på \(device)"
+        }
+        return action
+    }
+
+    private func confirmMove(_ item: ShelfItem, toCloud: Bool) {
+        let folder = SyncFolder.shared.name
+        let message = toCloud
+            ? "Boken kopieras till \(folder) i iCloud Drive och finns sedan på alla dina enheter. Kopian kontrolleras "
+                + "innan boken tas bort här. Markeringar, anteckningar och läsposition följer med."
+            : "Boken kopieras till Böcker på den här enheten och tas sedan bort ur \(folder) i iCloud Drive, också på "
+                + "dina andra enheter. Kopian kontrolleras först. Markeringar, anteckningar och läsposition följer med."
+        let alert = UIAlertController(title: toCloud ? "Flytta \(item.title) till iCloud-mappen?"
+                                        : "Flytta \(item.title) till bara den här enheten?",
+                                      message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Flytta", style: .default) { [weak self] _ in
+            self?.move(item.book, toCloud: toCloud)
+        })
+        present(alert, animated: true)
+    }
+
+    /// Flyttar boken (B4). Också till självtestet.
+    func move(_ book: Book, toCloud: Bool, completion: ((Result<Book, Error>) -> Void)? = nil) {
+        BookMover.shared.move(book, toCloud: toCloud) { [weak self] result in
+            self?.reload()
+            if case .failure(let error) = result {
+                if SelfTest.isActive {
+                    SelfTest.log("Flytten säger: \(error.localizedDescription)")
+                } else {
+                    self?.showMessage(title: "Boken flyttades inte", message: error.localizedDescription)
+                }
+            }
+            completion?(result)
+        }
     }
 
     // MARK: Öppna
@@ -1012,7 +1156,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         guard isViewLoaded else { return 0 }
         switch Section(rawValue: section) {
-        case .banner: return expiryText == nil ? 0 : 1
+        case .banner: return bannerRows.count
         case .activity: return activityLines.isEmpty ? 0 : 1
         case .week: return showsReadingWeek ? 1 : 0
         case .study: return showsStudy ? 1 : 0
@@ -1028,9 +1172,18 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         switch Section(rawValue: indexPath.section) {
         case .banner:
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: MessageCell.id, for: indexPath) as! MessageCell
-            cell.configure(lines: [(text: expiryText ?? "", progress: nil)],
-                           background: palette.warning.withAlphaComponent(0.18),
-                           palette: palette)
+            let rows = bannerRows
+            switch indexPath.item < rows.count ? rows[indexPath.item] : .expiry("") {
+            case .expiry(let text):
+                cell.configure(lines: [(text: text, progress: nil)],
+                               background: palette.warning.withAlphaComponent(0.18),
+                               palette: palette)
+            case .sync(let line):
+                // G9: i orange när synken inte fungerar, med ett tryck för detaljer.
+                cell.configure(lines: [(text: line.title + (line.detail.map { ". " + $0 } ?? ""), progress: nil)],
+                               background: line.isProblem ? palette.warning.withAlphaComponent(0.18) : palette.surface,
+                               palette: palette)
+            }
             return cell
         case .activity:
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: MessageCell.id, for: indexPath) as! MessageCell
@@ -1128,6 +1281,13 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
+        if indexPath.section == Section.banner.rawValue {
+            let rows = bannerRows
+            if indexPath.item < rows.count, case .sync = rows[indexPath.item] {
+                navigationController?.pushViewController(SyncGuideViewController(), animated: true)
+            }
+            return
+        }
         guard let item = item(at: indexPath) else { return }
         open(item.book)
     }
@@ -1178,6 +1338,9 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
             })
         }
         actions.append(courseMenu(for: item))
+        if let place = placeAction(for: item) {
+            actions.append(place)
+        }
         let finished = records[book.id]?.finished ?? false
         actions.append(UIAction(title: finished ? "Markera som oläst" : "Markera som läst",
                                 image: UIImage(systemName: finished ? "circle" : "checkmark.circle")) { [weak self] _ in
@@ -1241,8 +1404,11 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     }
 
     private func confirmDelete(_ item: ShelfItem) {
+        let cloud = BookPlace.isCloud(item.book.path)
         let alert = UIAlertController(title: "Ta bort \(item.title)?",
-                                      message: "Filen tas bort ur Sensus. Markeringar, anteckningar och bokmärken sparas "
+                                      message: (cloud ? "Filen tas bort ur iCloud-mappen, också på dina andra enheter. "
+                                                    : "Filen tas bort ur Sensus. ")
+                                        + "Markeringar, anteckningar och bokmärken sparas "
                                         + "och kommer tillbaka om du lägger in samma fil igen.",
                                       preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))

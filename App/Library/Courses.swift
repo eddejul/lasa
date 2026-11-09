@@ -23,7 +23,8 @@ enum CourseLogic {
 
     /// Den första mappen i en sökväg i Böcker ("RETA30/Kap 1/Bok.pdf" ger "RETA30"), nil direkt i Böcker.
     static func topFolder(of path: String) -> String? {
-        let parts = path.split(separator: "/")
+        // B4: i iCloud-mappen räknas mappen inne i iCloud-mappen, så att RETA30 där och i Böcker blir samma kurs.
+        let parts = BookPlace.relative(path).split(separator: "/")
         return parts.count > 1 ? String(parts[0]) : nil
     }
 

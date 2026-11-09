@@ -386,6 +386,142 @@ fn secret_set(name: String, value: Option<String>) -> Result<(), String> {
     }
 }
 
+// Synken (F1): en fil per enhet i undermappen "Sensus synk" i en mapp i iCloud Drive (iCloud för Windows).
+// Formatet och sammanslagningen ligger i ../src/js/syncfile.js (docs/SYNK.md). Kommandona når bara den
+// undermappen och bara filnamn som slutar på .json, och den egna filen skrivs atomiskt (write_atomic).
+
+const SYNC_FOLDER: &str = "Sensus synk";
+
+/// Undermappen med synkfilerna i den valda mappen. Finns inte den valda mappen blir det ett fel.
+fn sync_dir(folder: &str) -> Result<PathBuf, String> {
+    let folder = folder.trim();
+    if folder.is_empty() {
+        return Err("Ingen synkmapp är vald.".to_string());
+    }
+    let root = PathBuf::from(folder);
+    if !root.is_dir() {
+        return Err(format!(
+            "Mappen {folder} finns inte. Kontrollera sökvägen och att iCloud för Windows är igång."
+        ));
+    }
+    Ok(root.join(SYNC_FOLDER))
+}
+
+/// Bara vanliga filnamn som slutar på .json, utan mappar.
+fn sync_name(name: &str) -> Result<(), String> {
+    let bad = name.is_empty()
+        || name.len() > 200
+        || name.starts_with('.')
+        || !name.to_lowercase().ends_with(".json")
+        || name.contains(|c: char| c == '/' || c == '\\' || c == ':');
+    if bad {
+        Err(format!("Ogiltigt namn på en synkfil: {name}"))
+    } else {
+        Ok(())
+    }
+}
+
+/// Mappar som ser ut som iCloud Drive (%USERPROFILE%\iCloudDrive), de med en synkmapp först.
+#[tauri::command(async)]
+fn sync_suggest() -> Vec<String> {
+    let mut result = Vec::new();
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        let drive = PathBuf::from(profile).join("iCloudDrive");
+        if drive.is_dir() {
+            if let Ok(entries) = fs::read_dir(&drive) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.join(SYNC_FOLDER).is_dir() {
+                        result.push(plain(&path));
+                    }
+                }
+            }
+            result.push(plain(&drive));
+        }
+    }
+    result
+}
+
+/// Provet i Inställningar: skriver en liten fil i synkmappen, läser tillbaka den och tar bort den.
+#[tauri::command(async)]
+fn sync_check(folder: String) -> Result<(), String> {
+    let dir = sync_dir(&folder)?;
+    fs::create_dir_all(&dir).map_err(|error| format!("Mappen {SYNC_FOLDER} kunde inte skapas: {error}"))?;
+    let probe = dir.join(format!(".sensus-prov-{}.txt", unix_seconds()));
+    let text: &[u8] = "Sensus provar att skriva här. Filen tas bort direkt.".as_bytes();
+    write_atomic(&probe, text).map_err(|error| format!("Sensus kunde inte skriva i mappen: {error}"))?;
+    let back = fs::read(&probe);
+    let _ = fs::remove_file(&probe);
+    match back {
+        Ok(bytes) if bytes == text => Ok(()),
+        Ok(_) => Err("Filen som skrevs gick inte att läsa tillbaka likadan.".to_string()),
+        Err(error) => Err(format!("Filen som skrevs gick inte att läsa tillbaka: {error}")),
+    }
+}
+
+/// Synkfilerna i mappen: [{ name, size }], i namnordning.
+#[tauri::command(async)]
+fn sync_list(folder: String) -> Result<Vec<Value>, String> {
+    let dir = sync_dir(&folder)?;
+    let mut result = Vec::new();
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(result),
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if sync_name(&name).is_err() {
+            continue;
+        }
+        let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+        result.push(serde_json::json!({ "name": name, "size": size }));
+    }
+    result.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    Ok(result)
+}
+
+/// En synkfil som text. iCloud för Windows hämtar en fil som bara finns i molnet när den läses, så läsningen
+/// får högst 15 sekunder. Sedan räknas filen som inte hämtad, och den kommer med nästa gång.
+#[tauri::command(async)]
+fn sync_read(folder: String, name: String) -> Result<String, String> {
+    sync_name(&name)?;
+    let path = sync_dir(&folder)?.join(&name);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(fs::read(&path));
+    });
+    match receiver.recv_timeout(Duration::from_secs(15)) {
+        Ok(Ok(bytes)) => String::from_utf8(bytes).map_err(|_| format!("{name} är inte text i UTF-8")),
+        Ok(Err(error)) => Err(format!("{name} gick inte att läsa: {error}")),
+        Err(_) => Err(format!("{name} är inte hämtad från iCloud än")),
+    }
+}
+
+/// Skriver datorns egen synkfil atomiskt och läser tillbaka den.
+#[tauri::command(async)]
+fn sync_write(folder: String, name: String, text: String) -> Result<(), String> {
+    sync_name(&name)?;
+    let dir = sync_dir(&folder)?;
+    fs::create_dir_all(&dir).map_err(|error| format!("Mappen {SYNC_FOLDER} kunde inte skapas: {error}"))?;
+    let path = dir.join(&name);
+    write_atomic(&path, text.as_bytes()).map_err(|error| format!("Synkfilen kunde inte sparas: {error}"))?;
+    match fs::read(&path) {
+        Ok(bytes) if bytes == text.as_bytes() => Ok(()),
+        Ok(_) => Err("Synkfilen som sparades gick inte att läsa tillbaka likadan.".to_string()),
+        Err(error) => Err(format!("Synkfilen gick inte att läsa tillbaka: {error}")),
+    }
+}
+
+/// En egen synkfil som inte går att läsa får ett annat namn (<id>.trasig-<sekunder>), så att den inte skrivs över.
+#[tauri::command(async)]
+fn sync_set_aside(folder: String, name: String) -> Result<(), String> {
+    sync_name(&name)?;
+    let dir = sync_dir(&folder)?;
+    let stem = &name[..name.len() - ".json".len()];
+    let target = dir.join(format!("{stem}.trasig-{}", unix_seconds()));
+    fs::rename(dir.join(&name), target).map_err(|error| error.to_string())
+}
+
 // Gör sökbar (P1): skriptet tools/ocr/sokbar_pdf.py (bland appens resurser som ocr/sokbar_pdf.py) körs med
 // Python och Tesseract på en PDF i biblioteket och skriver en ny PDF med osynlig text i spaltordning i
 // datamappen, OCR\<jobb>\ut.pdf. Gränssnittet frågar efter läget med ocr_status, hämtar filen med ocr_take
@@ -923,7 +1059,13 @@ fn main() {
             ocr_status,
             ocr_cancel,
             ocr_take,
-            ocr_discard
+            ocr_discard,
+            sync_suggest,
+            sync_check,
+            sync_list,
+            sync_read,
+            sync_write,
+            sync_set_aside
         ])
         .run(tauri::generate_context!())
         .expect("Sensus kunde inte starta");
