@@ -1,0 +1,469 @@
+{
+  "prompt": "Du gör frågor som hjälper en läsare att förstå och minnas en bok. Läsaren svarar ur minnet, med egna ord, efter att ha läst avsnittet.\n\nBok: Vanans väg, av Testförfattare\nKapitel: Slingan\n\nTidigare kapitel i boken:\n- Inledning: Boken handlar om hur vanor uppstår och kan ändras.\n\nAndra böcker som läsaren har läst:\n- Atomvanor: Små vanor som upprepas ger stora förändringar över tid. Begrepp: identitet, miljödesign, vanestapling.\n- Tänka, snabbt och långsamt: Två system för tänkande, ett snabbt och ett långsamt, och de fel det snabba gör. Begrepp: system 1, system 2, förankring.\n\nGör så här.\n1. \"sammanfattning\": kapitlets huvudpoäng i högst tre meningar.\n2. \"begrepp\": högst åtta viktiga begrepp eller namn ur kapitlet, skrivna som i texten.\n3. \"fragor\":\na) 2 frågor med \"nar\": \"efter\", spridda jämnt över hela texten. Varje fråga gäller ett avsnitt. \"plats\" är 4 till 10 ord som står ordagrant i avsnittets sista mening, så att frågan visas när avsnittet är läst.\nb) 1 fråga med \"nar\": \"fore\": det viktigaste läsaren ska ha i huvudet medan hen läser. \"plats\" lämnas tom.\nc) 2 frågor med \"nar\": \"slut\": en av typen sammanfatta, och 1 fråga som kräver större kopplingar än texten, av typerna annan_bok, verkligheten, foljder, gransen, overforing eller debatt. annan_bok och debatt mellan böcker får bara gälla böckerna i listan ovan, med titeln exakt som där i \"bok\". \"plats\" lämnas tom.\n4. Välj typ efter vad avsnittet bär: ett begrepp ger egna_ord eller skillnad, ett argument varfor eller belagg, en återgiven åsikt vems_rost, ett svårt ställe svar_mening. Blanda typerna.\n5. Skriv frågan med andra ord än boken. Upprepa aldrig fem ord i rad ur texten.\n6. \"svar\": två eller tre korta kärnpunkter med egna ord, som ett bra svar innehåller. För en öppen fråga (\"oppen\": true): vad boken säger som läsaren kan ställa sitt svar mot.\n7. \"kalla\": 5 till 30 ord som står ordagrant i texten, där svaret står. Kopiera tecken för tecken, utan att ändra, korta eller översätta. Lämna \"kalla\" tom bara när svaret inte står i texten.\n8. Skriv frågor, svar och sammanfattning på svenska, även när boken är på ett annat språk. \"plats\", \"kalla\" och \"begrepp\" står på bokens språk, precis som i texten.\n9. Fråga inte efter sidnummer, årtal, namn eller detaljer som inte hjälper förståelsen.\n\nKapitlets text:\n<text>\nDen som vill förstå en vana måste först se vad den ger. En vana är sällan ett tecken på svag vilja. Den är ett svar på ett behov som återkommer, och hjärnan lär sig snabbt vilka handlingar som brukar löna sig. Varje gång en handling följs av en belöning blir det lite lättare att göra samma sak nästa gång.\n\nForskare brukar beskriva vanan som en slinga med tre delar. Först kommer en signal, till exempel en tid på dygnet, en plats eller en känsla. Sedan kommer själva beteendet. Till sist kommer belöningen, som kan vara allt från socker till lättnad eller sällskap. När slingan har upprepats tillräckligt många gånger börjar signalen ensam väcka ett sug efter belöningen.\n\nDärför fungerar det dåligt att bara bestämma sig för att sluta. Signalen finns kvar och suget kommer tillbaka. Det som fungerar bättre är att behålla signalen och belöningen men ”byta ut beteendet” i mitten. Den som äter godis av tristess på eftermiddagen kan i stället ta en kort promenad, som också bryter tristessen.\n\nAlla håller inte med om den här bilden. Kritiker menar att slingan förenklar för mycket, eftersom många vanor hänger ihop med miljön och inte bara med den enskilda människan. Om godiset ligger framme på kontoret spelar viljan mindre roll än man tror. Författaren medger att miljön betyder mycket, men hävdar att slingan ändå är det bästa verktyget för den som vill förändra sitt eget beteende.\n\nDet viktigaste är kanske att se vanor som något man kan undersöka. Den som skriver ner när suget kommer, var hen befinner sig och vad som händer efteråt hittar ofta mönster som tidigare var osynliga. Först då går det att välja ett nytt beteende som ger samma belöning.\n</text>",
+  "tidigare": [
+    {
+      "rubrik": "Inledning",
+      "sammanfattning": "Boken handlar om hur vanor uppstår och kan ändras."
+    }
+  ],
+  "schemaFragor": {
+    "type": "object",
+    "properties": {
+      "sammanfattning": {
+        "type": "string"
+      },
+      "begrepp": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "fragor": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "typ": {
+              "type": "string",
+              "enum": [
+                "huvudpoang",
+                "egna_ord",
+                "svar_mening",
+                "vems_rost",
+                "varfor",
+                "uppgift",
+                "koppling",
+                "skillnad",
+                "tillampa",
+                "falla",
+                "belagg",
+                "kritisk",
+                "anvand",
+                "sammanfatta",
+                "annan_bok",
+                "verkligheten",
+                "foljder",
+                "gransen",
+                "overforing",
+                "debatt",
+                "syntes"
+              ]
+            },
+            "nar": {
+              "type": "string",
+              "enum": [
+                "fore",
+                "efter",
+                "slut"
+              ]
+            },
+            "fraga": {
+              "type": "string"
+            },
+            "svar": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "oppen": {
+              "type": "boolean"
+            },
+            "plats": {
+              "type": "string"
+            },
+            "kalla": {
+              "type": "string"
+            },
+            "bok": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "typ",
+            "nar",
+            "fraga",
+            "svar",
+            "oppen",
+            "plats",
+            "kalla"
+          ]
+        }
+      }
+    },
+    "required": [
+      "sammanfattning",
+      "begrepp",
+      "fragor"
+    ]
+  },
+  "schemaJamfor": {
+    "type": "object",
+    "properties": {
+      "med": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "saknas": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "fel": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "omdome": {
+        "type": "string",
+        "enum": [
+          "bra",
+          "delvis",
+          "saknas_mycket"
+        ]
+      },
+      "kommentar": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "med",
+      "saknas",
+      "fel",
+      "omdome",
+      "kommentar"
+    ]
+  },
+  "jamfor": [
+    {
+      "nr": 0,
+      "mittSvar": "  För att vanan svarar på något man behöver, och hjärnan lär sig vad som lönar sig.\n",
+      "prompt": "Du bedömer en läsares svar på en fråga om en bok. Bedöm innehållet, inte orden: samma sak med andra ord räknas som rätt. Var vänlig och konkret, och skriv på svenska.\n\nFråga: Varför är en vana enligt texten inte ett tecken på dålig karaktär?\nEtt bra svar innehåller:\n- Vanan svarar på ett behov som kommer tillbaka.\n- Hjärnan lär sig vilka handlingar som brukar ge något.\nUr boken: \"Den är ett svar på ett behov som återkommer\"\nLäsarens svar: För att vanan svarar på något man behöver, och hjärnan lär sig vad som lönar sig.\n\nLista i \"med\" det läsaren fick med, i \"saknas\" det som saknas och i \"fel\" det som strider mot boken. \"kommentar\" är en mening."
+    },
+    {
+      "nr": 9,
+      "mittSvar": "Den missar miljön.",
+      "prompt": "Du bedömer en läsares svar på en fråga om en bok. Bedöm innehållet, inte orden: samma sak med andra ord räknas som rätt. Var vänlig och konkret, och skriv på svenska.\n\nFråga: Var tycker du att slingmodellen är svagast, och vad skulle en kritiker säga?\nEtt bra svar innehåller:\n- Boken medger att miljön betyder mycket.\nUr boken: Inget citat.\nLäsarens svar: Den missar miljön.\n\nFrågan är öppen och har inget rätt svar. Skriv i \"kommentar\" om resonemanget håller och vad boken säger, och lämna \"fel\" tom om inget strider mot boken. Säg tydligt när något i kommentaren kommer från dig och inte från boken."
+    }
+  ],
+  "om": "Skapad av referens.py. Påhittat kapitel och modellsvar, en fråga per regel i docs/AI-FRAGOR.md. Ändra inte för hand.",
+  "bok": {
+    "id": "11111111-2222-3333-4444-555555555555",
+    "titel": "Vanans väg",
+    "forfattare": "Testförfattare"
+  },
+  "kapitel": {
+    "nyckel": "k3",
+    "rubrik": "Slingan",
+    "del": 1,
+    "delar": 1,
+    "text": "Den som vill förstå en vana måste först se vad den ger. En vana är sällan ett tecken på svag vilja. Den är ett svar på ett behov som återkommer, och hjärnan lär sig snabbt vilka handlingar som brukar löna sig. Varje gång en handling följs av en belöning blir det lite lättare att göra samma sak nästa gång.\n\nForskare brukar beskriva vanan som en slinga med tre delar. Först kommer en signal, till exempel en tid på dygnet, en plats eller en känsla. Sedan kommer själva beteendet. Till sist kommer belöningen, som kan vara allt från socker till lättnad eller sällskap. När slingan har upprepats tillräckligt många gånger börjar signalen ensam väcka ett sug efter belöningen.\n\nDärför fungerar det dåligt att bara bestämma sig för att sluta. Signalen finns kvar och suget kommer tillbaka. Det som fungerar bättre är att behålla signalen och belöningen men ”byta ut beteendet” i mitten. Den som äter godis av tristess på eftermiddagen kan i stället ta en kort promenad, som också bryter tristessen.\n\nAlla håller inte med om den här bilden. Kritiker menar att slingan förenklar för mycket, eftersom många vanor hänger ihop med miljön och inte bara med den enskilda människan. Om godiset ligger framme på kontoret spelar viljan mindre roll än man tror. Författaren medger att miljön betyder mycket, men hävdar att slingan ändå är det bästa verktyget för den som vill förändra sitt eget beteende.\n\nDet viktigaste är kanske att se vanor som något man kan undersöka. Den som skriver ner när suget kommer, var hen befinner sig och vad som händer efteråt hittar ofta mönster som tidigare var osynliga. Först då går det att välja ett nytt beteende som ger samma belöning.",
+    "sista": false
+  },
+  "andraBocker": [
+    {
+      "titel": "Atomvanor",
+      "sammanfattning": "Små vanor som upprepas ger stora förändringar över tid.",
+      "begrepp": [
+        "identitet",
+        "miljödesign",
+        "vanestapling"
+      ]
+    },
+    {
+      "titel": "Tänka, snabbt och långsamt",
+      "sammanfattning": "Två system för tänkande, ett snabbt och ett långsamt, och de fel det snabba gör.",
+      "begrepp": [
+        "system 1",
+        "system 2",
+        "förankring"
+      ]
+    }
+  ],
+  "antal": {
+    "efter": 2,
+    "fore": 1,
+    "kopplingar": 1,
+    "slut": 2
+  },
+  "tak": {
+    "fore": 2,
+    "efter": 4,
+    "slut": 4
+  },
+  "svar": {
+    "sammanfattning": "Kapitlet beskriver vanan som en slinga av signal, beteende och belöning, och säger att man ändrar en vana genom att byta beteendet men behålla signal och belöning.",
+    "begrepp": [
+      "signal",
+      "beteende",
+      "belöning",
+      "slinga",
+      "miljön"
+    ],
+    "fragor": [
+      {
+        "typ": "varfor",
+        "nar": "efter",
+        "fraga": "Varför är en vana enligt texten inte ett tecken på dålig karaktär?",
+        "svar": [
+          "Vanan svarar på ett behov som kommer tillbaka.",
+          "Hjärnan lär sig vilka handlingar som brukar ge något."
+        ],
+        "oppen": false,
+        "plats": "lättare att göra samma sak nästa gång",
+        "kalla": "Den är ett svar på ett behov som återkommer",
+        "bok": ""
+      },
+      {
+        "typ": "huvudpoang",
+        "nar": "efter",
+        "fraga": "Vad är avsnittets viktigaste poäng om vanor?",
+        "svar": [
+          "Vanor kan ändras."
+        ],
+        "oppen": false,
+        "plats": "slingan med fyra delar och en signal",
+        "kalla": "En vana är sällan ett tecken på svag vilja",
+        "bok": ""
+      },
+      {
+        "typ": "egna_ord",
+        "nar": "efter",
+        "fraga": "Förklara med egna ord hur en vana blir automatisk.",
+        "svar": [
+          "Signalen väcker suget."
+        ],
+        "oppen": false,
+        "plats": "väcka ett sug efter belöningen",
+        "kalla": "Vanan består alltid av exakt tre steg",
+        "bok": ""
+      },
+      {
+        "typ": "uppgift",
+        "nar": "efter",
+        "fraga": "Vad menas med att signalen finns kvar och suget kommer tillbaka, och vad gör man då?",
+        "svar": [
+          "Man byter beteendet."
+        ],
+        "oppen": false,
+        "plats": "som också bryter tristessen",
+        "kalla": "Signalen finns kvar och suget kommer tillbaka",
+        "bok": ""
+      },
+      {
+        "typ": "skillnad",
+        "nar": "efter",
+        "fraga": "Vilka delar består vanans kedja av, och i vilken ordning kommer de?",
+        "svar": [
+          "Signal, beteende, belöning."
+        ],
+        "oppen": false,
+        "plats": "en slinga med tre delar",
+        "kalla": "Först kommer en signal",
+        "bok": ""
+      },
+      {
+        "typ": "vems_rost",
+        "nar": "efter",
+        "fraga": "Vem är det som invänder mot bilden av vanan som en slinga, och vad pekar invändningen på?",
+        "svar": [
+          "Kritikerna pekar på att omgivningen styr mycket.",
+          "Exemplet är godis som ligger framme på jobbet."
+        ],
+        "oppen": false,
+        "plats": "MILJÖN och inte bara med\nden enskilda människan",
+        "kalla": "Om godiset ligger framme på kontoret spelar viljan mindre roll än man tror",
+        "bok": ""
+      },
+      {
+        "typ": "huvudpoang",
+        "nar": "fore",
+        "fraga": "Vad är det enda i vanans kedja som går att byta, enligt författaren?",
+        "svar": [
+          "Beteendet i mitten.",
+          "Signalen och belöningen får vara kvar."
+        ],
+        "oppen": false,
+        "plats": "",
+        "kalla": "men \"byta ut beteendet\" i mitten",
+        "bok": ""
+      },
+      {
+        "typ": "annan_bok",
+        "nar": "slut",
+        "fraga": "Hur skiljer sig synen på miljön här från den i Atomvanor?",
+        "svar": [
+          "Kapitlet säger att miljön betyder mycket men att slingan är viktigast."
+        ],
+        "oppen": true,
+        "plats": "",
+        "kalla": "",
+        "bok": "Atomvanor"
+      },
+      {
+        "typ": "annan_bok",
+        "nar": "slut",
+        "fraga": "Vad skulle Kraften i vanor säga om slingan?",
+        "svar": [
+          "Okänt."
+        ],
+        "oppen": true,
+        "plats": "",
+        "kalla": "",
+        "bok": "Kraften i vanor"
+      },
+      {
+        "typ": "kritisk",
+        "nar": "slut",
+        "fraga": "Var tycker du att slingmodellen är svagast, och vad skulle en kritiker säga?",
+        "svar": [
+          "Boken medger att miljön betyder mycket."
+        ],
+        "oppen": true,
+        "plats": "",
+        "kalla": "Slingan är bevisad i tusentals studier",
+        "bok": ""
+      },
+      {
+        "typ": "quiz",
+        "nar": "efter",
+        "fraga": "Vilket år skrevs boken?",
+        "svar": [
+          "Okänt."
+        ],
+        "oppen": false,
+        "plats": "samma belöning",
+        "kalla": "",
+        "bok": ""
+      },
+      {
+        "typ": "skillnad",
+        "nar": "efter",
+        "fraga": "Vad skiljer ett nytt beteende från ett gammalt?",
+        "svar": [],
+        "oppen": false,
+        "plats": "ger samma belöning",
+        "kalla": "",
+        "bok": ""
+      },
+      {
+        "typ": "sammanfatta",
+        "nar": "slut",
+        "fraga": "Sammanfatta kapitlet i två meningar: vad är en vana och hur ändrar man den?",
+        "svar": [
+          "En vana är signal, beteende och belöning.",
+          "Man byter beteendet och behåller resten."
+        ],
+        "oppen": false,
+        "plats": "",
+        "kalla": "",
+        "bok": ""
+      }
+    ]
+  },
+  "vantat": {
+    "behalls": [
+      {
+        "id": "aimxoqx3v8gtsv",
+        "nr": 6,
+        "typ": "huvudpoang",
+        "nar": "fore",
+        "fraga": "Vad är det enda i vanans kedja som går att byta, enligt författaren?",
+        "kalla": "men \"byta ut beteendet\" i mitten",
+        "oppen": false,
+        "position": null
+      },
+      {
+        "id": "ai1obwwi7jf8mcg",
+        "nr": 0,
+        "typ": "varfor",
+        "nar": "efter",
+        "fraga": "Varför är en vana enligt texten inte ett tecken på dålig karaktär?",
+        "kalla": "Den är ett svar på ett behov som återkommer",
+        "oppen": false,
+        "position": 305
+      },
+      {
+        "id": "ai1xjnog5achqlb",
+        "nr": 5,
+        "typ": "vems_rost",
+        "nar": "efter",
+        "fraga": "Vem är det som invänder mot bilden av vanan som en slinga, och vad pekar invändningen på?",
+        "kalla": "Om godiset ligger framme på kontoret spelar viljan mindre roll än man tror",
+        "oppen": false,
+        "position": 1169
+      },
+      {
+        "id": "ai3rj9w330h967x",
+        "nr": 7,
+        "typ": "annan_bok",
+        "nar": "slut",
+        "fraga": "Hur skiljer sig synen på miljön här från den i Atomvanor?",
+        "kalla": "",
+        "oppen": true,
+        "position": null
+      },
+      {
+        "id": "ai2ryxp79mplo5u",
+        "nr": 9,
+        "typ": "kritisk",
+        "nar": "slut",
+        "fraga": "Var tycker du att slingmodellen är svagast, och vad skulle en kritiker säga?",
+        "kalla": "",
+        "oppen": true,
+        "position": null
+      },
+      {
+        "id": "ai1obhrkradc5mt",
+        "nr": 12,
+        "typ": "sammanfatta",
+        "nar": "slut",
+        "fraga": "Sammanfatta kapitlet i två meningar: vad är en vana och hur ändrar man den?",
+        "kalla": "",
+        "oppen": false,
+        "position": null
+      }
+    ],
+    "slangs": [
+      {
+        "nr": 1,
+        "fraga": "Vad är avsnittets viktigaste poäng om vanor?",
+        "orsak": "plats"
+      },
+      {
+        "nr": 2,
+        "fraga": "Förklara med egna ord hur en vana blir automatisk.",
+        "orsak": "kalla"
+      },
+      {
+        "nr": 3,
+        "fraga": "Vad menas med att signalen finns kvar och suget kommer tillbaka, och vad gör man då?",
+        "orsak": "kopierad"
+      },
+      {
+        "nr": 4,
+        "fraga": "Vilka delar består vanans kedja av, och i vilken ordning kommer de?",
+        "orsak": "avstand"
+      },
+      {
+        "nr": 8,
+        "fraga": "Vad skulle Kraften i vanor säga om slingan?",
+        "orsak": "bok"
+      },
+      {
+        "nr": 10,
+        "fraga": "Vilket år skrevs boken?",
+        "orsak": "typ"
+      },
+      {
+        "nr": 11,
+        "fraga": "Vad skiljer ett nytt beteende från ett gammalt?",
+        "orsak": "svar"
+      }
+    ]
+  }
+}
