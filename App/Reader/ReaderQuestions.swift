@@ -776,12 +776,15 @@ final class QuestionListViewController: UITableViewController, UIDocumentPickerD
                 if result.last?.key == question.chapterKey {
                     result[result.count - 1].items.append(question)
                 } else {
-                    result.append((question.chapterKey, question.chapterName, [question]))
+                    result.append((key: question.chapterKey, title: question.chapterName, items: [question]))
                 }
             }
             groups = result
         } else {
-            groups = questions.questions.isEmpty ? [] : [("", "", questions.questions)]
+            groups = []
+            if !questions.questions.isEmpty {
+                groups.append((key: "", title: "", items: questions.questions))
+            }
         }
         actions = showsAI ? aiStatus().actions : []
         tableView.reloadData()
