@@ -489,12 +489,11 @@ export class BookQuestions {
     this.lastPlace = place;
     const endBanner = this.banner?.isConnected && this.banner.dataset.testid === 'chapter-end';
     if (questionsEnabled() && !ended && !endBanner) this.offerBeforeReading(chapter, place);
-    if (await this.aiBlocker()) return;
-    if (stillBlocked()) return;
+    // Nyckeln läses bara när något kapitel saknar frågor, inte vid varje sidvändning.
     const next = this.chapters[chapter.order + 1];
-    for (const target of [chapter, next]) {
-      if (target && !this.hasChapter(target.key) && !this.failed.has(target.key)) this.queueChapter(target).catch(() => {});
-    }
+    const targets = [chapter, next].filter((target) => target && !this.hasChapter(target.key) && !this.failed.has(target.key));
+    if (!targets.length || stillBlocked() || await this.aiBlocker()) return;
+    for (const target of targets) this.queueChapter(target).catch(() => {});
   }
 
   /** Läsaren bläddrar (1 framåt, -1 bakåt), för raden Kapitlet är slut. */
