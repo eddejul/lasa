@@ -14,7 +14,8 @@ enum SyncStatusText {
     }
 
     @MainActor
-    static func line(_ status: SyncEngine.Status, palette: Palette = Theme.current) -> Line {
+    static func line(_ status: SyncEngine.Status, palette given: Palette? = nil) -> Line {
+        let palette = given ?? Theme.current
         switch status {
         case .off:
             return Line(title: "Inte uppsatt", detail: "Tryck för att välja en mapp i iCloud Drive.",
