@@ -29,7 +29,8 @@ Pusha inte flera orelaterade ändringar i samma commit. Varje runda tar flera mi
 7. Kopior som ska följas åt: repetitionen (`App/Dictionary/UserWords.swift` och `windows/src/js/review.js`, där `review.test.mjs` läser Swift-koden och går sönder om schemat ändras), AI-knappen (`GeminiClient.swift` och `windows/src/js/gemini.js`) och sökningens vikning (`FoldedText` och `windows/src/js/search.js`). Ändras den ena ändras den andra i samma commit.
 8. Markeringar och bokmärken på Windows ligger i `bibliotek.sqlite` med samma kolumner som `markeringar.sqlite`. `book` är bokens eget id (G3, ett UUID som aldrig ändras), inte SHA-256. Kontrollsumman ligger i `books.sha256`, bokfilerna heter `<sha256>.<ext>`, och synken skickar sha256 som `book_id` (`contentId` i `store.js`). Matchningen vid import ligger i `windows/src/js/bookmatch.js` med samma regler som `BookMatcher` på iPaden: ändras den ena ändras den andra. Engångsflyttar ligger under `moves` i `statements.json` och körs av både `main.rs` och `dev/server.py`. PDF räknar tecken i pdf.js text (inte PDFKit), EPUB i kapitlets text som på iPaden. Ingen synk av markeringar ännu. `moves` har två engångssteg: G3 och de borttagna böckerna (fynd 5 i nattens granskning), där varje kontrollsumma i `book` utan bokrad får en rad med `missing = 1`, så att samma fil ger `restore` när den läggs till igen. Ett nytt engångssteg läggs sist med egen `pending`, eftersom ett tidigare stegs `pending` redan kan vara 0.
 9. `windows/tests/e2e_fas7.py` provar markeringar, sök, repetition, AI-knappen och uppslag. `node --test windows/tests/*.test.mjs` körs i bygget. En ändring i `.github/workflows/windows-build.yml` startar också iOS-bygget. `windows/tests/e2e_fas8.py` provar G3 (påhittade gamla data och importfrågorna) och W10 (Rulla och Bläddra), och startar själv `dev/server.py` på port 8963 med egna datamappar.
-10. Namnet är Sensus i fönstret och texterna, men `productName` ("Läsa"), `identifier` (`se.edvin.lasa`) och datamappen är oförändrade, så att installationen ersätter den gamla. Byt inte `productName` utan Edvins ja, det kan ge en andra installation.
+10. Gör sökbar (P1): `tools/ocr/sokbar_pdf.py` följer med appen som resurs (`ocr/sokbar_pdf.py`), Rust-delens `ocr_*` startar det med Python utan konsolfönster och `windows/src/js/ocr.js` är knappen och förloppet. Textlagret skrivs som egen innehållsström (Tm och Tz per ord, vågrätt, mellanslaget i ordets ruta): `insert_text` med `morph` eller lutande textmatris gav hopslagna ord i pdf.js. Prova med `tools/ocr/test_sokbar.py` och `windows/tests/e2e_ocr.py` (port 8967, riktig Tesseract).
+11. Namnet är Sensus i fönstret och texterna, men `productName` ("Läsa"), `identifier` (`se.edvin.lasa`) och datamappen är oförändrade, så att installationen ersätter den gamla. Byt inte `productName` utan Edvins ja, det kan ge en andra installation.
 
 ## Projektet
 
@@ -56,6 +57,7 @@ Config/Info.plist
 docs/SPEC.md
 tools/dictionary/   (fas 2) Python som bygger ordboksdatabasen
 tools/simtest/      (fas 3) testböcker och skriptet som kör självtestet i en iPad-simulator
+tools/ocr/          (P1) Gör sökbar: OCR med Tesseract, osynlig text i spaltordning (se tools/ocr/README.md)
 Tests/LasaTests/    automatiska tester av ren logik (XCTest), körs sist i Simulatortest
 windows/            (fas 5) Windows-appen: src/ (HTML, CSS, JavaScript), src-tauri/ (Rust), dev/, tests/
 .github/workflows/ios-build.yml
