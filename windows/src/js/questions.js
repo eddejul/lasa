@@ -267,7 +267,9 @@ function stillBlocked() {
     notify();
     return false;
   }
-  return true;
+  // Nyckel och modell hindrar tills de rättats. Nät och andra fel hindrar inte: kapitlet försöks igen nästa
+  // gång det visas.
+  return ['noKey', 'badKey', 'unknownModel'].includes(aiState.blocked.kind);
 }
 
 // Den öppna boken.
@@ -301,6 +303,11 @@ export class BookQuestions {
   }
 
   async load() {
+    // En nyckel eller modell kan ha rättats sedan förra boken: försök igen.
+    if (aiState.blocked && aiState.blocked.kind !== 'quotaDay') {
+      aiState.blocked = null;
+      notify();
+    }
     const stored = await questionFile(this.book.id);
     this.file = null;
     if (stored) {
@@ -312,11 +319,15 @@ export class BookQuestions {
     }
     this.ai = await aiQuestions(this.book.id);
     this.answers = await questionAnswers(this.book.id);
-    try {
-      this.chapters = await this.reader.questionChapters();
-    } catch (error) {
-      console.warn('Kapitlen för frågorna kunde inte tas fram', error);
-      this.chapters = [];
+    // Kapitlen tas fram bara när frågorna är påslagna och boken gick att öppna.
+    const opened = this.reader.kind === 'pdf' ? Boolean(this.reader.pdf) : Boolean(this.reader.view?.book);
+    this.chapters = [];
+    if (questionsEnabled() && opened) {
+      try {
+        this.chapters = await this.reader.questionChapters();
+      } catch (error) {
+        console.warn('Kapitlen för frågorna kunde inte tas fram', error);
+      }
     }
     await this.rebuild();
   }
@@ -471,7 +482,7 @@ export class BookQuestions {
     const endBanner = this.banner?.isConnected && this.banner.dataset.testid === 'chapter-end';
     if (questionsEnabled() && !ended && !endBanner) this.offerBeforeReading(chapter, place);
     if (await this.aiBlocker()) return;
-    if (stillBlocked() && aiState.blocked.kind !== 'offline') return;
+    if (stillBlocked()) return;
     const next = this.chapters[chapter.order + 1];
     for (const target of [chapter, next]) {
       if (target && !this.hasChapter(target.key) && !this.failed.has(target.key)) this.queueChapter(target).catch(() => {});
