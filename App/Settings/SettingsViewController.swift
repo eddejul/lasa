@@ -1,7 +1,7 @@
 import UIKit
 
-/// Inställningar (fas 6): bläddringsljud, Förklaring med AI (raden öppnar guiden för nyckeln, U7), synken,
-/// säkerhetskopian (G1) och loggen (G4).
+/// Inställningar (fas 6): bläddringsljud, Förklaring med AI (raden öppnar guiden för nyckeln, U7), Synk (raden
+/// öppnar guiden för mappen i iCloud Drive, U7 och F1), säkerhetskopian (G1) och loggen (G4).
 /// Hemligheter sparas i nyckelringen, aldrig i filer.
 final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
@@ -9,16 +9,7 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         case followSystem
         case pageSound
         case aiStatus
-        case syncURL
-        case syncAnonKey
-        case syncEmail
-        case syncPassword
-        case syncSignIn
-        case syncNow
-        case syncPaused
-        case syncResume
-        case syncStatus
-        case syncSignOut
+        case sync
         case backupStatus
         case backupNow
         case backupRestore
@@ -32,9 +23,6 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     }
 
     private var sections: [Section] = []
-    private var password = ""
-    private var syncBusy = false
-    private var syncMessage: String?
     private var backupBusy = false
     private var backupMessage: String?
 
@@ -70,17 +58,6 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     }
 
     private func rebuild() {
-        let client = SyncClient.shared
-        var syncRows: [Row] = [.syncURL, .syncAnonKey, .syncEmail]
-        let paused = SyncEngine.shared.isPaused
-        if paused {
-            syncRows += [.syncPaused, .syncResume]
-        }
-        if client.isSignedIn {
-            syncRows += (paused ? [] : [.syncNow]) + [.syncStatus, .syncSignOut]
-        } else {
-            syncRows += [.syncPassword, .syncSignIn]
-        }
         sections = [
             Section(title: "Utseende och läsaren", rows: [.followSystem, .pageSound],
                     footer: "Med Följ systemet blir appen mörk när iPaden är i mörkt läge och har annars "
@@ -96,10 +73,10 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
                         + "före en uppdatering (Före uppdateringen) sparas alltid. Den har markeringar, anteckningar, "
                         + "sparade ord och läspositioner. "
                         + "Kopiorna försvinner om appen tas bort, så flytta gärna en till iCloud Drive."),
-            Section(title: "Synk med Windows-appen", rows: syncRows,
-                    footer: "Läsposition, markeringar, bokmärken och sparade ord synkas via ditt eget Supabase-projekt "
-                        + "(gratisnivån). Böckerna känns igen på innehållet, så samma fil måste finnas på båda ställena. "
-                        + "Hur projektet skapas står i docs/SYNK.md i repot. Lösenordet sparas inte."),
+            Section(title: "Synk", rows: [.sync],
+                    footer: "Läsposition, markeringar, bokmärken och sparade ord synkas via en mapp i iCloud Drive, "
+                        + "med en liten fil per enhet. Inget konto och ingen nyckel. Windows-appen når mappen via iCloud "
+                        + "för Windows. Tryck på raden för att välja mappen, steg för steg."),
             Section(title: "Diagnostik", rows: [.shareLog],
                     footer: "Appen skriver en logg i Filer under \(Self.filesLocation), Diagnostik: starter, tider för "
                         + "sidor, minnesvarningar och fel. Den har boktitlar men ingen text ur böckerna. Dela den när "
@@ -128,23 +105,6 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let row = sections[indexPath.section].rows[indexPath.row]
-        switch row {
-        case .syncURL:
-            return field(indexPath, title: "Projektets adress", text: SyncClient.shared.projectURL,
-                         placeholder: "https://abcd.supabase.co", secure: false, tag: 3, keyboard: .URL)
-        case .syncAnonKey:
-            return field(indexPath, title: "Publik nyckel", text: SyncClient.shared.anonKey,
-                         placeholder: "sb_publishable_…", secure: true, tag: 4)
-        case .syncEmail:
-            return field(indexPath, title: "E-post", text: SyncClient.shared.email,
-                         placeholder: "namn@exempel.se", secure: false, tag: 5, keyboard: .emailAddress)
-        case .syncPassword:
-            return field(indexPath, title: "Lösenord", text: password, placeholder: "Lösenordet i Supabase",
-                         secure: true, tag: 6)
-        default:
-            break
-        }
-
         let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
         cell.accessoryView = nil
         cell.accessoryType = .none
@@ -207,45 +167,17 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
             }
             content.secondaryTextProperties.numberOfLines = 0
             cell.accessoryType = .disclosureIndicator
-        case .syncSignIn:
+        case .sync:
+            // U7 och G9: synkens läge i färg. Raden öppnar guiden.
+            let line = SyncStatusText.line(SyncEngine.shared.status)
             content = UIListContentConfiguration.subtitleCell()
-            content.text = syncBusy ? "Loggar in …" : "Logga in"
-            content.textProperties.color = view.tintColor
-            content.secondaryText = syncMessage
+            content.text = "Synk"
+            content.secondaryText = line.title + (line.detail.map { ". " + $0 } ?? "")
+            content.secondaryTextProperties.color = line.color
             content.secondaryTextProperties.numberOfLines = 0
-        case .syncNow:
-            content.text = SyncEngine.shared.isRunning || syncBusy ? "Synkar …" : "Synka nu"
-            content.textProperties.color = view.tintColor
-        case .syncPaused:
-            content = UIListContentConfiguration.subtitleCell()
-            content.text = "Synken är pausad"
-            content.textProperties.color = Theme.current.warning
-            content.secondaryText = "Den pausades när du återställde från en säkerhetskopia, så att servern inte tar "
-                + "tillbaka det du ångrade. Den startar inte av sig själv, inte heller när appen startas om."
-            content.secondaryTextProperties.numberOfLines = 0
-            cell.selectionStyle = .none
-        case .syncResume:
-            content.text = "Starta synken igen"
-            content.textProperties.color = view.tintColor
-        case .syncStatus:
-            content = UIListContentConfiguration.subtitleCell()
-            content.text = "Inloggad som \(SyncClient.shared.email)"
-            var lines: [String] = []
-            if let last = SyncEngine.shared.lastSync {
-                lines.append("Senast synkad " + AnnotationFormat.date(last))
-            }
-            if let report = SyncEngine.shared.lastReport {
-                lines.append(report.summary)
-            }
-            if let error = SyncEngine.shared.lastError ?? syncMessage {
-                lines.append(error)
-            }
-            content.secondaryText = lines.isEmpty ? "Inte synkad än." : lines.joined(separator: "\n")
-            content.secondaryTextProperties.numberOfLines = 0
-            cell.selectionStyle = .none
-        case .syncSignOut:
-            content.text = "Logga ut"
-            content.textProperties.color = .systemRed
+            content.image = UIImage(systemName: line.symbol)
+            content.imageProperties.tintColor = line.color
+            cell.accessoryType = .disclosureIndicator
         case .backupStatus:
             content = UIListContentConfiguration.subtitleCell()
             content.text = "Senaste kopian"
@@ -309,16 +241,8 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         switch sections[indexPath.section].rows[indexPath.row] {
         case .aiStatus:
             navigationController?.pushViewController(AIKeyGuideViewController(), animated: true)
-        case .syncSignIn:
-            signIn()
-        case .syncNow:
-            syncNow()
-        case .syncResume:
-            confirmResumeSync()
-        case .syncSignOut:
-            SyncClient.shared.signOut()
-            syncMessage = nil
-            rebuild()
+        case .sync:
+            navigationController?.pushViewController(SyncGuideViewController(), animated: true)
         case .backupNow:
             backupNow()
         case .backupRestore:
@@ -382,30 +306,14 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
         }
     }
 
-    /// Starta synken igen efter pausen (granskning 2, fynd 3), med vad som då händer.
-    private func confirmResumeSync() {
-        let alert = UIAlertController(
-            title: "Starta synken igen?",
-            message: "Ändringar som är nyare än säkerhetskopian hämtas från servern, också markeringar som tagits bort "
-                + "på datorn. Det du har på iPaden nu skickas till servern.",
-            preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Starta synken", style: .default) { [weak self] _ in
-            SyncEngine.shared.resume()
-            self?.rebuild()
-            self?.syncNow()
-        })
-        present(alert, animated: true)
-    }
-
     private func confirmRestore(_ copy: Backup.Copy) {
         var message = "Markeringar, anteckningar, sparade ord och läspositioner ersätts med kopians. Det du har nu "
             + "sparas först som en ny kopia, så att du kan gå tillbaka."
-        if SyncClient.shared.isSignedIn {
-            // Granskning 2, fynd 3: synken skulle annars ta tillbaka nyare ändringar från servern.
+        if SyncEngine.shared.isConfigured {
+            // Granskning 2, fynd 3: synken skulle annars ta tillbaka nyare ändringar från de andra enheterna.
             message += " Synken pausas efter återställningen och startar inte av sig själv, inte heller när appen "
-                + "startas om. Du startar den igen under Synk med Windows-appen, och då hämtas ändringar som är "
-                + "nyare än kopian från servern."
+                + "startas om. Du startar den igen under Synk, och då hämtas ändringar på de andra enheterna som är "
+                + "nyare än kopian."
         }
         let alert = UIAlertController(
             title: "Återställ från \(Self.backupTitle(copy))?",
@@ -421,7 +329,7 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
     private func restore(_ copy: Backup.Copy) {
         do {
             try Backup.restore(copy)
-            if SyncClient.shared.isSignedIn {
+            if SyncEngine.shared.isConfigured {
                 SyncEngine.shared.pauseAfterRestore()
             }
             backupMessage = "Återställt från \(Self.backupTitle(copy))."
@@ -455,77 +363,11 @@ final class SettingsViewController: UITableViewController, UITextFieldDelegate {
 
     // MARK: Fälten
 
-    func textFieldDidEndEditing(_ textField: UITextField) {
-        let text = textField.text ?? ""
-        switch textField.tag {
-        case 3:
-            SyncClient.shared.projectURL = text
-        case 4:
-            SyncClient.shared.anonKey = text
-        case 5:
-            SyncClient.shared.email = text
-        case 6:
-            password = text
-        default:
-            break
-        }
-    }
-
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         textField.resignFirstResponder()
         return true
     }
 
-    // MARK: Knapparna
-
-    private func signIn() {
-        let client = SyncClient.shared
-        guard client.isConfigured else {
-            syncMessage = SyncClient.Failure.notConfigured.errorDescription
-            rebuild()
-            return
-        }
-        guard !client.email.isEmpty, !password.isEmpty else {
-            syncMessage = "Fyll i e-post och lösenord."
-            rebuild()
-            return
-        }
-        syncBusy = true
-        syncMessage = nil
-        rebuild()
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            do {
-                try await client.signIn(email: client.email, password: self.password)
-                self.password = ""
-                self.syncBusy = false
-                self.syncMessage = nil
-                self.rebuild()
-                try await SyncEngine.shared.sync()
-            } catch {
-                self.syncBusy = false
-                self.syncMessage = error.localizedDescription
-                self.rebuild()
-            }
-        }
-    }
-
-    private func syncNow() {
-        guard !syncBusy else { return }
-        syncBusy = true
-        syncMessage = nil
-        rebuild()
-        Task { @MainActor [weak self] in
-            do {
-                try await SyncEngine.shared.sync()
-                self?.syncMessage = nil
-            } catch {
-                self?.syncMessage = error.localizedDescription
-            }
-            self?.syncBusy = false
-            self?.rebuild()
-        }
-    }
 }
 
 /// En rad med en rubrik och ett textfält.
