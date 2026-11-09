@@ -156,6 +156,10 @@ final class LibraryStore {
             } else {
                 result.cloudReachable = false
             }
+        } else if cloudListing != nil {
+            // Mappen är bortvald: en senare vald mapp läses från början.
+            cloudListing = nil
+            cloudGeneration += 1
         }
         return result
     }
