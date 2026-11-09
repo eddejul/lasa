@@ -295,7 +295,8 @@ final class AIQuestionCardViewController: UIViewController, UITextViewDelegate {
             // Jämförs förslag syns som en markerad knapp, men Edvin väljer själv.
             configuration?.subtitle = option == suggested && !chosen ? "Förslag" : nil
             configuration?.background.strokeWidth = option == suggested ? 2 : 0
-            configuration?.background.strokeColor = configuration?.baseForegroundColor
+            let stroke = configuration?.baseForegroundColor
+            configuration?.background.strokeColor = stroke
             button.configuration = configuration
             button.accessibilityTraits = chosen ? [.button, .selected] : .button
             button.accessibilityHint = option == suggested ? "Förslaget efter jämförelsen" : nil
