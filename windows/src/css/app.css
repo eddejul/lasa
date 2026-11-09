@@ -588,3 +588,82 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .grade-when { font-size: 12px; color: var(--muted); }
 .review-done { text-align: center; white-space: pre-line; font-size: 17px; line-height: 1.5; margin: 24px 0 8px; }
 .review-help { margin: 10px 0 0; }
+
+/* Frågor i marginalen (K6) och AI-frågorna (K6b): prickarna, rutan, panelen och raderna före och efter kapitlet. */
+.pdf-dots { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.question-dot {
+  position: absolute;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  padding: 0;
+  pointer-events: auto;
+  opacity: 0.92;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+.question-dot:hover { opacity: 1; transform: scale(1.1); }
+.question-dot.status-kan { background: #2e8b4a; color: #fff; }
+.question-dot.status-osaker { background: #c48a00; color: #fff; }
+.question-dot.status-kan_inte { background: #c0392b; color: #fff; }
+.question-dot.small { position: static; display: inline-block; width: 18px; height: 18px; line-height: 18px; font-size: 10px; flex: 0 0 auto; }
+
+.question-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(640px, calc(100% - 120px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 8px 12px;
+  z-index: 8;
+  font-size: 14px;
+}
+.question-banner-text { flex: 1; min-width: 0; }
+
+.question-box { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.dialog .question-text { color: var(--text); font-size: 17px; line-height: 1.45; margin: 4px 0 12px; }
+.question-count { font-size: 13px; }
+.question-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.question-answer-input { resize: vertical; min-height: 84px; line-height: 1.4; }
+.question-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.question-reveal { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; }
+.question-points { margin: 0 0 10px; padding-left: 20px; line-height: 1.45; }
+.dialog .question-source { color: var(--text); }
+.question-feedback:empty { display: none; }
+.question-feedback { margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.question-feedback ul { margin: 2px 0 0; padding-left: 20px; }
+.feedback-med { border-left: 4px solid #2e8b4a; padding-left: 8px; }
+.feedback-saknas { border-left: 4px solid #d4a017; padding-left: 8px; }
+.feedback-fel { border-left: 4px solid #c0392b; padding-left: 8px; }
+.dialog .feedback-comment { color: var(--text); margin: 0; }
+.dialog .question-error { color: var(--danger); }
+.question-status { display: flex; gap: 8px; margin-top: 10px; }
+.question-status .button { flex: 1; }
+.question-status .button.selected { border-color: var(--accent); font-weight: 600; }
+.question-status .button.suggested { box-shadow: 0 0 0 2px var(--accent); }
+.dialog .question-ai-note { font-size: 11px; margin: 10px 0 0; text-align: right; }
+
+.check-row { display: flex; align-items: center; gap: 8px; padding: 6px 2px; cursor: pointer; }
+.check-row.disabled { opacity: 0.5; cursor: default; }
+.questions-panel { display: flex; flex-direction: column; gap: 10px; }
+.ai-line { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.ai-line p { margin: 0; }
+.ai-message { color: var(--danger); font-size: 13px; }
+.question-chapter-title { font-size: 15px; margin: 6px 0 0; }
+.question-row { display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left; padding: 6px 8px; border-radius: 6px; }
+.question-row:hover { background: var(--surface-2); }
+.question-row-text { flex: 1; min-width: 0; line-height: 1.35; }
+.question-row-status { font-size: 12px; color: var(--muted); white-space: nowrap; }

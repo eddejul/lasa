@@ -11,6 +11,7 @@ import { closePdf, openPdf, openPdfRange, pdfjs } from './pdfjs.js';
 import { MAX_HITS, breathe, excerpt, findAll, foldQuery } from './search.js';
 import { el } from './ui.js';
 import { isWordCharacter, wordInPageText } from './wordfind.js';
+import { pagesSource } from './questions.js';
 
 const PADDING = 16;
 const SCROLLBAR = 18;
@@ -36,8 +37,11 @@ const MAX_CANVAS_PIXELS = 8e6;
 
 export class PdfReader {
   constructor(stage, { onRelocate, onWord, onMessage, fit = 'auto', zoom = 1, spread = 'auto', flow = 'paged', getMarks = null,
-    onSelect = null, onMarkClick = null }) {
+    onSelect = null, onMarkClick = null, getDots = null, onDotClick = null }) {
     this.kind = 'pdf';
+    // Frågorna i marginalen (K6, questions.js): getDots(sida) ger [{ id, offset, y, number, status }].
+    this.getDots = getDots;
+    this.onDotClick = onDotClick;
     // Bläddra ('paged', en sida eller ett uppslag i taget) eller Rulla ('scroll', alla sidor efter varandra).
     this.flow = flow === 'scroll' ? 'scroll' : 'paged';
     this.inflight = new Map();
@@ -579,7 +583,9 @@ export class PdfReader {
   paintMarks(index) {
     const entry = this.cache.get(index);
     const layer = entry?.element.querySelector('.pdf-marks');
-    if (!layer || !entry.element.isConnected || !entry.text) return;
+    if (!layer || !entry.element.isConnected) return;
+    this.paintDots(index, entry);
+    if (!entry.text) return;
     const boxes = [];
     entry.markRects = [];
     for (const mark of this.getMarks?.(index, entry.text) ?? []) {
@@ -597,6 +603,127 @@ export class PdfReader {
       }
     }
     layer.replaceChildren(...boxes);
+  }
+
+  /** Frågornas numrerade prickar i sidans högra marginal, vid raden där platsen står (K6). */
+  paintDots(index, entry) {
+    let layer = entry.element.querySelector('.pdf-dots');
+    const dots = this.getDots?.(index) ?? [];
+    if (!layer && !dots.length) return;
+    if (!layer) {
+      layer = el('div', { class: 'pdf-dots' });
+      entry.element.append(layer);
+    }
+    const height = parseFloat(entry.element.style.height) || entry.element.offsetHeight;
+    const buttons = [];
+    for (const dot of dots) {
+      let middle = null;
+      if (Number.isInteger(dot.offset) && entry.text) {
+        const rects = this.rectsFor(entry, Math.max(0, dot.offset - 1), Math.min(dot.offset, entry.text.length));
+        const last = rects[rects.length - 1];
+        if (last) middle = last.top + last.height / 2;
+      } else if (typeof dot.y === 'number') {
+        middle = dot.y * height;
+      }
+      if (middle === null) continue;
+      buttons.push(el('button', { class: `question-dot${dot.status ? ` status-${dot.status}` : ''}`, title: `Fråga ${dot.number}`,
+        style: `top:${Math.max(0, middle - 10)}px`, dataset: { id: dot.id, testid: 'question-dot' },
+        onmousedown: (event) => event.stopPropagation(),
+        onclick: (event) => {
+          event.stopPropagation();
+          this.onDotClick?.(dot);
+        } }, String(dot.number)));
+    }
+    layer.replaceChildren(...buttons);
+  }
+
+  // Frågorna (K6b): kapitlen, texten och platserna, som questions.js använder.
+
+  get sectionCount() {
+    return this.count;
+  }
+
+  /** Sidans text, samma som markeringarna räknar i. */
+  sectionText(index) {
+    return this.pageText(index);
+  }
+
+  /** Kapitlen för frågorna: innehållets översta nivå (bokmärkena), annars tio sidor i taget.
+   *  [{ key, order, title, pages: [första, sista] }], sidorna från 0. */
+  async questionChapters() {
+    const starts = [];
+    try {
+      const outline = await this.pdf.getOutline();
+      for (const item of outline ?? []) {
+        let dest = item.dest;
+        if (typeof dest === 'string') dest = await this.pdf.getDestination(dest);
+        if (!Array.isArray(dest)) continue;
+        const [ref] = dest;
+        const page = typeof ref === 'object' && ref !== null ? await this.pdf.getPageIndex(ref) : Number(ref);
+        if (Number.isInteger(page) && page >= 0 && page < this.count) starts.push({ page, title: String(item.title ?? '').trim() });
+      }
+    } catch (error) {
+      console.warn('Innehållet kunde inte läsas för frågorna', error);
+    }
+    starts.sort((a, b) => a.page - b.page);
+    const unique = starts.filter((start, i) => i === 0 || start.page !== starts[i - 1].page);
+    const ranges = [];
+    if (unique.length) {
+      if (unique[0].page > 0) ranges.push({ title: 'Början', first: 0 });
+      for (const start of unique) ranges.push({ title: start.title || `Sida ${this.pageName(start.page)}`, first: start.page });
+    } else {
+      for (let first = 0; first < this.count; first += 10) {
+        const last = Math.min(first + 9, this.count - 1);
+        ranges.push({ title: `Sidorna ${this.pageName(first)} till ${this.pageName(last)}`, first });
+      }
+    }
+    // Har boken text alls? Några sidor jämnt fördelade i boken (en fotad PDF utan text får inga frågor).
+    let letters = 0;
+    const samples = new Set();
+    for (let i = 0; i < Math.min(12, this.count); i++) samples.add(Math.floor((i * this.count) / Math.min(12, this.count)));
+    for (const page of samples) {
+      letters += (await this.pageText(page)).replace(/\s+/g, '').length;
+      if (letters > 200) break;
+    }
+    this.noTextFlag = letters < 50;
+    return ranges.map((range, order) => {
+      const last = order + 1 < ranges.length ? ranges[order + 1].first - 1 : this.count - 1;
+      return { key: `p${range.first + 1}-${last + 1}`, order, title: range.title, pages: [range.first, last] };
+    });
+  }
+
+  hasNoText() {
+    return this.noTextFlag === true;
+  }
+
+  /** Kapitlets text: sidornas text i ordning med en tom rad emellan, och vägen tillbaka till sidorna. */
+  async questionText(chapter) {
+    const pages = [];
+    for (let page = chapter.pages[0]; page <= chapter.pages[1]; page++) {
+      pages.push({ page, text: await this.pageText(page) });
+      if (page % 8 === 7) await breathe();
+    }
+    return pagesSource(pages);
+  }
+
+  chapterForPlace(place, chapters) {
+    const page = place?.pages?.[0];
+    if (!Number.isInteger(page)) return null;
+    return chapters.find((chapter) => page >= chapter.pages[0] && page <= chapter.pages[1]) ?? null;
+  }
+
+  /** Kapitlets första sida syns. */
+  isChapterStart(place, chapter) {
+    return Boolean(place?.pages?.includes(chapter.pages[0]));
+  }
+
+  placeName(section) {
+    return `s. ${this.pageName(section)}`;
+  }
+
+  /** Visar ett ställe på en sida och ringar in det (Visa i boken). */
+  showRange(section, start, end) {
+    return this.showHit({ section, start, end });
   }
 
   /** Markeringen under en punkt i fönstret, eller null. */

@@ -98,6 +98,7 @@ async function openBook(id) {
     onBack: () => showTab('library'),
     onSavedWords: () => openModal('Sparade ord', renderSavedWords),
     onAbout: () => openModal('Om ordboken', renderAbout),
+    onSettings: () => openModal('Inställningar', renderSettings),
   });
 }
 

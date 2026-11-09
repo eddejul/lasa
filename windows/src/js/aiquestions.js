@@ -66,6 +66,18 @@ export function locate(quote, text) {
   return null;
 }
 
+/** Början och slutet för citatets första träff ({ start, end } i texten), eller null. Samma regler som locate. */
+export function locateRange(quote, text) {
+  for (const loose of [false, true]) {
+    const folded = foldText(loose ? loosen(text) : text);
+    const q = foldedQuery(loose ? loosen(quote) : quote);
+    if (q.length < 2) return null;
+    const at = folded.text.indexOf(q);
+    if (at >= 0) return { start: folded.map[at], end: folded.map[at + q.length - 1] + 1 };
+  }
+  return null;
+}
+
 /** Orden i den vikta texten: följder av bokstäver och siffror. */
 export function wordList(text) {
   return foldText(String(text ?? '')).text.match(/[\p{L}\p{N}]+/gu) ?? [];
