@@ -15,9 +15,12 @@ export function isoTime(seconds) {
   return new Date(Math.round(seconds * 1000)).toISOString();
 }
 
-/** Läser en tid. Längre bråkdelar och +00:00 kortas till millisekunder. */
+/** Läser en tid. Längre bråkdelar och +00:00 kortas till millisekunder. Som iPadens ISO8601DateFormatter krävs
+ * datum, klockslag och tidszon (Z eller +hh:mm), annars null (granskning 6, L7: en tid utan tidszon lästes förut
+ * som lokal tid här men hoppades över på iPaden). */
 export function parseTime(value) {
   if (typeof value !== 'string' || !value) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value)) return null;
   const text = value.replace(/(T\d{2}:\d{2}:\d{2})\.(\d+)/, (_, time, digits) => `${time}.${(digits + '000').slice(0, 3)}`);
   const ms = Date.parse(text);
   return Number.isNaN(ms) ? null : ms / 1000;
@@ -181,6 +184,9 @@ export function mergeWord(existing, incoming) {
 /** Läser en synkfil. Ger { snapshot } eller { error } ('empty', 'notJSON', 'notSensus', 'newerFormat'). */
 export function decode(content) {
   if (typeof content !== 'string' || content.length === 0) return { error: 'empty' };
+  // L7: en fil med BOM läses som på iPaden.
+  if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
+  if (content.length === 0) return { error: 'empty' };
   let root;
   try {
     root = JSON.parse(content);
@@ -188,7 +194,8 @@ export function decode(content) {
     return { error: 'notJSON' };
   }
   if (!root || typeof root !== 'object' || Array.isArray(root)) return { error: 'notJSON' };
-  const format = int(root.format);
+  // L7: formatet ska vara ett tal, som på iPaden (NSNumber). Text som "1" är ingen synkfil.
+  const format = typeof root.format === 'string' ? null : int(root.format);
   const device = root.device;
   if (format === null || format < 1 || !device || typeof device !== 'object' || typeof device.id !== 'string' || !device.id) {
     return { error: 'notSensus' };

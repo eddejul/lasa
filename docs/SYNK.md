@@ -53,7 +53,7 @@ En JSON-fil i UTF-8. Läsare hoppar över fält de inte känner till. `format` h
 ```
 
 * `platform`: `ios` eller `windows`.
-* Tider skrivs som ISO 8601 i UTC med millisekunder (`2026-11-07T18:35:07.123Z`). Längre bråkdelar och `+00:00` läses också och kortas till millisekunder. Jämför i hela millisekunder.
+* Tider skrivs som ISO 8601 i UTC med millisekunder (`2026-11-07T18:35:07.123Z`). Längre bråkdelar och `+00:00` läses också och kortas till millisekunder. Jämför i hela millisekunder. En tid utan tidszon eller utan klockslag är en rad som inte går att läsa, `format` ska vara ett tal och en fil med BOM läses, på båda plattformarna (granskning 6, L7).
 * `id` för markeringar och bokmärken är UUID med gemener, `book_id` är SHA-256 av hela bokfilen med gemener.
 * Nycklar: `book_id` (positions), `id` (highlights, bookmarks), `language` plus `lemma` (saved_words). Samma nyckel två gånger i en fil: den nyaste gäller.
 * `progression` skrivs med högst sex decimaler.

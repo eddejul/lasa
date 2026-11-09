@@ -72,6 +72,26 @@ test('trasiga, tomma, okända och nyare filer läses inte', () => {
   assert.equal(decode('{"format": 2, "device": {"id": "x"}}').error, 'newerFormat');
 });
 
+test('udda filer läses som på iPaden (granskning 6, L7)', () => {
+  const good = { format: 1, device: windows, written_at: '2026-11-09T01:00:00.000Z',
+    positions: [{ book_id: book, kind: 'pdf', section: 3, progression: 0, updated_at: '2026-11-09T01:00:00.000Z' }] };
+  // Formatet som text är ingen synkfil.
+  assert.equal(decode(JSON.stringify({ ...good, format: '1' })).error, 'notSensus');
+  // En fil med BOM läses.
+  assert.equal(decode('\ufeff' + JSON.stringify(good)).snapshot.positions.size, 1);
+  // En tid utan tidszon, eller ett datum utan klockslag, hoppas över som en rad som inte går att läsa.
+  for (const updated of ['2026-11-09T01:00:00', '2026-11-09', '2026-11-09 01:00:00Z']) {
+    const read = decode(JSON.stringify({ ...good, positions: [{ ...good.positions[0], updated_at: updated }] })).snapshot;
+    assert.equal(read.positions.size, 0, updated);
+    assert.equal(read.skippedRows, 1, updated);
+  }
+  // Z, +00:00 och långa bråkdelar går bra.
+  for (const updated of ['2026-11-09T01:00:00Z', '2026-11-09T02:00:00+01:00', '2026-11-09T01:00:00.123456Z']) {
+    const read = decode(JSON.stringify({ ...good, positions: [{ ...good.positions[0], updated_at: updated }] })).snapshot;
+    assert.equal(read.positions.size, 1, updated);
+  }
+});
+
 test('rader som inte går att läsa hoppas över, resten används', () => {
   const content = JSON.stringify({
     format: 1, device: windows,
