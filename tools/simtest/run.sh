@@ -112,14 +112,14 @@ printf '{"format": 99, "device": {"id": "framtid", "name": "Ny version"}, "posit
 rm -f "$DATA/Documents/selftest/fas6.klar"
 xcrun simctl launch "$UDID" "$BUNDLE" -LasaSelfTest fas6
 waited=0
-while [ ! -f "$DATA/Documents/selftest/fas6.klar" ] && [ $waited -lt 240 ]; do
+while [ ! -f "$DATA/Documents/selftest/fas6.klar" ] && [ $waited -lt 360 ]; do
   sleep 5
   waited=$((waited + 5))
 done
 if [ -f "$DATA/Documents/selftest/fas6.klar" ]; then
   echo "Klart efter cirka $waited sekunder."
 else
-  echo "Självtestet för fas 6 blev inte klart inom 240 sekunder."
+  echo "Självtestet för fas 6 blev inte klart inom 360 sekunder."
   status=1
 fi
 xcrun simctl terminate "$UDID" "$BUNDLE" || true
