@@ -868,6 +868,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
     @objc private func cloudTimerFired() {
         guard view.window != nil, presentedViewController == nil else { return }
         let before = LibraryStore.shared.waitingCloudBooks
+        // Biblioteket läses om bara när en bok blivit hämtad, så att rutnätet inte ritas om var femte sekund.
+        guard LibraryStore.shared.listing().waiting != before else { return }
         reload()
         if LibraryStore.shared.waitingCloudBooks != before {
             AppLog.shared.write("iCloud-mappen: \(LibraryStore.shared.waitingCloudBooks.count) böcker hämtas")

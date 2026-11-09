@@ -46,8 +46,16 @@ enum SyncSelfTest {
         let guide = SyncGuideViewController()
         navigation.pushViewController(guide, animated: false)
         await pause(0.5)
+        let before = SyncEngine.shared.lastSync
         guide.use(folder)
-        await waitForSync()
+        // Provet i mappen går först, sedan synken: vänta tills synken är klar (eller gav fel).
+        for _ in 0..<80 {
+            await pause(0.25)
+            let engine = SyncEngine.shared
+            if !engine.isRunning, engine.lastSync != before || engine.lastError != nil {
+                break
+            }
+        }
         await pause(0.5)
         SelfTest.log("Synkguiden (U7): \(guide.statusText). Läget: \(SyncStatusText.line(SyncEngine.shared.status).title)")
         SelfTest.saveScreen(navigation.view, name: "13-synkguide")
@@ -119,15 +127,6 @@ enum SyncSelfTest {
         navigation.popToRootViewController(animated: false)
         SyncFolder.shared.forget()
         library.reload()
-    }
-
-    private static func waitForSync() async {
-        for _ in 0..<60 {
-            await pause(0.25)
-            if !SyncEngine.shared.isRunning {
-                return
-            }
-        }
     }
 
     private static func syncOnce() async {
@@ -284,7 +283,9 @@ enum SyncSelfTest {
         SyncFolder.shared.refresh()
         library.reload()
         let back = await move(moved, toCloud: false, library: library)
-        SelfTest.log("Mappen tillbaka: test.md \(back?.path ?? "FEL"), samma id \(back?.id == book.id ? "ja" : "NEJ"). "
-                     + verdict(back?.path == "test.md"))
+        await syncOnce()
+        let recovered = SyncStatusText.line(SyncEngine.shared.status).title
+        SelfTest.log("Mappen tillbaka: test.md \(back?.path ?? "FEL"), samma id \(back?.id == book.id ? "ja" : "NEJ"), "
+                     + "läget \(recovered). " + verdict(back?.path == "test.md" && !SyncStatusText.line(SyncEngine.shared.status).isProblem))
     }
 }
