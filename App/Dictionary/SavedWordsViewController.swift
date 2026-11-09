@@ -78,6 +78,13 @@ final class SavedWordsViewController: UITableViewController {
             place += ", uppslaget \(word.lookups) gånger"
         }
         lines.append(place)
+        // Granskning 5, L1: ett ord som inte kommer med i repetitionen säger varför, så att det inte ser ut som
+        // att det försvunnit ur kön.
+        if ReviewStopWords.contains(word: word.word, language: word.language) {
+            lines.append("Repeteras inte: småord")
+        } else if !ReviewAnswers.exists(for: word) {
+            lines.append("Repeteras inte: ordboken har inget svar")
+        }
         content.secondaryText = lines.joined(separator: "\n")
         content.secondaryTextProperties.numberOfLines = 4
         content.secondaryTextProperties.color = .secondaryLabel

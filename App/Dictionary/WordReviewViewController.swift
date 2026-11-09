@@ -47,13 +47,26 @@ enum ReviewAnswers {
     /// töms av ett fel i bygget.
     static func exists(for word: SavedWord) -> Bool {
         guard WordDictionary.shared != nil else { return true }
-        let key = word.language.rawValue + "|" + word.lemma + "|" + word.senseID
+        let key = word.language.rawValue + "|" + word.lemma + "|" + word.senseID + "|" + word.sentence
         if let found = known[key] {
             return found
         }
-        let found = !lines(for: word, sentence: "").isEmpty
+        // Granskning 5, L1: samma svar som kortet visar (`shownLines`). Utan meningen först, det är snabbast. Bara
+        // när det inte ger något svar prövas meningen, som kan välja en annan ordklass för ett engelskt ord.
+        let found = !shownLines(for: word, fastFirst: true).isEmpty
         known[key] = found
         return found
+    }
+
+    /// Svaret som kortet visar: med ordets mening, och utan den när meningen inte ger något svar. Tomt bara när
+    /// ordboken inte har något svar alls, och då kommer ordet inte heller med i kön.
+    static func shownLines(for word: SavedWord, fastFirst: Bool = false) -> [String] {
+        if fastFirst || word.sentence.isEmpty {
+            let fast = lines(for: word, sentence: "")
+            return fast.isEmpty && !word.sentence.isEmpty ? lines(for: word, sentence: word.sentence) : fast
+        }
+        let withSentence = lines(for: word, sentence: word.sentence)
+        return withSentence.isEmpty ? lines(for: word, sentence: "") : withSentence
     }
 
     static func forget() {
@@ -530,7 +543,7 @@ final class WordReviewViewController: UIViewController {
             sentenceLabel.isHidden = word.sentence.isEmpty || word.sentence == word.word
             sourceLabel.text = Self.source(for: word)
             sourceLabel.isHidden = sourceLabel.text?.isEmpty ?? true
-            let lines = ReviewAnswers.lines(for: word, sentence: word.sentence)
+            let lines = ReviewAnswers.shownLines(for: word)
             answerLabel.text = lines.first ?? ReviewAnswers.missing
             detailLabel.text = lines.dropFirst().joined(separator: "\n")
             detailLabel.isHidden = lines.count < 2
@@ -598,7 +611,7 @@ final class WordReviewViewController: UIViewController {
 
     /// Svaret ur ordboken som en text, till självtestet.
     static func answer(for word: SavedWord) -> String {
-        let lines = ReviewAnswers.lines(for: word, sentence: word.sentence)
+        let lines = ReviewAnswers.shownLines(for: word)
         return lines.isEmpty ? ReviewAnswers.missing : lines.joined(separator: "\n\n")
     }
 
