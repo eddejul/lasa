@@ -182,29 +182,33 @@ final class ReaderQuestions {
             let read = await Task.detached(priority: .userInitiated) { () -> Result<[BookQuestion], Error> in
                 Result { try BookQuestionFile.read(url) }
             }.value
-            guard let self = self, !Task.isCancelled else { return }
-            switch read {
-            case .success(let parsed):
-                self.questions = parsed
-            case .failure(let error):
-                self.questions = []
-                self.problem = "Frågefilen kunde inte läsas: \(error)"
-                AppLog.shared.write("Frågor (K6): \(url.lastPathComponent) kunde inte läsas: \(error)")
-            }
-            let list = self.questions
-            guard !list.isEmpty else {
-                self.places = [:]
-                self.placesVersion += 1
-                self.isLocated = true
-                self.onChange?()
-                return
+            let list: [BookQuestion]
+            do {
+                // Läsaren hålls inte kvar medan citaten letas upp: `owner` gäller bara i det här blocket.
+                guard let owner = self, !Task.isCancelled else { return }
+                switch read {
+                case .success(let parsed):
+                    owner.questions = parsed
+                case .failure(let error):
+                    owner.questions = []
+                    owner.problem = "Frågefilen kunde inte läsas: \(error)"
+                    AppLog.shared.write("Frågor (K6): \(url.lastPathComponent) kunde inte läsas: \(error)")
+                }
+                list = owner.questions
+                guard !list.isEmpty else {
+                    owner.places = [:]
+                    owner.placesVersion += 1
+                    owner.isLocated = true
+                    owner.onChange?()
+                    return
+                }
             }
             let hints = list.map {
                 BookQuestionFile.hint(for: $0, chapterTitles: chapterTitles, sectionCount: sectionCount)
             }
             let started = CACurrentMediaTime()
             let hits = await search.locate(list.map(\.quote), hints: hints)
-            guard !Task.isCancelled else { return }
+            guard let self = self, !Task.isCancelled else { return }
             var found: [String: QuestionPlace] = [:]
             for (index, question) in list.enumerated() {
                 if index < hits.count, let hit = hits[index] {
