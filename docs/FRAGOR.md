@@ -55,6 +55,11 @@ En frågefil får vara högst 2 MB. En större fil läses inte, och fliken Fråg
 | `titel` | nej | Kort rubrik i rutan och i fliken Frågor. |
 | `svar` | nej | En text eller en lista med punkter. |
 | `id` | nej | Frågans id. Svaren sparas under det, så behåll samma id när filen ändras. Utan id räknas ett ur frågan och citatet, och då börjar svaret om när frågan skrivs om. |
+| `typ` | nej | Frågetypen som för AI-frågorna (`docs/AI-FRAGOR.md`), till exempel `varfor`, `egna_ord` eller `kritisk`. Rubriken i rutan blir typens namn, och en öppen typ ger en kommentar i Jämför. |
+| `nar` | nej | `fore` (före läsningen, ingen prick, visas i raden Läs för att ta reda på och i självtestet efter kapitlet), `efter` (i texten, med prick, som utan fältet) eller `slut` (efter kapitlet, ingen prick). |
+| `kalla` | nej | Bokens ord där svaret står. Syns först efter Visa svaret, som Ur boken och knappen Visa i boken. |
+
+En fråga med `typ` eller `kalla` får samma ruta som AI-frågorna: Ditt svar, Visa svaret, Ur boken och Jämför med mitt svar (när det finns en nyckel). Har boken en frågefil görs inga AI-frågor i den.
 
 Filen får också vara bara listan med frågor. Fälten kan heta `question`, `quote`, `page`, `chapter`,
 `title` och `answer` i stället.
