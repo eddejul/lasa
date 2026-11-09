@@ -93,7 +93,7 @@ enum Theme {
 
     // MARK: Hela appen
 
-    /// Lägger temat på fönstren och på systemets standardvyer (tabeller, celler, menyrader) som skapas
+    /// Lägger temat på appens fönster och på systemets standardvyer (tabeller, celler, menyrader) som skapas
     /// härefter, och skickar `didChange` så att vyer som redan syns målar om sig.
     static func apply() {
         let palette = current
@@ -106,11 +106,20 @@ enum Theme {
         UINavigationBar.appearance().compactAppearance = navigation
         UIToolbar.appearance().barTintColor = palette.canvas
         for scene in UIApplication.shared.connectedScenes {
-            guard let windowScene = scene as? UIWindowScene else { continue }
-            for window in windowScene.windows {
-                window.tintColor = palette.accent
-                window.overrideUserInterfaceStyle = palette.interfaceStyle
-                window.backgroundColor = palette.canvas
+            guard let windowScene = scene as? UIWindowScene,
+                  let window = (windowScene.delegate as? SceneDelegate)?.window else { continue }
+            // Edvin 9 nov: bara appens eget fönster. Scenen har också systemets fönster (tangentbordets
+            // textfönster med flera), som ligger genomskinliga över hela skärmen när man har skrivit något i
+            // appen. De fick förut bakgrundens färg, så efter ett byte i Aa täckte färgen hela skärmen och appen
+            // såg fryst ut, fast läsaren under var hel.
+            window.tintColor = palette.accent
+            window.overrideUserInterfaceStyle = palette.interfaceStyle
+            window.backgroundColor = palette.canvas
+            let others = windowScene.windows.filter { $0 !== window && !$0.isHidden }
+            if !others.isEmpty {
+                let names = others.map { "\(type(of: $0))" }.joined(separator: ", ")
+                AppLog.shared.write("Bakgrund \(ReaderTheme.effective.title): appens fönster målat, systemets "
+                                    + "fönster lämnade genomskinliga (\(names))")
             }
         }
         NotificationCenter.default.post(name: didChange, object: nil)
