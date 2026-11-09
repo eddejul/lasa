@@ -329,19 +329,26 @@ final class StudyCardStore {
     }
 }
 
-/// Raden som erbjuder testet när sista sidan i ett kapitel vänts (K7): Testa och Hoppa över.
+/// Raden som erbjuder testet när sista sidan i ett kapitel vänts (K7): Testa, Förklara (A2) och Hoppa över.
 /// Ligger ovanpå läsaren som raden Ångra och försvinner av sig själv. Rör inte sidans placering.
+/// Utan kort (`count` 0) finns bara Förklara och Hoppa över.
 @MainActor
 final class ChapterTestOffer: UIView {
 
     private(set) static weak var current: ChapterTestOffer?
     private var onStart: (() -> Void)?
+    private var onExplain: (() -> Void)?
+
+    /// A2: om raden har Förklara, till självtestet.
+    var hasExplain: Bool {
+        onExplain != nil
+    }
 
     @discardableResult
     static func show(chapter: String, count: Int, in host: UIView, bottomInset: CGFloat = 148,
-                     start: @escaping () -> Void) -> ChapterTestOffer {
+                     explain: (() -> Void)? = nil, start: @escaping () -> Void) -> ChapterTestOffer {
         current?.removeFromSuperview()
-        let offer = ChapterTestOffer(chapter: chapter, count: count, start: start)
+        let offer = ChapterTestOffer(chapter: chapter, count: count, start: start, explain: explain)
         offer.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(offer)
         NSLayoutConstraint.activate([
@@ -360,8 +367,9 @@ final class ChapterTestOffer: UIView {
         return offer
     }
 
-    private init(chapter: String, count: Int, start: @escaping () -> Void) {
-        onStart = start
+    private init(chapter: String, count: Int, start: @escaping () -> Void, explain: (() -> Void)?) {
+        onStart = count > 0 ? start : nil
+        onExplain = explain
         super.init(frame: .zero)
         let palette = Theme.current
         backgroundColor = palette.surface
@@ -374,11 +382,12 @@ final class ChapterTestOffer: UIView {
         layer.shadowOffset = CGSize(width: 0, height: 2)
 
         let title = UILabel()
-        title.text = "Testa dig på kapitlet"
+        title.text = count > 0 ? "Testa dig på kapitlet" : "Förklara kapitlet med egna ord"
         title.font = .systemFont(ofSize: 15, weight: .semibold)
         title.textColor = palette.ink
         let detail = UILabel()
-        detail.text = (chapter.isEmpty ? "" : chapter + ", ") + (count == 1 ? "1 kort" : "\(count) kort")
+        detail.text = count > 0 ? (chapter.isEmpty ? "" : chapter + ", ") + (count == 1 ? "1 kort" : "\(count) kort")
+            : chapter
         detail.font = .systemFont(ofSize: 13)
         detail.textColor = palette.inkSoft
         detail.lineBreakMode = .byTruncatingMiddle
@@ -397,7 +406,16 @@ final class ChapterTestOffer: UIView {
         skip.tintColor = palette.inkSoft
         skip.addAction(UIAction { [weak self] _ in self?.hide() }, for: .touchUpInside)
 
-        let stack = UIStackView(arrangedSubviews: [texts, test, skip])
+        test.isHidden = count == 0
+        let explainButton = UIButton(type: .system)
+        explainButton.setTitle("Förklara", for: .normal)
+        explainButton.titleLabel?.font = .systemFont(ofSize: 15, weight: count > 0 ? .regular : .semibold)
+        explainButton.tintColor = count > 0 ? palette.ink : palette.accent
+        explainButton.accessibilityHint = "Förklara kapitlet med egna ord, skrivet eller dikterat"
+        explainButton.addAction(UIAction { [weak self] _ in self?.explainTapped() }, for: .touchUpInside)
+        explainButton.isHidden = explain == nil
+        texts.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let stack = UIStackView(arrangedSubviews: [texts, test, explainButton, skip])
         stack.spacing = 14
         stack.alignment = .center
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -421,6 +439,15 @@ final class ChapterTestOffer: UIView {
         onStart = nil
         hide()
         start?()
+    }
+
+    /// Förklara (A2, också från självtestet).
+    func explainTapped() {
+        let explain = onExplain
+        onExplain = nil
+        onStart = nil
+        hide()
+        explain?()
     }
 
     func hide() {

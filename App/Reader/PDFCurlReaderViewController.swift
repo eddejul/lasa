@@ -41,7 +41,8 @@ final class PDFCurlReaderViewController: UIViewController {
                                            thumbnails: #selector(showThumbnails),
                                            bookPages: #selector(showBookPages), bookInfo: #selector(showBookInfo),
                                            notebook: #selector(showNotebook), sideNotes: #selector(toggleSideNotes),
-                                           concepts: #selector(showConcepts)),
+                                           concepts: #selector(showConcepts),
+                                           explainChapter: #selector(explainCurrentChapter)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -3285,12 +3286,46 @@ extension PDFCurlReaderViewController {
         let start = chapterStarts[chapter].index
         let end = chapter + 1 < chapterStarts.count ? chapterStarts[chapter + 1].index : renderer.pageCount
         let title = chapterStarts[chapter].title
-        let cards = chapterTestCards(pages: start..<max(end, start + 1), title: title)
-        guard !cards.isEmpty else { return }
-        ChapterTestOffer.show(chapter: title, count: cards.count, in: view) { [weak self] in
+        let pages = start..<max(end, start + 1)
+        let cards = chapterTestCards(pages: pages, title: title)
+        let material = explainMaterial(pages: pages, title: title)
+        guard !cards.isEmpty || !material.items.isEmpty else { return }
+        ChapterTestOffer.show(chapter: title, count: cards.count, in: view, explain: { [weak self] in
+            guard let self = self else { return }
+            ChapterExplainViewController.present(material: material, from: self)
+        }) { [weak self] in
             guard let self = self else { return }
             ChapterTestViewController.present(cards: cards, title: title, from: self)
         }
+    }
+
+    /// A2: underlaget för att förklara kapitlet: markeringarna på kapitlets sidor och bokens begrepp.
+    fileprivate func explainMaterial(pages: Range<Int>, title: String) -> ChapterExplainMaterial {
+        let here = AnnotationStore.shared.highlights(book: bookKey).filter { pages.contains($0.section) }
+        return ChapterExplainLogic.material(book: bookKey, bookTitle: PassageExplain.title(of: book),
+                                            section: pages.lowerBound, chapter: title, highlights: here,
+                                            concepts: ConceptStore.shared.concepts(book: bookKey))
+    }
+
+    /// A2: sidorna i kapitlet där `page` ligger, efter PDF:ens innehåll. Utan innehåll hela boken.
+    fileprivate func chapterPages(containing page: Int) -> (pages: Range<Int>, title: String) {
+        let count = max(renderer.pageCount, 1)
+        guard !chapterStarts.isEmpty else {
+            return (0..<count, "Hela boken")
+        }
+        guard let chapter = chapterStarts.lastIndex(where: { $0.index <= page }) else {
+            return (0..<max(chapterStarts[0].index, 1), "Före första kapitlet")
+        }
+        let start = chapterStarts[chapter].index
+        let end = chapter + 1 < chapterStarts.count ? chapterStarts[chapter + 1].index : count
+        return (start..<max(end, start + 1), chapterStarts[chapter].title)
+    }
+
+    /// A2: Förklara kapitlet i Mer, för kapitlet man läser.
+    @objc fileprivate func explainCurrentChapter() {
+        guard presentedViewController == nil else { return }
+        let place = chapterPages(containing: currentIndex)
+        ChapterExplainViewController.present(material: explainMaterial(pages: place.pages, title: place.title), from: self)
     }
 
     /// Kapitlets kort: markeringarna på kapitlets sidor och, när frågorna är påslagna, frågorna där (K6).
@@ -3332,6 +3367,7 @@ extension PDFCurlReaderViewController {
             return
         }
         SelfTest.saveScreen(view, name: "14-erbjudande")
+        SelfTest.log("Förklara (A2): raden har Förklara \(offer.hasExplain)")
         offer.startTapped()
         await pause(1.0)
         if let navigation = presentedViewController as? UINavigationController,
@@ -3362,6 +3398,31 @@ extension PDFCurlReaderViewController {
         SelfTest.log("Självtest (K7): erbjuds igen \(ChapterTestOffer.current?.superview != nil) (ska vara false), "
                      + "Dagens markeringar \(StudyCardStore.shared.todaysCards().count) kort")
         ChapterTestOffer.current?.hide()
+        await selfTestExplainChapter(page: chapterStarts[0].index)
         QuestionsSetting.isEnabled = wasEnabled
+    }
+
+    /// Självtestet (A2): Förklara kapitlet ur Mer, utan nyckel bara jämförelsen, och förklaringen sparas.
+    fileprivate func selfTestExplainChapter(page: Int) async {
+        let wasPage = currentIndex
+        currentIndex = page
+        explainCurrentChapter()
+        currentIndex = wasPage
+        await pause(1.0)
+        guard let navigation = presentedViewController as? UINavigationController,
+              let box = navigation.viewControllers.first as? ChapterExplainViewController else {
+            SelfTest.log("FEL: Förklara kapitlet öppnades inte (A2)")
+            return
+        }
+        box.setTextForSelfTest("Kapitlet säger att den som söker kunskap måste läsa noga.")
+        box.compare()
+        await pause(0.5)
+        let coverage = box.lastCoverage
+        SelfTest.log("Förklara (A2) i PDF: kom med \(coverage?.covered.map(\.term) ?? []), saknas "
+                     + "\(coverage?.missing.map(\.term) ?? []), sparad \(box.savedRecord != nil)")
+        SelfTest.saveScreen(navigation.view, name: "14e-forklara")
+        await dismissPresented()
+        let saved = ChapterExplanationStore.shared.explanations(book: bookKey).count
+        SelfTest.log("Förklara (A2): \(saved) förklaringar sparade i boken")
     }
 }

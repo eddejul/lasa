@@ -32,6 +32,8 @@ final class ReaderChrome {
         var sideNotes: Selector? = nil
         /// K8: begreppsregistret.
         var concepts: Selector? = nil
+        /// A2: förklara kapitlet man läser med egna ord.
+        var explainChapter: Selector? = nil
     }
 
     let contentsItem: UIBarButtonItem
@@ -216,6 +218,12 @@ final class ReaderChrome {
             study.append(UIAction(title: "Begrepp", image: UIImage(systemName: "textformat.abc")) {
                 [weak self] _ in
                 self?.send(concepts)
+            })
+        }
+        if let explainChapter = actions.explainChapter {
+            study.append(UIAction(title: "Förklara kapitlet", image: UIImage(systemName: "text.bubble")) {
+                [weak self] _ in
+                self?.send(explainChapter)
             })
         }
         if let sideNotes = actions.sideNotes {

@@ -69,7 +69,8 @@ final class ReflowReaderViewController: UIViewController {
                             actions: .init(contents: #selector(showContents), search: #selector(showSearch),
                                            mark: #selector(toggleMarkMode), bookmark: #selector(toggleBookmark),
                                            bookInfo: #selector(showBookInfo), notebook: #selector(showNotebook),
-                                           sideNotes: #selector(toggleSideNotes), concepts: #selector(showConcepts)),
+                                           sideNotes: #selector(toggleSideNotes), concepts: #selector(showConcepts),
+                                           explainChapter: #selector(explainCurrentChapter)),
                             onTheme: { [weak self] option in self?.setTheme(option) })
     }()
 
@@ -3119,11 +3120,29 @@ extension ReflowReaderViewController {
         guard offeredChapterTests.insert(chapter).inserted else { return }
         let title = chapterName(chapter)
         let cards = chapterTestCards(chapter: chapter, title: title)
-        guard !cards.isEmpty else { return }
-        ChapterTestOffer.show(chapter: title, count: cards.count, in: view) { [weak self] in
+        let material = explainMaterial(chapter: chapter)
+        guard !cards.isEmpty || !material.items.isEmpty else { return }
+        ChapterTestOffer.show(chapter: title, count: cards.count, in: view, explain: { [weak self] in
+            guard let self = self else { return }
+            ChapterExplainViewController.present(material: material, from: self)
+        }) { [weak self] in
             guard let self = self else { return }
             ChapterTestViewController.present(cards: cards, title: title, from: self)
         }
+    }
+
+    /// A2: underlaget för att förklara kapitlet: kapitlets markeringar och bokens begrepp.
+    fileprivate func explainMaterial(chapter: Int) -> ChapterExplainMaterial {
+        let here = AnnotationStore.shared.highlights(book: bookKey).filter { $0.section == chapter }
+        return ChapterExplainLogic.material(book: bookKey, bookTitle: PassageExplain.title(of: book), section: chapter,
+                                            chapter: chapterName(chapter), highlights: here,
+                                            concepts: ConceptStore.shared.concepts(book: bookKey))
+    }
+
+    /// A2: Förklara kapitlet i Mer, för kapitlet man läser.
+    @objc fileprivate func explainCurrentChapter() {
+        guard presentedViewController == nil else { return }
+        ChapterExplainViewController.present(material: explainMaterial(chapter: max(currentChapter, 0)), from: self)
     }
 
     /// Kapitlets kort: markeringarna i kapitlet och, när frågorna är påslagna, kapitlets frågor (K6).
@@ -3151,6 +3170,7 @@ extension ReflowReaderViewController {
             return
         }
         SelfTest.saveScreen(view, name: "14-erbjudande")
+        SelfTest.log("Förklara (A2): raden har Förklara \(offer.hasExplain)")
         offer.startTapped()
         await pause(1.0)
         if let navigation = presentedViewController as? UINavigationController,

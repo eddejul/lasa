@@ -281,6 +281,25 @@ final class AnnotationStore {
             );
             CREATE INDEX IF NOT EXISTS study_cards_book ON study_cards (book);
             """,
+        // Steg 12 (A2): förklaringarna med egna ord per kapitel (avsnittet där kapitlet börjar), med orden som kom
+        // med och saknades (en per rad, b: begrepp, n: nyckelord) och Geminis punkter som JSON. Ingen synk.
+        """
+            CREATE TABLE IF NOT EXISTS chapter_explanations (
+                id TEXT PRIMARY KEY,
+                book TEXT NOT NULL,
+                section INTEGER NOT NULL,
+                chapter TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL DEFAULT '',
+                covered TEXT NOT NULL DEFAULT '',
+                missing TEXT NOT NULL DEFAULT '',
+                feedback TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                created REAL NOT NULL,
+                updated REAL NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS chapter_explanations_book ON chapter_explanations (book);
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.

@@ -113,6 +113,8 @@ enum AISelfTest {
         SelfTest.log("Läget efter svaren: \(AIClient.keyStatus.title), \(AIClient.callsToday) anrop i dag, "
                      + "\(AIStore.shared.answerCount) sparade svar")
 
+        await testExplainChapter(epub: epub, navigation: navigation)
+
         await testGuide(navigation: navigation)
 
         // Markeringsraden med Förklara och den riktiga rutan som popover, till skärmbilderna från simctl.
@@ -246,6 +248,118 @@ enum AISelfTest {
 
     private static func count(_ needle: String, in text: String) -> Int {
         text.components(separatedBy: needle).count - 1
+    }
+
+    // MARK: A2
+
+    /// Förklara kapitlet (A2): utan nyckel bara jämförelsen, sedan Gemini (låtsasservern), där en punkt pekar på
+    /// en markering som inte finns och inte får visas. Förklaringen och svaret sparas och syns i anteckningsboken.
+    private static func testExplainChapter(epub: Book, navigation: UINavigationController) async {
+        navigation.popToRootViewController(animated: false)
+        let key = AnnotationStore.key(for: epub)
+        let section = 2
+        let texts = [
+            "Retoriken vilar på tre bevismedel som talaren kan använda samtidigt.",
+            "Talaren måste anpassa argumenten efter publiken och situationen.",
+            "Kairos betyder det rätta ögonblicket att säga något.",
+        ]
+        let marks = texts.enumerated().map { offset, text in
+            AnnotationStore.shared.addHighlight(book: key, section: section, start: 700_000 + offset * 1_000,
+                                                length: (text as NSString).length, text: text, color: .green)
+        }
+        ConceptStore.shared.add(book: key, term: "kairos", definition: "Det rätta ögonblicket.", highlight: marks[2].id)
+        let material = ChapterExplainLogic.material(book: key, bookTitle: PassageExplain.title(of: epub),
+                                                    section: section, chapter: "Kapitel om retorik", highlights: marks,
+                                                    concepts: ConceptStore.shared.concepts(book: key))
+        SelfTest.log("Förklara (A2): \(material.marks.count) markeringar, ord att jämföra "
+                     + "\(material.items.map { "\($0.term) (\($0.kind.rawValue))" })")
+        let explanation = "Kapitlet handlar om tre bevismedel som en talare använder, och om att talet måste passa "
+            + "situationen och publiken."
+
+        // Utan nyckel: jämförelsen fungerar, Gemini ger beskedet om nyckeln.
+        Keychain.set(nil, for: .geminiAPIKey)
+        let box = ChapterExplainViewController(material: material)
+        navigation.pushViewController(box, animated: false)
+        await pause(0.5)
+        box.setTextForSelfTest(explanation)
+        box.compare()
+        await pause(0.4)
+        let coverage = box.lastCoverage
+        SelfTest.log("Förklara (A2) utan nyckel: kom med \(coverage?.covered.map(\.term) ?? []), saknas "
+                     + "\(coverage?.missing.map(\.term) ?? [])")
+        SelfTest.saveScreen(navigation.view, name: "ai-09-forklara-jamforelse")
+        await ask(box)
+        SelfTest.log("Förklara (A2) Fråga Gemini utan nyckel: \(box.stateText), "
+                     + "\(box.lastFailure?.errorDescription ?? "inget fel")")
+        SelfTest.saveScreen(navigation.view, name: "ai-10-forklara-utan-nyckel")
+
+        // Med nyckel: låtsasservern svarar med en punkt som pekar på M9, som inte finns.
+        Keychain.set("mock-ok", for: .geminiAPIKey)
+        let callsBefore = AIClient.callsToday
+        await ask(box)
+        let feedback = box.lastFeedback
+        let kinds = feedback?.points.map { "\($0.kind.rawValue)->\(material.mark(id: $0.highlight)?.ref ?? "?")" } ?? []
+        SelfTest.log("Förklara (A2) med Gemini: \(box.stateText), \(feedback?.points.count ?? 0) punkter visas \(kinds), "
+                     + "\(feedback?.dropped ?? 0) utan egen markering visas inte, anrop \(callsBefore) till "
+                     + "\(AIClient.callsToday)")
+        if let prompt = box.lastPrompt {
+            let sentMarks = material.marks.allSatisfy { prompt.contains($0.text) }
+            SelfTest.log("Förklara (A2) frågan: \(prompt.count) tecken, markeringarna med \(sentMarks), förklaringen med "
+                         + "\(prompt.contains(explanation)), schema med id \(material.marks.map(\.ref))")
+        }
+        SelfTest.saveScreen(navigation.view, name: "ai-11-forklara-svar")
+        if let scroll = box.view.subviews.first as? UIScrollView {
+            scroll.setContentOffset(CGPoint(x: 0, y: max(0, scroll.contentSize.height - scroll.bounds.height)),
+                                    animated: false)
+            await pause(0.3)
+            SelfTest.saveScreen(navigation.view, name: "ai-11b-forklara-svar-nederst")
+        }
+        navigation.popToRootViewController(animated: false)
+        await pause(0.4)
+
+        // Sparat: läses ur databasen igen, utan nät.
+        let saved = ChapterExplanationStore.shared.explanations(book: key)
+        if let last = saved.last {
+            SelfTest.log("Förklara (A2) sparat: \(saved.count) i boken, text \(last.text.count) tecken, kom med "
+                         + "\(last.covered.count), saknas \(last.missing.count), punkter \(last.feedback.count), "
+                         + "modell \(last.model), databasen version \(AnnotationStore.shared.schemaVersion)")
+            navigation.pushViewController(ChapterExplainViewController(saved: last), animated: false)
+            await pause(0.6)
+            SelfTest.saveScreen(navigation.view, name: "ai-12-forklara-sparad")
+            navigation.popToRootViewController(animated: false)
+        } else {
+            SelfTest.log("FEL: förklaringen sparades inte (A2)")
+        }
+        let notebook = NotebookViewController(scope: .book(epub, chapter: { _ in "Kapitel om retorik" },
+                                                           page: { _ in nil }))
+        navigation.pushViewController(notebook, animated: false)
+        await pause(0.8)
+        SelfTest.log("Förklara (A2) i anteckningsboken: \(notebook.explanationCount) förklaringar, "
+                     + "\(notebook.visibleCount) rader")
+        SelfTest.saveScreen(navigation.view, name: "ai-13-anteckningsbok")
+        navigation.popToRootViewController(animated: false)
+        await pause(0.3)
+    }
+
+    /// Fråga Gemini i rutan och vänta på svaret, högst 25 sekunder.
+    private static func ask(_ box: ChapterExplainViewController) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            var resumed = false
+            box.onFinished = {
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume()
+            }
+            box.ask()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 25) {
+                guard !resumed else { return }
+                resumed = true
+                SelfTest.log("FEL: Förklara kapitlet blev inte klar inom 25 sekunder")
+                continuation.resume()
+            }
+        }
+        box.onFinished = nil
+        await pause(0.4)
     }
 
     /// Guiden (U7): fel nyckel sparas inte, en nyckel som fungerar ger grön bock.

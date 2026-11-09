@@ -96,8 +96,12 @@ struct NotebookEntry: Equatable {
     /// K12: en anteckning bredvid texten (till en sida eller ett kapitel), inte en markering. Texten ligger i
     /// `highlight.text`, och id:t börjar med `pageNotePrefix`.
     var isPageNote = false
+    /// A2: en förklaring av kapitlet med egna ord. Förklaringen ligger i `highlight.text`, sammanfattningen av
+    /// jämförelsen och svaret i `highlight.note`, och id:t börjar med `explanationPrefix`.
+    var isExplanation = false
 
     static let pageNotePrefix = "sidanteckning:"
+    static let explanationPrefix = "forklaring:"
 }
 
 /// Filter och gruppering i anteckningsboken (K1). Ren logik (G13).
@@ -120,10 +124,14 @@ enum NotebookLogic {
     static func countText(shown: [NotebookEntry], all: [NotebookEntry]) -> String {
         func describe(_ list: [NotebookEntry]) -> String {
             let notes = list.filter(\.isPageNote).count
-            let marks = list.count - notes
+            let explanations = list.filter(\.isExplanation).count
+            let marks = list.count - notes - explanations
             var text = marks == 1 ? "1 markering" : "\(marks) markeringar"
             if notes > 0 {
                 text += notes == 1 ? " och 1 anteckning" : " och \(notes) anteckningar"
+            }
+            if explanations > 0 {
+                text += explanations == 1 ? " och 1 förklaring" : " och \(explanations) förklaringar"
             }
             return text
         }
@@ -133,8 +141,9 @@ enum NotebookLogic {
     static func filter(_ entries: [NotebookEntry], _ filter: Filter) -> [NotebookEntry] {
         let query = FoldedText(filter.query.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).text as String
         return entries.filter { entry in
-            if !filter.colors.isEmpty, entry.isPageNote || !filter.colors.contains(entry.highlight.color) { return false }
-            if filter.notesOnly, !entry.highlight.hasNote, !entry.isPageNote { return false }
+            if !filter.colors.isEmpty, entry.isPageNote || entry.isExplanation
+                || !filter.colors.contains(entry.highlight.color) { return false }
+            if filter.notesOnly, !entry.highlight.hasNote, !entry.isPageNote, !entry.isExplanation { return false }
             if let books = filter.books, !books.contains(entry.bookID) { return false }
             if !query.isEmpty {
                 let haystack = FoldedText((entry.highlight.text + " " + entry.highlight.note + " " + entry.chapter) as NSString).text as String
@@ -191,6 +200,11 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
     /// Antalet rader som syns, till självtestet.
     var visibleCount: Int {
         groups.reduce(0) { $0 + $1.entries.count }
+    }
+
+    /// Antalet förklaringar med egna ord (A2), till självtestet.
+    var explanationCount: Int {
+        entries.filter(\.isExplanation).count
     }
 
     init(scope: Scope) {
@@ -298,6 +312,17 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
                                           note: "", created: note.updated, updated: note.updated)
                 list.append(NotebookEntry(highlight: highlight, bookID: book.id, bookTitle: book.title,
                                           chapter: chapter(highlight), page: page(highlight), isPageNote: true))
+            }
+            // A2: förklaringarna med egna ord, först i sitt kapitel.
+            for explanation in ChapterExplanationStore.shared.explanations(book: book.id) {
+                let highlight = Highlight(id: NotebookEntry.explanationPrefix + explanation.id, book: book.id,
+                                          section: explanation.section, start: -2, length: 0, text: explanation.text,
+                                          color: .yellow, note: explanation.summary, created: explanation.created,
+                                          updated: explanation.updated)
+                let title = chapter(highlight)
+                list.append(NotebookEntry(highlight: highlight, bookID: book.id, bookTitle: book.title,
+                                          chapter: title.isEmpty ? explanation.chapter : title, page: page(highlight),
+                                          isExplanation: true))
             }
             entries = list.sorted {
                 ($0.highlight.section, $0.highlight.start) < ($1.highlight.section, $1.highlight.start)
@@ -457,19 +482,25 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
         content.text = "”\(Citation.cleanQuote(entry.highlight.text))”"
         content.textProperties.font = Theme.serif(.body)
         content.textProperties.color = palette.ink
-        let colorName = entry.isPageNote ? "Anteckning bredvid texten"
+        let colorName = entry.isExplanation ? "Min förklaring av kapitlet"
+            : entry.isPageNote ? "Anteckning bredvid texten"
             : colorNames[entry.highlight.color] ?? entry.highlight.color.title
-        if entry.isPageNote {
+        if entry.isPageNote || entry.isExplanation {
             content.text = entry.highlight.text
             content.textProperties.font = .preferredFont(forTextStyle: .body)
+        }
+        if entry.isExplanation {
+            content.textProperties.numberOfLines = 4
         }
         var detail = entry.highlight.hasNote ? entry.highlight.note : ""
         detail += (detail.isEmpty ? "" : "\n") + colorName
         content.secondaryText = detail
         content.secondaryTextProperties.color = palette.inkSoft
         content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-        content.image = UIImage(systemName: entry.isPageNote ? "square.and.pencil" : "circle.fill")
-        content.imageProperties.tintColor = entry.isPageNote ? palette.inkSoft : entry.highlight.color.solid
+        content.image = UIImage(systemName: entry.isExplanation ? "text.bubble"
+                                    : entry.isPageNote ? "square.and.pencil" : "circle.fill")
+        content.imageProperties.tintColor = entry.isPageNote || entry.isExplanation ? palette.inkSoft
+            : entry.highlight.color.solid
         content.imageProperties.maximumSize = CGSize(width: 12, height: 12)
         content.textToSecondaryTextVerticalPadding = 6
         cell.contentConfiguration = content
@@ -491,6 +522,14 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard let entry = groups[safe: indexPath.section]?.entries[safe: indexPath.row] else { return }
+        if entry.isExplanation {
+            // A2: den sparade förklaringen med jämförelsen och svaret, utan nät.
+            let id = String(entry.highlight.id.dropFirst(NotebookEntry.explanationPrefix.count))
+            if let saved = ChapterExplanationStore.shared.explanation(id: id) {
+                navigationController?.pushViewController(ChapterExplainViewController(saved: saved), animated: true)
+            }
+            return
+        }
         if let onSelect = onSelect {
             dismiss(animated: true) {
                 onSelect(entry.highlight)
@@ -502,11 +541,19 @@ final class NotebookViewController: UITableViewController, UISearchResultsUpdati
                             point: CGPoint) -> UIContextMenuConfiguration? {
         guard let entry = groups[safe: indexPath.section]?.entries[safe: indexPath.row] else { return nil }
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
-            UIMenu(title: "", children: [
+            var children: [UIMenuElement] = [
                 UIAction(title: "Kopiera", image: UIImage(systemName: "doc.on.doc")) { _ in
                     UIPasteboard.general.string = Citation.cleanQuote(entry.highlight.text)
                 },
-            ])
+            ]
+            if entry.isExplanation {
+                let id = String(entry.highlight.id.dropFirst(NotebookEntry.explanationPrefix.count))
+                children.append(UIAction(title: "Ta bort förklaringen", image: UIImage(systemName: "trash"),
+                                         attributes: .destructive) { _ in
+                    ChapterExplanationStore.shared.delete(id: id, book: entry.bookID)
+                })
+            }
+            return UIMenu(title: "", children: children)
         }
     }
 

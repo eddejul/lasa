@@ -3,7 +3,8 @@
 Svarar på samma anrop som appen gör mot Google: generateContent (POST /v1beta/models/<modell>:generateContent)
 och provet av nyckeln (GET /v1beta/models/<modell>). Svaret beror på nyckeln i x-goog-api-key:
 
-  mock-ok            ett svar enligt schemat (kärna, begrepp, exempel, kontrollfråga och svar)
+  mock-ok            ett svar enligt schemat (kärna, begrepp, exempel, kontrollfråga och svar), eller för
+                     Förklara kapitlet (A2) punkter där en pekar på en markering som inte finns (M9)
   mock-bad           400, API key not valid (som Google)
   mock-quota-day     429 med quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier
   mock-quota-minute  429 med quotaId GenerateRequestsPerMinutePerProjectPerModel-FreeTier och retryDelay 30s
@@ -61,6 +62,20 @@ ANSWER = {
     "answer": "För att meningen uppstår i hur delarna hänger ihop.",
 }
 
+# A2 Förklara kapitlet: punkter som pekar på studentens markeringar (M1, M2 ...). M9 finns inte i listan och
+# ska inte visas i appen.
+CHAPTER_ANSWER = {
+    "correct": [
+        {"text": "Du tar med att talaren har flera bevismedel.", "mark": "M1"},
+        {"text": "Du förklarar att talet måste passa publiken och situationen.", "mark": "[M2]"},
+    ],
+    "missing": [
+        {"text": "Kairos, det rätta ögonblicket att säga något, kom inte med.", "mark": "M3"},
+        {"text": "Den här punkten pekar på en markering som inte finns.", "mark": "M9"},
+    ],
+    "wrong": [],
+}
+
 
 class Handler(BaseHTTPRequestHandler):
 
@@ -110,7 +125,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(429, quota_error(False))
         if not path.endswith(":generateContent"):
             return self.reply(404, google_error(404, "NOT_FOUND", "Okänd metod"))
-        text = json.dumps(ANSWER, ensure_ascii=False)
+        answer = CHAPTER_ANSWER if "Studentens förklaring" in prompt else ANSWER
+        text = json.dumps(answer, ensure_ascii=False)
         return self.reply(200, {"candidates": [{"content": {"role": "model", "parts": [{"text": text}]},
                                                 "finishReason": "STOP"}]})
 
