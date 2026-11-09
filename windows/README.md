@@ -66,6 +66,14 @@ Läsa behöver Microsoft Edge WebView2, som redan finns i Windows 11. Saknas den
 * **Markeringar:** dra över texten med musen och välj en av fyra färger, eller Anteckning. Klicka på en
   markering för att byta färg, skriva en anteckning, kopiera eller ta bort. **Bokmärke** (eller B) på sidan.
   Panelen **Markeringar** listar bokmärken och markeringar. Synkas inte än (se Kända brister).
+* **Frågor i marginalen och AI-frågor** (K6 och K6b, `docs/AI-FRAGOR.md`): slås på under Visning (PDF) eller
+  Aa (EPUB och text), av från början. Under det finns Gör frågor med AI, på från början. Med en nyckel till
+  Gemini gör Sensus frågor till kapitlet som visas och sedan nästa, ett anrop åt gången, och hela kapitlets text
+  skickas till Google. Frågorna står som numrerade prickar i marginalen. Rutan har Ditt svar (Windows-tangenten
+  och H dikterar), Visa svaret med Ur boken och Visa i boken, Jämför med mitt svar, och Kan, Osäker och Kan inte.
+  Knappen **Frågor** visar bokens frågor kapitel för kapitel, Gör frågor till hela boken och Välj frågefil (en
+  frågefil går före AI-frågorna, se `docs/FRAGOR.md`). Raden Läs för att ta reda på visas när ett kapitel med
+  fore-frågor börjar, och Kapitlet är slut när man bläddrar förbi kapitlets sista sida.
 * **Gör sökbar** (P1, under varje PDF i biblioteket): en skannad PDF får osynlig text genom datorns OCR, så
   att ordfunktionen, sök och markeringar fungerar. Sensus kör `tools/ocr/sokbar_pdf.py` (se
   `tools/ocr/README.md`) med Python och Tesseract. Texten kommer i läsordning, vänster spalt, höger spalt och
@@ -158,6 +166,9 @@ I mappen `%APPDATA%\se.edvin.lasa`:
 * `bibliotek.sqlite`: biblioteket, läspositioner (med ändringstid för synken) och inställningar, även
   synkens adress och e-post. Tabellerna `highlights` och `bookmarks` har samma kolumner som iPadens
   `markeringar.sqlite` (book är bokens id): section, start, length (UTF-16) och text, som i docs/SYNK.md.
+  Frågorna: `question_answers` (Kan, Osäker, Kan inte, det skrivna svaret och Jämförs svar), `ai_questions`
+  (AI-frågorna per kapitel och del, som steg 13 på iPaden) och `question_files` (frågefilen som valts för en bok).
+  Frågorna synkas inte.
 * `anvandarord.sqlite`: sparade ord och dolda synonympar. Tabellen `saved_words` har samma kolumner som på
   iPaden, plus `uuid` och `book_id`, `deleted` för borttagna ord och iPadens repetition.
 
@@ -242,6 +253,12 @@ lägg den där och anropa `read('namn', [...])` eller `write(...)` i `src/js/sto
   andra start, namnbyte, ny version, Behåll båda, Ersätt och börja om, Ta bort och tillbaka, och en bok som
   togs bort i 0.7.0 som läggs till igen med markeringen kvar. W10: Rulla och Bläddra med uppslagen,
   ordfunktionen, markeringar, sök och läspositionen.
+* `python windows/tests/e2e_aifragor.py --dictionary <lasa-ordbok.sqlite> --out <mapp>`: AI-frågorna och
+  frågefilen. Gör en EPUB och en PDF, startar själv `dev/server.py` (port 8970) med egen datamapp och svarar på
+  Gemini i testet (frågor ur texten i den skickade frågan, minutens och dagens kvot, ingen nyckel). Provar
+  prickarna, rutan före och efter Visa svaret, Jämför, panelen, hela boken med paus, raderna före och efter
+  kapitlet, Visa i boken och Välj frågefil. `node --test windows/tests/aiquestions.test.mjs` provar logiken mot
+  `tools/simtest/ai-fragor/fixtur-1.json`.
 * `dev/server.py --open <fil> ...` gör som Öppna med: filerna läggs till och den första öppnas.
 * `python windows/tests/e2e_ocr.py --dictionary <lasa-ordbok.sqlite> --out <mapp> --tessdata <mapp med
   swe.traineddata>`: Gör sökbar med riktig Python och Tesseract. Startar själv `dev/server.py` (port 8967) med
