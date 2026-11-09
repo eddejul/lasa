@@ -1,6 +1,7 @@
 // Sparade ord: varje ord som har slagits upp i en bok, med meningen det stod i. Senast först.
 
 import { showWordPopup } from './popup.js';
+import { isStopWord } from './review.js';
 import { openReview, reviewCount } from './reviewview.js';
 import { contentId, deleteSavedWord, listBooks, savedWords } from './store.js';
 import { el, formatDate, replace } from './ui.js';
@@ -22,6 +23,8 @@ export async function renderSavedWords(container) {
     const heading = word.lemma.toLowerCase() === word.word.toLowerCase() ? word.lemma : `${word.word} (${word.lemma})`;
     const details = [word.language === 'en' ? 'engelska' : 'svenska', word.book, where(word), formatDate(word.updated)];
     if (word.lookups > 1) details.push(`uppslaget ${word.lookups} gånger`);
+    // Granskning 5, L1: ett småord ligger kvar här men kommer inte med i repetitionen, och det står varför.
+    if (isStopWord(word.word, word.language)) details.push('repeteras inte (småord)');
     const lookUpButton = el('button', { class: 'link-button', onclick: (event) => {
       showWordPopup({ candidates: [word.word], sentence: word.sentence, anchor: event.currentTarget.getBoundingClientRect() });
     } }, 'Slå upp');
