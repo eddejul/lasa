@@ -122,15 +122,12 @@ def themes_and_files(page, books, out):
                                for f in page.frames if f.url.startswith('blob:')), 15), 'rtf-filen visas med sin rubrik')
     back_to_library(page)
 
-    # Synkadressen
+    # Synkmappen (F1): en mapp som inte finns ger ett begripligt fel och sparas inte
     page.locator('[data-testid="tab-settings"]').click()
-    page.fill('[data-testid="sync-url"]', 'https://example.com')
-    page.fill('[data-testid="sync-key"]', 'sb_publishable_prov')
-    page.fill('[data-testid="sync-email"]', 'a@b.se')
-    page.fill('[data-testid="sync-password"]', 'x')
-    page.locator('[data-testid="sync-sign-in"]').click()
+    page.fill('[data-testid="sync-folder"]', r'C:\finns\inte\Sensus')
+    page.locator('[data-testid="sync-save"]').click()
     message = wait_for(lambda: page.locator('[data-testid="sync-message"]').inner_text().strip())
-    check(bool(message) and 'supabase.co' in message, f'en adress som inte är Supabase ger ett begripligt fel: {message}')
+    check(bool(message) and 'finns inte' in message, f'en mapp som inte finns ger ett begripligt fel: {message}')
     page.locator('[data-testid="tab-library"]').click()
     page.wait_for_selector('[data-testid="book"]')
 

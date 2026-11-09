@@ -244,6 +244,81 @@ class Backend:
             return data
         raise KeyError(command)
 
+    # Synken (F1), som sync_* i main.rs: bara undermappen "Sensus synk" i den valda mappen och filnamn som slutar
+    # på .json. LASA_SYNC_SUGGEST (sökvägar med ; emellan) står för iCloud Drive i sync_suggest.
+    SYNC_FOLDER = "Sensus synk"
+
+    @staticmethod
+    def sync_dir(folder):
+        folder = (folder or "").strip()
+        if not folder:
+            raise ValueError("Ingen synkmapp är vald.")
+        if not os.path.isdir(folder):
+            raise ValueError(f"Mappen {folder} finns inte. Kontrollera sökvägen och att iCloud för Windows är igång.")
+        return os.path.join(folder, Backend.SYNC_FOLDER)
+
+    @staticmethod
+    def sync_name(name):
+        bad = (not name or len(name) > 200 or name.startswith(".") or not name.lower().endswith(".json")
+               or any(c in name for c in "/\\:"))
+        if bad:
+            raise ValueError(f"Ogiltigt namn på en synkfil: {name}")
+
+    @staticmethod
+    def write_atomic(path, data):
+        with open(path + ".tmp", "wb") as file:
+            file.write(data)
+        os.replace(path + ".tmp", path)
+
+    def sync(self, command, args):
+        if command == "sync_suggest":
+            return [part for part in os.environ.get("LASA_SYNC_SUGGEST", "").split(";") if part]
+        folder = self.sync_dir(args.get("folder"))
+        if command == "sync_check":
+            os.makedirs(folder, exist_ok=True)
+            probe = os.path.join(folder, f".sensus-prov-{int(time.time())}.txt")
+            text = "Sensus provar att skriva här. Filen tas bort direkt.".encode("utf-8")
+            self.write_atomic(probe, text)
+            with open(probe, "rb") as file:
+                back = file.read()
+            os.remove(probe)
+            if back != text:
+                raise ValueError("Filen som skrevs gick inte att läsa tillbaka likadan.")
+            return None
+        if command == "sync_list":
+            if not os.path.isdir(folder):
+                return []
+            result = []
+            for name in sorted(os.listdir(folder)):
+                try:
+                    self.sync_name(name)
+                except ValueError:
+                    continue
+                result.append({"name": name, "size": os.path.getsize(os.path.join(folder, name))})
+            return result
+        name = args.get("name", "")
+        self.sync_name(name)
+        path = os.path.join(folder, name)
+        if command == "sync_read":
+            with open(path, "rb") as file:
+                data = file.read()
+            try:
+                return data.decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError(f"{name} är inte text i UTF-8")
+        if command == "sync_write":
+            os.makedirs(folder, exist_ok=True)
+            data = args.get("text", "").encode("utf-8")
+            self.write_atomic(path, data)
+            with open(path, "rb") as file:
+                if file.read() != data:
+                    raise ValueError("Synkfilen som sparades gick inte att läsa tillbaka likadan.")
+            return None
+        if command == "sync_set_aside":
+            os.replace(path, os.path.join(folder, f"{name[:-5]}.trasig-{int(time.time())}"))
+            return None
+        raise KeyError(command)
+
     def handle(self, command, args, body, headers):
         with self.lock:
             if command == "dict_query":
@@ -313,6 +388,8 @@ class Backend:
                     return file.read()
             if command.startswith("ocr_"):
                 return self.ocr(command, args)
+            if command.startswith("sync_"):
+                return self.sync(command, args)
             if command == "open_url":
                 with open(os.path.join(self.data, "opened_urls.txt"), "a", encoding="utf-8") as file:
                     file.write(args["url"] + "\n")
@@ -382,10 +459,8 @@ def main():
     args = parser.parse_args()
     with open(CONFIG, encoding="utf-8") as file:
         config = json.load(file)
-    # Samma policy som i appen, utan Tauris egna adresser för anropen. Bara här får sidan dessutom
-    # anropa 127.0.0.1, så att synken kan provas mot låtsasservern (windows/tests/mock_supabase.py).
+    # Samma policy som i appen, utan Tauris egna adresser för anropen.
     csp = config["app"]["security"]["csp"].replace(" ipc: http://ipc.localhost", "")
-    csp = csp.replace("https://*.supabase.co", "https://*.supabase.co http://127.0.0.1:*")
     backend = Backend(args.dictionary, args.data, args.open)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(backend, csp))
     print(f"Läsa på http://127.0.0.1:{args.port}/ (pid {os.getpid()}, data i {args.data})", flush=True)
