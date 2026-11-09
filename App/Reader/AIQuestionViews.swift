@@ -157,6 +157,10 @@ final class AIQuestionCardViewController: UIViewController, UITextViewDelegate {
         answerStack.spacing = 8
         answerStack.isHidden = true
         if !question.answer.isEmpty {
+            // Egen rubrik, så att punkterna inte flyter ihop med Jämförs kommentar ovanför.
+            answerStack.addArrangedSubview(makeLabel(question.isOpen ? "Boken säger:" : "Ett bra svar innehåller:",
+                                                     font: .systemFont(ofSize: 13, weight: .semibold),
+                                                     color: palette.inkSoft))
             let points = question.answer.count == 1 ? question.answer[0]
                 : question.answer.map { "\u{2022} " + $0 }.joined(separator: "\n")
             answerStack.addArrangedSubview(makeLabel(points, font: .preferredFont(forTextStyle: .body), color: palette.ink))
