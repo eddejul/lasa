@@ -176,27 +176,35 @@ final class ReaderQuestions {
             onChange?()
             return
         }
-        do {
-            questions = try BookQuestionFile.parse(Data(contentsOf: url))
-        } catch {
-            questions = []
-            problem = "Frågefilen kunde inte läsas: \(error)"
-            AppLog.shared.write("Frågor (K6): \(url.lastPathComponent) kunde inte läsas: \(error)")
-        }
-        let list = questions
-        let hints = list.map { BookQuestionFile.hint(for: $0, chapterTitles: chapterTitles, sectionCount: sectionCount) }
         let isPDF = chapterTitles.isEmpty
-        guard !list.isEmpty else {
-            places = [:]
-            placesVersion += 1
-            isLocated = true
-            onChange?()
-            return
-        }
         task = Task { @MainActor [weak self] in
+            // Granskning 5, L2: filen läses och tolkas utanför huvudtråden, och en fil över 2 MB läses inte.
+            let read = await Task.detached(priority: .userInitiated) { () -> Result<[BookQuestion], Error> in
+                Result { try BookQuestionFile.read(url) }
+            }.value
+            guard let self = self, !Task.isCancelled else { return }
+            switch read {
+            case .success(let parsed):
+                self.questions = parsed
+            case .failure(let error):
+                self.questions = []
+                self.problem = "Frågefilen kunde inte läsas: \(error)"
+                AppLog.shared.write("Frågor (K6): \(url.lastPathComponent) kunde inte läsas: \(error)")
+            }
+            let list = self.questions
+            guard !list.isEmpty else {
+                self.places = [:]
+                self.placesVersion += 1
+                self.isLocated = true
+                self.onChange?()
+                return
+            }
+            let hints = list.map {
+                BookQuestionFile.hint(for: $0, chapterTitles: chapterTitles, sectionCount: sectionCount)
+            }
             let started = CACurrentMediaTime()
             let hits = await search.locate(list.map(\.quote), hints: hints)
-            guard let self = self, !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return }
             var found: [String: QuestionPlace] = [:]
             for (index, question) in list.enumerated() {
                 if index < hits.count, let hit = hits[index] {
@@ -532,6 +540,11 @@ final class QuestionListViewController: UITableViewController, UIDocumentPickerD
         guard let url = urls.first else { return }
         let target = BookQuestionFile.target(for: questions.book)
         do {
+            // Granskning 5, L2: samma gräns som när boken öppnas, så att en jättefil aldrig läses in här.
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard size <= BookQuestionFile.maxBytes else {
+                throw BookQuestionFile.Failure(description: "Filen är större än 2 MB")
+            }
             let data = try Data(contentsOf: url)
             let parsed = try BookQuestionFile.parse(data)
             guard !parsed.isEmpty else {

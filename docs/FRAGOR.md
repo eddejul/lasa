@@ -17,6 +17,8 @@ Böcker, eller kursmappen där boken ligger). Appen prövar i den här ordningen
 Frågefiler visas aldrig som böcker i biblioteket. Utan fil har fliken Frågor knappen Välj frågefil, som
 kopierar en vald JSON-fil till plats 1.
 
+En frågefil får vara högst 2 MB. En större fil läses inte, och fliken Frågor säger varför. Sätt alltid `id` på varje fråga och ändra det aldrig: svaren sparas under id:t, och utan id börjar svaret om när frågan eller citatet rättas.
+
 ## Formatet
 
 ```json

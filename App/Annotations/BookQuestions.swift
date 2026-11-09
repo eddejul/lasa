@@ -54,6 +54,19 @@ enum BookQuestionFile {
         let description: String
     }
 
+    /// Granskning 5, L2: större frågefiler läses inte. En vanlig fil med hundra frågor är några tiotal kB.
+    static let maxBytes = 2_000_000
+
+    /// Läser och tolkar en frågefil. En fil över `maxBytes` läses inte alls, med ett tydligt besked. Kan köras
+    /// utanför huvudtråden (ren logik och filen).
+    static func read(_ url: URL) throws -> [BookQuestion] {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard size <= maxBytes else {
+            throw Failure(description: "Frågefilen är större än 2 MB och läses inte")
+        }
+        return try parse(Data(contentsOf: url))
+    }
+
     /// Sant för en frågefil. Biblioteket visar dem aldrig som böcker.
     static func isQuestionFile(_ name: String) -> Bool {
         name.lowercased().hasSuffix(suffix)
@@ -109,7 +122,8 @@ enum BookQuestionFile {
             guard let entry = item as? [String: Any] else { continue }
             let question = text(entry["fraga"] ?? entry["fråga"] ?? entry["question"])
             let quote = text(entry["citat"] ?? entry["quote"])
-            let page = integer(entry["sida"] ?? entry["page"])
+            // Granskning 5, L5: sidan hålls inom 1 till 100 000, så att ett jättetal inte kan spilla över.
+            let page = integer(entry["sida"] ?? entry["page"]).map { min(max($0, 1), 100_000) }
             guard !question.isEmpty, !quote.isEmpty || page != nil else { continue }
             let number = result.count + 1
             var id = text(entry["id"])
@@ -141,7 +155,7 @@ enum BookQuestionFile {
     static func hint(for question: BookQuestion, chapterTitles: [String], sectionCount: Int) -> Int? {
         if chapterTitles.isEmpty {
             guard let page = question.page else { return nil }
-            return min(max(page - 1, 0), max(sectionCount - 1, 0))
+            return min(max(page, 1) - 1, max(sectionCount - 1, 0))
         }
         if let number = question.chapterNumber, number >= 1, number <= chapterTitles.count {
             return number - 1

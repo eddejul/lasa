@@ -40,6 +40,30 @@ final class QuestionTests: XCTestCase {
         XCTAssertThrowsError(try BookQuestionFile.parse(Data(#"{"annat": []}"#.utf8)))
     }
 
+    /// Granskning 5, L2 och L5: ett jättetal som sida kraschar inte, och en fil över 2 MB läses inte.
+    func testHugePageAndHugeFile() throws {
+        let json = #"[{"sida": "-9223372036854775808", "fraga": "A"}, {"sida": 9223372036854775807, "fraga": "B"}]"#
+        let questions = try BookQuestionFile.parse(Data(json.utf8))
+        XCTAssertEqual(questions.map(\.page), [1, 100_000])
+        XCTAssertEqual(BookQuestionFile.hint(for: questions[0], chapterTitles: [], sectionCount: 10), 0)
+        XCTAssertEqual(BookQuestionFile.hint(for: questions[1], chapterTitles: [], sectionCount: 10), 9)
+
+        let folder = FileManager.default.temporaryDirectory
+        let small = folder.appendingPathComponent("liten-\(UUID().uuidString).fragor.json")
+        let big = folder.appendingPathComponent("stor-\(UUID().uuidString).fragor.json")
+        defer {
+            try? FileManager.default.removeItem(at: small)
+            try? FileManager.default.removeItem(at: big)
+        }
+        try Data(json.utf8).write(to: small)
+        XCTAssertEqual(try BookQuestionFile.read(small).count, 2)
+        var data = Data(#"[{"sida": 1, "fraga": "A", "svar": ""#.utf8)
+        data.append(Data(repeating: UInt8(ascii: "x"), count: BookQuestionFile.maxBytes))
+        data.append(Data(#""}]"#.utf8))
+        try data.write(to: big)
+        XCTAssertThrowsError(try BookQuestionFile.read(big))
+    }
+
     func testFileNamesAndPlaces() {
         XCTAssertTrue(BookQuestionFile.isQuestionFile("Bok.pdf.fragor.json"))
         XCTAssertTrue(BookQuestionFile.isQuestionFile("Bok.FRAGOR.JSON"))
