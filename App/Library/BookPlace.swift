@@ -225,6 +225,37 @@ final class BookMover {
         moved.missing = false
         BookRegistry.shared.save([moved])
         AppLog.shared.write("Flyttad: \(book.path) heter nu \(moved.file), kontrollsumman stämmer")
+        moveQuestionFile(from: book.url, to: prepared.destination)
         return Book(url: prepared.destination, id: book.id, path: moved.file)
+    }
+
+    /// Frågefilen bredvid boken (K6, `Bok.pdf.fragor.json` eller `Bok.fragor.json`) följer med till den nya
+    /// platsen och får bokens nya namn. Den kopieras först och tas bort först när kopian finns. Går det inte står
+    /// det i loggen, och frågefilen ligger kvar där den var.
+    private static func moveQuestionFile(from source: URL, to destination: URL) {
+        let manager = FileManager.default
+        let folder = source.deletingLastPathComponent()
+        let names = [source.lastPathComponent + BookQuestionFile.suffix,
+                     source.deletingPathExtension().lastPathComponent + BookQuestionFile.suffix]
+        guard let original = names.map({ folder.appendingPathComponent($0) })
+            .first(where: { manager.fileExists(atPath: $0.path) }) else { return }
+        let target = destination.deletingLastPathComponent()
+            .appendingPathComponent(destination.lastPathComponent + BookQuestionFile.suffix)
+        guard !manager.fileExists(atPath: target.path) else {
+            AppLog.shared.write("Frågefilen flyttades inte: \(target.lastPathComponent) finns redan")
+            return
+        }
+        do {
+            let data = try Data(contentsOf: original)
+            try data.write(to: target, options: .atomic)
+            guard (try? Data(contentsOf: target)) == data else {
+                try? manager.removeItem(at: target)
+                AppLog.shared.write("Frågefilen flyttades inte: kopian blev inte likadan")
+                return
+            }
+            try BookPlace.removeCoordinated(original)
+        } catch {
+            AppLog.shared.write("Frågefilen flyttades inte helt: \(error.localizedDescription)")
+        }
     }
 }

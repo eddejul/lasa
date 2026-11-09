@@ -192,7 +192,13 @@ enum SyncSelfTest {
                                                 color: .yellow)
         let marks = AnnotationStore.shared.highlights(book: book.id).count
         let courseBefore = library.allItems.first { $0.book.id == book.id }?.courses ?? []
+        // K6: en frågefil bredvid boken följer med.
+        let questions = LibraryStore.shared.booksDirectory.appendingPathComponent("Kurs/Anteckningar.md.fragor.json")
+        try? Data("[]".utf8).write(to: questions)
         let moved = await move(book, toCloud: true, library: library)
+        let questionsMoved = FileManager.default.fileExists(atPath: folder.appendingPathComponent("Kurs/Anteckningar.md.fragor.json").path)
+            && !FileManager.default.fileExists(atPath: questions.path)
+        SelfTest.log("Frågefilen följer med till mappen: \(questionsMoved ? "ja" : "NEJ"). " + verdict(questionsMoved))
         let cloudFile = folder.appendingPathComponent("Kurs/Anteckningar.md")
         let localFile = LibraryStore.shared.booksDirectory.appendingPathComponent("Kurs/Anteckningar.md")
         let record = BookRegistry.shared.record(id: book.id)
@@ -211,8 +217,10 @@ enum SyncSelfTest {
         SelfTest.log("Synkens rad i biblioteket (G9): \(library.syncLineForSelfTest)")
         if let current = moved {
             let back = await move(current, toCloud: false, library: library)
+            let questionsBack = FileManager.default.fileExists(atPath: questions.path)
+            try? FileManager.default.removeItem(at: questions)
             SelfTest.log("Tillbaka till Böcker: \(back.map { "klar, \($0.path)" } ?? "FEL"), samma id "
-                         + "\(back?.id == book.id ? "ja" : "NEJ"), i mappen "
+                         + "\(back?.id == book.id ? "ja" : "NEJ"), frågefilen \(questionsBack ? "med" : "FEL, kvar i mappen"), i mappen "
                          + "\(FileManager.default.fileExists(atPath: cloudFile.path) ? "FEL, kvar" : "borta"). "
                          + verdict(back?.id == book.id && back?.path == "Kurs/Anteckningar.md"
                                     && !FileManager.default.fileExists(atPath: cloudFile.path)))
