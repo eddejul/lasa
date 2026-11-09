@@ -68,6 +68,8 @@ final class PDFCurlReaderViewController: UIViewController {
     fileprivate var questionTap: UITapGestureRecognizer?
     fileprivate var questionRects: [Int: [String: CGRect]] = [:]
     fileprivate var questionRectsInFlight = Set<Int>()
+    /// K6b: platsernas version när rutorna räknades, så att nya AI-frågor får nya rutor.
+    fileprivate var questionRectsVersion = -1
     /// K7: kapitlen (plats i `chapterStarts`) vars test redan erbjudits medan boken är öppen.
     fileprivate var offeredChapterTests = Set<Int>()
     /// D4-1: bokens sida för filens första sida enligt tryckta sidnummer i textlagret, bara ett förslag.
@@ -3130,6 +3132,12 @@ extension PDFCurlReaderViewController {
     }
 
     fileprivate func questionsChanged() {
+        // K6b: AI-frågorna läses in på nytt när ett kapitel fått frågor. Då räknas citatens rutor om.
+        if let version = questions?.placesVersion, version != questionRectsVersion {
+            questionRectsVersion = version
+            questionRects.removeAll()
+            questionRectsInFlight.removeAll()
+        }
         for page in visiblePages where !page.isBlank {
             applyQuestions(to: page)
         }
