@@ -624,8 +624,9 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         reviewCount = UserWords.shared.reviewCount()
         savedCount = UserWords.shared.savedWords().count
         studyItems = savedCount > 0 ? [.review(count: reviewCount)] : []
-        // K7: Dagens markeringar när det finns markeringskort på tur eller nya i dag.
-        let highlightCards = StudyCardStore.shared.todaysCards().count
+        // K7: Dagens markeringar när det finns markeringskort på tur eller nya i dag. Bara antalet räknas här,
+        // korten byggs när kortet öppnas (granskning 5, M2).
+        let highlightCards = StudyCardStore.shared.todaysCount()
         if highlightCards > 0 {
             studyItems.append(.highlights(count: highlightCards))
         }

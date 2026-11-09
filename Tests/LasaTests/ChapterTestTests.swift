@@ -56,6 +56,61 @@ final class ChapterTestTests: XCTestCase {
         XCTAssertEqual(cards[0].id, "m:h0")
     }
 
+    /// Granskning 5, M2: antalet räknas utan alternativ, och korten som byggs för de valda är exakt desamma som
+    /// när alla byggs (samma lucktext, flerval och alternativ). Prövat med 800 påhittade markeringar i en bok.
+    func testCountWithoutBuildingAndOnlyTheChosenCards() {
+        let words = ["retoriken", "argumentet", "publiken", "talaren", "kairos", "toposet", "doxan", "stasisläran"]
+        let highlights = (0..<800).map { i in
+            highlight("h\(i)", "Här använder \(words[i % words.count]) nummer \(i) för att övertyga om saken.",
+                      section: i / 40, start: (i % 40) * 100)
+        } + [highlight("kort", "Tre korta ord")]
+        let terms = ["kairos", "doxan"]
+
+        let started = Date()
+        let ids = ChapterTestLogic.cardIDs(highlights: highlights, terms: terms)
+        let countTime = Date().timeIntervalSince(started)
+        XCTAssertEqual(ids.count, 800)
+        XCTAssertFalse(ids.contains("m:kort"))
+        XCTAssertLessThan(countTime, 2, "räkningen ska växa linjärt (\(countTime) s)")
+
+        let all = ChapterTestLogic.cards(highlights: highlights, allHighlights: highlights, questions: [], terms: terms,
+                                         book: "bok", source: "Bok", limit: Int.max)
+        XCTAssertEqual(Set(ids), Set(all.map(\.id)))
+        XCTAssertTrue(all.contains { $0.kind == .choice })
+        let chosen: Set<String> = ["m:h0", "m:h1", "m:h7", "m:h400", "m:h799"]
+        let some = ChapterTestLogic.cards(highlights: highlights, allHighlights: highlights, questions: [],
+                                          terms: terms, book: "bok", source: "Bok", limit: Int.max, only: chosen)
+        XCTAssertEqual(some, all.filter { chosen.contains($0.id) })
+        // Gränsen för kapitlets test (tolv kort) ger samma kort som förut, de första tolv.
+        let twelve = ChapterTestLogic.cards(highlights: highlights, allHighlights: highlights, questions: [],
+                                            terms: terms, book: "bok", source: "Bok")
+        XCTAssertEqual(twelve, Array(all.prefix(ChapterTestLogic.maxCards)))
+    }
+
+    func testTodaysSelectionTakesDueFirstThenNewWithinLimits() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let current = now.timeIntervalSince1970
+        let ids = (0..<50).map { "m:h\($0)" }
+        func state(due: Double, introduced: Double) -> StudyCardStore.State {
+            StudyCardStore.State(due: due, interval: 1, ease: 2.5, reps: 1, lapses: 0, introduced: introduced)
+        }
+        let longAgo = current - 30 * 86_400
+        let states: [String: StudyCardStore.State] = [
+            "m:h1": state(due: current - 100, introduced: longAgo),
+            "m:h2": state(due: current - 500, introduced: longAgo),
+            "m:h3": state(due: current + 1_000, introduced: longAgo),
+            // Påbörjat i dag: räknas bland dagens tio nya.
+            "m:h4": state(due: current - 50, introduced: current),
+        ]
+        let chosen = ChapterTestLogic.todaysSelection(ids: ids, states: states, now: now)
+        XCTAssertEqual(Array(chosen.prefix(3)), ["m:h2", "m:h1", "m:h4"])
+        XCTAssertFalse(chosen.contains("m:h3"))
+        XCTAssertEqual(chosen.count, 3 + StudyCardStore.newPerDay - 1)
+        XCTAssertEqual(chosen, ChapterTestLogic.todaysSelection(ids: ids.reversed(), states: states, now: now))
+        XCTAssertEqual(ChapterTestLogic.todaysSelection(ids: ids, states: [:], now: now, newPerDay: 40).count,
+                       StudyCardStore.dailyLimit)
+    }
+
     func testFinishedChapterOnlyForwardOverABoundary() {
         let starts = [0, 2, 5]
         XCTAssertEqual(ChapterTestLogic.finishedChapter(from: 1, to: 2, starts: starts), 0)

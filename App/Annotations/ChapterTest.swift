@@ -47,10 +47,19 @@ enum ChapterTestLogic {
     /// Ordet som plockas bort: ett begrepp ur bokens begreppsregister (K8) om det står i markeringen, annars
     /// det längsta ordet som inte är ett småord. Nil när markeringen har färre än fyra ord.
     static func keyword(in text: String, terms: [String]) -> NSRange? {
+        keyword(in: text, sortedTerms: sortedTerms(terms))
+    }
+
+    /// Begreppen längst först, som `keyword` prövar dem. Sorteras en gång per bok, inte en gång per markering.
+    static func sortedTerms(_ terms: [String]) -> [String] {
+        terms.sorted(by: { $0.count > $1.count })
+    }
+
+    static func keyword(in text: String, sortedTerms: [String]) -> NSRange? {
         let ns = text as NSString
         let words = wordRanges(in: text)
         guard words.count >= 4 else { return nil }
-        for term in terms.sorted(by: { $0.count > $1.count }) where term.count >= 3 {
+        for term in sortedTerms where term.count >= 3 {
             let found = ns.range(of: term, options: [.caseInsensitive])
             guard found.location != NSNotFound else { continue }
             // Bara hela ord: inget ordtecken precis före eller efter.
@@ -96,44 +105,61 @@ enum ChapterTestLogic {
             seen.insert(key)
             unique.append(clean)
         }
+        // Granskning 5, M2: avståndet och hashvärdet räknas en gång per alternativ, inte i varje jämförelse.
         let length = answer.count
-        return unique.sorted { a, b in
-            let da = abs(a.count - length)
-            let db = abs(b.count - length)
-            if da != db { return da < db }
-            return BookQuestionFile.stableHash(seed + a) < BookQuestionFile.stableHash(seed + b)
-        }.prefix(count).map { $0 }
+        let keyed = unique.map { item in
+            (item: item, distance: abs(item.count - length), hash: BookQuestionFile.stableHash(seed + item))
+        }
+        return keyed.sorted { a, b in
+            if a.distance != b.distance { return a.distance < b.distance }
+            return a.hash < b.hash
+        }.prefix(count).map { $0.item }
     }
 
     /// Alternativen i en blandning som är densamma varje gång för samma kort.
     static func shuffled(_ options: [String], seed: String) -> [String] {
-        options.sorted { BookQuestionFile.stableHash(seed + $0) < BookQuestionFile.stableHash(seed + $1) }
+        options.map { (item: $0, hash: BookQuestionFile.stableHash(seed + $0)) }
+            .sorted { $0.hash < $1.hash }
+            .map { $0.item }
     }
 
     /// Korten för markeringarna (i textens ordning) och frågorna. Vartannat markeringskort blir flerval när det
     /// finns tre felaktiga alternativ. `allHighlights` är bokens alla markeringar, till alternativen.
+    /// `only`: bygg bara markeringskorten med de här id:na (Dagens markeringar), med samma lucktext och flerval
+    /// som när alla byggs. Alternativen räknas bara fram för korten som byggs.
     static func cards(highlights: [Highlight], allHighlights: [Highlight], questions: [BookQuestion], terms: [String],
-                      book: String, source: String, limit: Int = maxCards) -> [ChapterTestCard] {
+                      book: String, source: String, limit: Int = maxCards,
+                      only: Set<String>? = nil) -> [ChapterTestCard] {
+        let sorted = sortedTerms(terms)
         var pool: [String] = terms
         for highlight in allHighlights {
-            if let range = keyword(in: highlight.text, terms: terms) {
+            if let range = keyword(in: highlight.text, sortedTerms: sorted) {
                 pool.append((highlight.text as NSString).substring(with: range))
             }
         }
         var result: [ChapterTestCard] = []
         var made = 0
         for highlight in highlights.sorted(by: { ($0.section, $0.start) < ($1.section, $1.start) }) {
+            // Markeringskorten kommer först, så fler än `limit` kort kommer ändå inte med.
+            if result.count >= limit {
+                break
+            }
             let text = Citation.cleanQuote(highlight.text)
-            guard let range = keyword(in: text, terms: terms) else { continue }
-            let answer = (text as NSString).substring(with: range)
+            guard let range = keyword(in: text, sortedTerms: sorted) else { continue }
             let id = "m:" + highlight.id
+            // Vartannat kort räknas bland alla markeringar, också de som inte byggs, så att samma markering
+            // blir samma slags kort.
+            defer { made += 1 }
+            if let only = only, !only.contains(id) {
+                continue
+            }
+            let answer = (text as NSString).substring(with: range)
             let wrong = distractors(for: answer, pool: pool, seed: id)
             let choice = made % 2 == 1 && wrong.count == 3
             result.append(ChapterTestCard(id: id, book: book, kind: choice ? .choice : .cloze,
                                           prompt: cloze(text, hiding: range), answer: answer,
                                           options: choice ? shuffled(wrong + [answer], seed: id) : [],
                                           source: source, questionID: nil))
-            made += 1
         }
         for question in questions {
             result.append(ChapterTestCard(id: "q:\(book):\(question.id)", book: book, kind: .question,
@@ -142,6 +168,32 @@ enum ChapterTestLogic {
                                           options: [], source: source, questionID: question.id))
         }
         return Array(result.prefix(limit))
+    }
+
+    /// Id:n för markeringskorten, samma markeringar som `cards` gör kort av men utan alternativ (granskning 5,
+    /// M2). Kostnaden växer linjärt med antalet markeringar, så det går att räkna vid varje biblioteksvisning.
+    static func cardIDs(highlights: [Highlight], terms: [String]) -> [String] {
+        let sorted = sortedTerms(terms)
+        return highlights.compactMap { highlight in
+            keyword(in: Citation.cleanQuote(highlight.text), sortedTerms: sorted) == nil ? nil : "m:" + highlight.id
+        }
+    }
+
+    /// Dagens markeringar (ren logik): korten som är på tur, äldst först, sedan nya i en blandning som är
+    /// densamma varje gång (högst `newPerDay` påbörjade i dag), högst `limit` totalt.
+    static func todaysSelection(ids: [String], states: [String: StudyCardStore.State], now: Date,
+                                newPerDay: Int = StudyCardStore.newPerDay,
+                                limit: Int = StudyCardStore.dailyLimit) -> [String] {
+        let current = now.timeIntervalSince1970
+        let midnight = Calendar.current.startOfDay(for: now).timeIntervalSince1970
+        let introducedToday = states.filter { $0.key.hasPrefix("m:") && $0.value.introduced >= midnight }.count
+        let due = ids.filter { (states[$0]?.due ?? .greatestFiniteMagnitude) <= current }
+            .sorted { (states[$0]?.due ?? 0) < (states[$1]?.due ?? 0) }
+        let fresh = ids.filter { states[$0] == nil }
+            .map { (id: $0, hash: BookQuestionFile.stableHash($0)) }
+            .sorted { $0.hash < $1.hash }
+            .map { $0.id }
+        return Array((due + fresh.prefix(max(0, newPerDay - introducedToday))).prefix(limit))
     }
 
     /// Kapitlet som avslutats när man bläddrat framåt från sida `from` till sida `to`, i en bok vars kapitel
@@ -217,31 +269,63 @@ final class StudyCardStore {
                                    reps: state?.reps ?? 0).interval
     }
 
-    /// Dagens markeringar: kort ur markeringarna i alla böcker som är på tur, sedan nya (högst tio om dagen),
-    /// högst tjugo. Lucktext och flerval om vartannat.
-    func todaysCards(now: Date = Date()) -> [ChapterTestCard] {
+    /// Markeringarna per bok i biblioteket, med bokens begrepp och titel, och id:na för korten de ger.
+    private struct TodaysBook {
+        let highlights: [Highlight]
+        let terms: [String]
+        let title: String
+    }
+
+    /// Dagens markeringar utan att bygga korten (granskning 5, M2): vilka kort som är på tur och nya i dag, i
+    /// ordning, och böckerna de kommer ur. Inga alternativ räknas fram, så det växer linjärt med markeringarna.
+    private func todaysSelection(now: Date) -> (ids: [String], books: [String: TodaysBook]) {
         let highlights = AnnotationStore.shared.highlightsForSync().filter { !$0.1 }.map(\.0)
-        guard !highlights.isEmpty else { return [] }
+        guard !highlights.isEmpty else { return ([], [:]) }
         // Bara böcker som finns i biblioteket: en borttagen bok behåller sina markeringar (D3-5) men ger inga kort.
         var titles: [String: String] = [:]
         for record in BookRegistry.shared.records() where !record.missing {
             titles[record.id] = record.displayTitle
         }
-        var cards: [ChapterTestCard] = []
-        for (book, list) in Dictionary(grouping: highlights, by: \.book) where titles[book] != nil {
+        var books: [String: TodaysBook] = [:]
+        var ids: [String] = []
+        for (book, list) in Dictionary(grouping: highlights, by: \.book) {
+            guard let title = titles[book] else { continue }
             let terms = ConceptStore.shared.concepts(book: book).map(\.term)
-            cards += ChapterTestLogic.cards(highlights: list, allHighlights: list, questions: [], terms: terms,
-                                            book: book, source: titles[book] ?? "", limit: 400)
+            books[book] = TodaysBook(highlights: list, terms: terms, title: title)
+            ids += ChapterTestLogic.cardIDs(highlights: list, terms: terms)
         }
-        let states = self.states()
-        let current = now.timeIntervalSince1970
-        let midnight = Calendar.current.startOfDay(for: now).timeIntervalSince1970
-        let introducedToday = states.filter { $0.key.hasPrefix("m:") && $0.value.introduced >= midnight }.count
-        let due = cards.filter { (states[$0.id]?.due ?? .greatestFiniteMagnitude) <= current }
-            .sorted { (states[$0.id]?.due ?? 0) < (states[$1.id]?.due ?? 0) }
-        let fresh = cards.filter { states[$0.id] == nil }
-            .sorted { BookQuestionFile.stableHash($0.id) < BookQuestionFile.stableHash($1.id) }
-        return Array((due + fresh.prefix(max(0, Self.newPerDay - introducedToday))).prefix(Self.dailyLimit))
+        guard !ids.isEmpty else { return ([], [:]) }
+        return (ChapterTestLogic.todaysSelection(ids: ids, states: states(), now: now), books)
+    }
+
+    /// Antalet kort i Dagens markeringar, till kortet i biblioteket. Bygger inga kort (granskning 5, M2).
+    func todaysCount(now: Date = Date()) -> Int {
+        let started = Date()
+        let count = todaysSelection(now: now).ids.count
+        let elapsed = Date().timeIntervalSince(started) * 1000
+        if elapsed > 100 {
+            AppLog.shared.write("Dagens markeringar: \(count) kort räknade på \(Int(elapsed)) ms")
+        }
+        return count
+    }
+
+    /// Dagens markeringar: kort ur markeringarna i alla böcker som är på tur, sedan nya (högst tio om dagen),
+    /// högst tjugo. Lucktext och flerval om vartannat. Bara de valda korten byggs, med sina alternativ.
+    func todaysCards(now: Date = Date()) -> [ChapterTestCard] {
+        let selection = todaysSelection(now: now)
+        guard !selection.ids.isEmpty else { return [] }
+        let wanted = Set(selection.ids)
+        var built: [String: ChapterTestCard] = [:]
+        for (book, entry) in selection.books {
+            let here = Set(entry.highlights.map { "m:" + $0.id }).intersection(wanted)
+            guard !here.isEmpty else { continue }
+            for card in ChapterTestLogic.cards(highlights: entry.highlights, allHighlights: entry.highlights,
+                                               questions: [], terms: entry.terms, book: book, source: entry.title,
+                                               limit: Int.max, only: here) {
+                built[card.id] = card
+            }
+        }
+        return selection.ids.compactMap { built[$0] }
     }
 }
 
