@@ -152,7 +152,8 @@ enum SyncSelfTest {
         let removed = SyncHighlight(id: windows.id.lowercased(), bookID: sha, section: windows.section, start: windows.start,
                                     length: windows.length, text: windows.text, color: windows.color.rawValue, note: "",
                                     created: windows.created.timeIntervalSince1970,
-                                    updated: Date().timeIntervalSince1970 + 3600, deleted: true)
+                                    // Windows-filens markering är från 2030, så borttagningen är en timme senare.
+                                    updated: windows.updated.timeIntervalSince1970 + 3600, deleted: true)
         var conflict = SyncSnapshot(device: SyncDevice(id: "krock-prov", name: "Krockdator", platform: "windows"),
                                     written: Date().timeIntervalSince1970)
         conflict.highlights[old.id] = old

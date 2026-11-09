@@ -109,9 +109,9 @@ export function normalizeWord(word) {
     due: null, interval: null, ease: null, reps: null, lapses: null, reviewUpdated: null,
   };
   if (!result.deleted && num(word.reviewUpdated) !== null && num(word.due) !== null) {
-    result.due = num(word.due);
-    result.interval = num(word.interval) ?? 0;
-    result.ease = num(word.ease) ?? 2.5;
+    result.due = Math.round(num(word.due) * 1000) / 1000;
+    result.interval = rounded(num(word.interval) ?? 0);
+    result.ease = rounded(num(word.ease) ?? 2.5);
     result.reps = int(word.reps) ?? 0;
     result.lapses = int(word.lapses) ?? 0;
     result.reviewUpdated = num(word.reviewUpdated);
@@ -144,7 +144,8 @@ export function wordRow(w) {
   return {
     lemma: w.lemma, language: w.language, word: w.word, sentence: w.sentence, book: w.book, page: w.page, lookups: w.lookups,
     created_at: isoTime(w.created), updated_at: isoTime(w.updated), deleted: Boolean(w.deleted),
-    due: review ? w.due : null, interval: review ? (w.interval ?? 0) : null, ease: review ? (w.ease ?? 2.5) : null,
+    due: review ? Math.round(w.due * 1000) / 1000 : null, interval: review ? rounded(w.interval ?? 0) : null,
+    ease: review ? rounded(w.ease ?? 2.5) : null,
     reps: review ? (w.reps ?? 0) : null, lapses: review ? (w.lapses ?? 0) : null,
     review_updated_at: review ? isoTime(w.reviewUpdated) : null,
   };

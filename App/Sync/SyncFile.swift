@@ -218,9 +218,9 @@ enum SyncFile {
         word.updated = updated
         word.deleted = bool(row["deleted"])
         if !word.deleted, let reviewUpdated = SyncTime.seconds(row["review_updated_at"]), let due = double(row["due"]) {
-            word.due = due
-            word.interval = double(row["interval"]) ?? 0
-            word.ease = double(row["ease"]) ?? 2.5
+            word.due = milliseconds(due)
+            word.interval = rounded(double(row["interval"]) ?? 0)
+            word.ease = rounded(double(row["ease"]) ?? 2.5)
             word.reps = int(row["reps"]) ?? 0
             word.lapses = int(row["lapses"]) ?? 0
             word.reviewUpdated = reviewUpdated
@@ -282,18 +282,24 @@ enum SyncFile {
             "book": word.book, "page": word.page, "lookups": word.lookups,
             "created_at": SyncTime.string(word.created), "updated_at": SyncTime.string(word.updated),
             "deleted": word.deleted,
-            "due": review ? (word.due ?? 0) as Any : NSNull() as Any,
-            "interval": review ? (word.interval ?? 0) as Any : NSNull() as Any,
-            "ease": review ? (word.ease ?? 2.5) as Any : NSNull() as Any,
+            "due": review ? milliseconds(word.due ?? 0) as Any : NSNull() as Any,
+            "interval": review ? rounded(word.interval ?? 0) as Any : NSNull() as Any,
+            "ease": review ? rounded(word.ease ?? 2.5) as Any : NSNull() as Any,
             "reps": review ? (word.reps ?? 0) as Any : NSNull() as Any,
             "lapses": review ? (word.lapses ?? 0) as Any : NSNull() as Any,
             "review_updated_at": review ? SyncTime.string(word.reviewUpdated ?? 0) as Any : NSNull() as Any,
         ]
     }
 
-    /// Andelar med sex decimaler, så att samma värde alltid skrivs likadant.
+    /// Andelar, intervall och ease med sex decimaler, så att samma värde alltid skrivs likadant (JSON skriver
+    /// inte alltid alla decimaler, och då räknades en rad som ändrad varje gång).
     static func rounded(_ value: Double) -> Double {
         (value * 1_000_000).rounded() / 1_000_000
+    }
+
+    /// Repetitionens `due` (sekunder sedan 1970) i hela millisekunder.
+    static func milliseconds(_ value: Double) -> Double {
+        (value * 1000).rounded() / 1000
     }
 
     // MARK: Tolkning
