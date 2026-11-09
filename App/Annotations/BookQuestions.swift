@@ -19,6 +19,41 @@ struct BookQuestion: Equatable {
     let chapterTitle: String?
     /// PDF utan text (fotad): var på sidan pricken står, 0 överst och 1 nederst.
     let y: Double?
+
+    // K6b: AI-frågornas fält. Frågefilen kan också ange typ, nar och kalla (docs/FRAGOR.md).
+    /// Frågetypen (`AIQuestions.types`), tom för en vanlig fråga ur frågefilen.
+    var kind: String = ""
+    /// När frågan ställs: fore (före läsningen), efter (i texten, med prick) eller slut (efter kapitlet).
+    var timing: String = "efter"
+    /// Citatet där svaret står, syns först efter svaret (Ur boken, Visa i boken).
+    var source: String = ""
+    /// Öppen fråga: inget rätt svar, Jämför ger en kommentar.
+    var isOpen: Bool = false
+    /// annan_bok och debatt: den andra bokens titel.
+    var otherBook: String = ""
+    /// Gjord med AI (K6b).
+    var isAI: Bool = false
+    /// AI-frågor: kapitlets nyckel, rubrik och avsnitt (kapitlet eller PDF-sidorna).
+    var chapterKey: String = ""
+    var chapterName: String = ""
+    var chapterSections: Range<Int>?
+    /// AI-frågor: avsnittet där platsen står (hjälp att hitta den), och källans text och avsnitt.
+    var hintSection: Int?
+    var sourceAnchor: String = ""
+    var sourceSection: Int?
+
+    /// Rutan med Ditt svar, Ur boken och Jämför: AI-frågor och frågefilens frågor med typ eller källa.
+    var usesAnswerCard: Bool {
+        isAI || !kind.isEmpty || !source.isEmpty
+    }
+
+    /// Rubriken i rutan och i fliken Frågor.
+    var heading: String {
+        if !kind.isEmpty {
+            return AIQuestions.title(type: kind, book: otherBook)
+        }
+        return title
+    }
 }
 
 /// Hur det gick på en fråga: Kan, Osäker eller Kan inte.
@@ -137,15 +172,28 @@ enum BookQuestionFile {
             used.insert(id)
             let chapter = entry["kapitel"] ?? entry["chapter"]
             let y = (entry["y"] as? NSNumber)?.doubleValue
-            result.append(BookQuestion(id: id, number: number,
-                                       title: text(entry["titel"] ?? entry["title"]),
-                                       question: question,
-                                       answer: lines(entry["svar"] ?? entry["answer"]),
-                                       quote: quote,
-                                       page: page,
-                                       chapterNumber: integer(chapter),
-                                       chapterTitle: chapter is String && integer(chapter) == nil ? text(chapter) : nil,
-                                       y: y.map { min(max($0, 0), 1) }))
+            var parsed = BookQuestion(id: id, number: number,
+                                      title: text(entry["titel"] ?? entry["title"]),
+                                      question: question,
+                                      answer: lines(entry["svar"] ?? entry["answer"]),
+                                      quote: quote,
+                                      page: page,
+                                      chapterNumber: integer(chapter),
+                                      chapterTitle: chapter is String && integer(chapter) == nil ? text(chapter) : nil,
+                                      y: y.map { min(max($0, 0), 1) })
+            // K6b: de valfria fälten typ, nar och kalla gör samma sak som för AI-frågorna.
+            let kind = text(entry["typ"] ?? entry["type"])
+            if AIQuestions.typeIDs.contains(kind) {
+                parsed.kind = kind
+                parsed.isOpen = AIQuestions.openTypes.contains(kind)
+            }
+            let timing = text(entry["nar"] ?? entry["när"] ?? entry["when"])
+            if AIQuestions.timings.contains(timing) {
+                parsed.timing = timing
+            }
+            parsed.source = text(entry["kalla"] ?? entry["källa"] ?? entry["source"])
+            parsed.otherBook = text(entry["bok"])
+            result.append(parsed)
         }
         return result
     }

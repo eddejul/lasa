@@ -271,14 +271,40 @@ final class AppearanceViewController: UIViewController {
         toggle.isOn = QuestionsSetting.isEnabled
         toggle.accessibilityLabel = "Frågor i marginalen"
         toggle.accessibilityHint = "Frågor ur en frågefil bredvid boken"
-        toggle.addAction(UIAction { action in
-            QuestionsSetting.isEnabled = (action.sender as? UISwitch)?.isOn ?? false
-        }, for: .valueChanged)
         let row = UIStackView(arrangedSubviews: [label, toggle])
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = 12
-        return row
+        // K6b: Gör frågor med AI, under Frågor i marginalen och bara valbar när den är på.
+        let aiLabel = UILabel()
+        aiLabel.text = "Gör frågor med AI"
+        aiLabel.font = .preferredFont(forTextStyle: .subheadline)
+        aiLabel.numberOfLines = 0
+        let aiToggle = UISwitch()
+        aiToggle.isOn = AIQuestionsSetting.isEnabled
+        aiToggle.isEnabled = QuestionsSetting.isEnabled
+        aiToggle.accessibilityLabel = "Gör frågor med AI"
+        aiToggle.accessibilityHint = "Gemini gör frågor kapitel för kapitel i böcker utan frågefil"
+        aiToggle.addAction(UIAction { action in
+            AIQuestionsSetting.isEnabled = (action.sender as? UISwitch)?.isOn ?? true
+        }, for: .valueChanged)
+        let aiRow = UIStackView(arrangedSubviews: [aiLabel, aiToggle])
+        aiRow.axis = .horizontal
+        aiRow.alignment = .center
+        aiRow.spacing = 12
+        aiRow.isLayoutMarginsRelativeArrangement = true
+        aiRow.layoutMargins = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 0)
+        aiLabel.alpha = QuestionsSetting.isEnabled ? 1 : 0.4
+        toggle.addAction(UIAction { [weak aiToggle, weak aiLabel] action in
+            let on = (action.sender as? UISwitch)?.isOn ?? false
+            QuestionsSetting.isEnabled = on
+            aiToggle?.isEnabled = on
+            aiLabel?.alpha = on ? 1 : 0.4
+        }, for: .valueChanged)
+        let rows = UIStackView(arrangedSubviews: [row, aiRow])
+        rows.axis = .vertical
+        rows.spacing = 10
+        return rows
     }
 
     private func makeJustifyRow() -> UIView {
