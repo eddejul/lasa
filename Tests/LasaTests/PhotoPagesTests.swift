@@ -84,6 +84,13 @@ final class PhotoPagesTests: XCTestCase {
         XCTAssertEqual(crop.rect.maxX, 0.75, accuracy: 0.05)
         XCTAssertEqual(crop.rect.minY, 50.0 / 260.0, accuracy: 0.05)
         XCTAssertEqual(crop.rect.maxY, 170.0 / 260.0, accuracy: 0.05)
+        // Flera sidor: ramen rymmer texten på alla.
+        let wide = PageCrop(rect: CGRect(x: 0.1, y: 0.3, width: 0.8, height: 0.4))
+        let union = PageCropSuggestion.union([crop, wide])
+        XCTAssertEqual(union?.rect.minX ?? 0, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(union?.rect.maxX ?? 0, 0.9, accuracy: 0.0001)
+        XCTAssertEqual(union?.rect.minY ?? 0, crop.rect.minY, accuracy: 0.0001)
+        XCTAssertNil(PageCropSuggestion.union([]))
         // En sida där texten fyller allt ger inget förslag.
         let full = [UInt8](repeating: 245, count: width * height)
         XCTAssertNil(PageCropSuggestion.suggest(gray: full, width: width, height: height))

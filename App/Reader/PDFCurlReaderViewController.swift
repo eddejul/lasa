@@ -508,6 +508,24 @@ final class PDFCurlReaderViewController: UIViewController {
             // Före förritningen till disken, som annars kan ta flera sekunder på en fotad bok.
             operation.queuePriority = .veryHigh
         }
+        // Föreslå: texten på sidan man läser och fyra sidor runt den, små bilder på renderingskön.
+        editor.suggestPages = { completion in
+            let pages = [index, index + 1, index + 2, index - 1, index + 3].filter { $0 >= 0 && $0 < renderer.pageCount }
+            var crops: [PageCrop] = []
+            var left = pages.count
+            for page in pages {
+                let operation = renderer.thumbnail(for: page, width: 300, scale: 1) { image in
+                    if let image = image, let crop = PageCropSuggestion.suggest(from: image) {
+                        crops.append(crop)
+                    }
+                    left -= 1
+                    if left == 0 {
+                        completion(PageCropSuggestion.union(crops))
+                    }
+                }
+                operation.queuePriority = .veryHigh
+            }
+        }
         editor.onSave = { [weak self] crop in
             guard let self = self else { return }
             PageCropStore.save(PageCropStore.Saved(crop: crop, isOn: true), bookID: self.book.id)
@@ -565,9 +583,11 @@ final class PDFCurlReaderViewController: UIViewController {
             await pause(0.1)
         }
         await pause(0.5)
-        let suggestion = editor.suggestion()
-        SelfTest.log("Förslaget (P3): \(suggestion.map { PageCropStore.format(.init(crop: $0, isOn: true)) } ?? "inget") "
-                     + "(papperet i provboken är 0,10 till 0,90 brett, texten cirka 0,18 till 0,81)")
+        let suggestion: PageCrop? = await withCheckedContinuation { continuation in
+            editor.requestSuggestion { continuation.resume(returning: $0) }
+        }
+        SelfTest.log("Förslaget (P3) över fem sidor: \(suggestion.map { PageCropStore.format(.init(crop: $0, isOn: true)) } ?? "inget") "
+                     + "(papperet i provboken är 0,10 till 0,90 brett, texten cirka 0,18 till 0,81 och 0,15 till 0,65 högt)")
         let chosen = suggestion ?? PageCrop(rect: CGRect(x: 0.15, y: 0.12, width: 0.7, height: 0.76))
         editor.setCrop(chosen)
         await pause(0.4)
@@ -697,11 +717,12 @@ final class PDFCurlReaderViewController: UIViewController {
         let word = Self.word(on: pdfPage, at: finger, imageFrame: pageFrame).map { (string as NSString).substring(with: $0) }
         let ink = Self.inkShare(in: page.view, rect: shown)
         let above = Self.inkShare(in: page.view, rect: shown.offsetBy(dx: 0, dy: -2.2 * shown.height))
-        let ok = word?.lowercased() == "kunskap" && ink > 0.04 && above < ink / 3 && imageFrame.contains(finger)
+        let trimmed = word?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let ok = trimmed == "kunskap" && ink > 0.04 && above < ink / 3 && imageFrame.contains(finger)
         SelfTest.log("Ordet kunskap (\(label), sida \(page.pageIndex + 1)): bildruta \(Int(imageFrame.minX)),"
                      + "\(Int(imageFrame.minY)) \(Int(imageFrame.width)) x \(Int(imageFrame.height)), ordets ruta "
                      + "\(Int(shown.minX)),\(Int(shown.minY)) \(Int(shown.width)) x \(Int(shown.height)), under fingret "
-                     + "\(word ?? "inget"), bläck i rutan \(String(format: "%.1f", ink * 100)) %, två rader ovanför "
+                     + "\(trimmed ?? "inget"), bläck i rutan \(String(format: "%.1f", ink * 100)) %, två rader ovanför "
                      + "\(String(format: "%.1f", above * 100)) %: \(ok ? "ok" : "FEL")")
         return ok
     }

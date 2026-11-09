@@ -223,8 +223,9 @@ enum PageCropSuggestion {
         guard let left = inkColumns.first, let right = inkColumns.last,
               let top = inkRows.first, let bottom = inkRows.last, right > left, bottom > top else { return nil }
         // Lite luft runt texten, så att inga bokstäver hamnar i kanten.
-        let padX = Double(width) * 0.025
-        let padY = Double(height) * 0.02
+        // Lite mer luft upptill och nedtill, där menyraden och nederkanten ligger när menyn är framme.
+        let padX = Double(width) * 0.03
+        let padY = Double(height) * 0.035
         let rect = CGRect(x: (Double(left) - padX) / Double(width),
                           y: (Double(top) - padY) / Double(height),
                           width: (Double(right - left + 1) + 2 * padX) / Double(width),
@@ -234,6 +235,16 @@ enum PageCropSuggestion {
         // Mindre än tre procent att vinna åt båda hållen: inget förslag.
         guard crop.rect.width < 0.97 || crop.rect.height < 0.97 else { return nil }
         return crop
+    }
+
+    /// Ramen som rymmer alla förslagen (texten på flera sidor), eller nil utan förslag.
+    static func union(_ crops: [PageCrop]) -> PageCrop? {
+        guard var rect = crops.first?.rect else { return nil }
+        for crop in crops.dropFirst() {
+            rect = rect.union(crop.rect)
+        }
+        let crop = PageCrop(rect: rect).clamped()
+        return crop.isFull ? nil : crop
     }
 }
 
@@ -363,27 +374,50 @@ final class PageCropViewController: UIViewController {
     }
 
     @objc private func suggestTapped() {
-        guard let image = image else { return }
-        spinner.startAnimating()
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let suggestion = PageCropSuggestion.suggest(from: image)
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.spinner.stopAnimating()
-                if let suggestion = suggestion {
-                    self.setCrop(suggestion)
-                } else {
-                    self.hint.text = "Hittade ingen tydlig marginal att ta bort. Dra ramen för hand."
-                    self.view.setNeedsLayout()
-                }
+        requestSuggestion { [weak self] suggestion in
+            guard let self = self else { return }
+            if let suggestion = suggestion {
+                self.setCrop(suggestion)
+            } else {
+                self.hint.text = "Hittade ingen tydlig marginal att ta bort. Dra ramen för hand."
+                self.view.setNeedsLayout()
             }
         }
     }
 
-    /// Självtestet: förslaget för sidan som visas, räknat på samma sätt som Föreslå.
-    func suggestion() -> PageCrop? {
-        image.flatMap { PageCropSuggestion.suggest(from: $0) }
+    /// Förslaget för flera sidor runt den man läser (läsarens `suggestPages`), så att ramen inte skär bort text
+    /// på en sida med längre rader än den som visas. Utan den bara sidan i rutan. Svarar på huvudtråden.
+    func requestSuggestion(_ completion: @escaping (PageCrop?) -> Void) {
+        spinner.startAnimating()
+        var answered = false
+        let finish: (PageCrop?) -> Void = { [weak self] crop in
+            guard !answered else { return }
+            answered = true
+            self?.spinner.stopAnimating()
+            completion(crop)
+        }
+        // En sida som inte hann ritas får inte lämna snurran kvar.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+            finish(nil)
+        }
+        if let suggestPages = suggestPages {
+            suggestPages(finish)
+            return
+        }
+        guard let image = image else {
+            finish(nil)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let suggestion = PageCropSuggestion.suggest(from: image)
+            DispatchQueue.main.async {
+                finish(suggestion)
+            }
+        }
     }
+
+    /// Läsaren: förslaget över flera sidor (se `requestSuggestion`).
+    var suggestPages: ((@escaping (PageCrop?) -> Void) -> Void)?
 
     var hasImage: Bool {
         image != nil
