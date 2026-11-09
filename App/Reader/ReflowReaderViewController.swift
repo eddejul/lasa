@@ -1894,6 +1894,7 @@ extension ReflowReaderViewController {
         logState("Liggande")
         SelfTest.saveScreen(view, name: "11-liggande")
         selfTestChromeCoverage("liggande")
+        await selfTestQuestionsInSpread()
         turn(forward: true)
         await pause(1.5)
         _ = await waitUntilShown()
@@ -3126,5 +3127,37 @@ extension ReflowReaderViewController {
         }
         dismiss(animated: false)
         await pause(0.4)
+    }
+}
+
+
+extension ReflowReaderViewController {
+
+    /// Självtestet (K6): prickarna i ett uppslag står i den yttre marginalen, till vänster på vänstersidan.
+    fileprivate func selfTestQuestionsInSpread() async {
+        guard BookQuestionFile.url(for: book) != nil, let questions = questions else { return }
+        QuestionsSetting.isEnabled = true
+        for _ in 0..<40 where !questions.isLocated {
+            await pause(0.2)
+        }
+        if let target = questions.questions.first(where: { questions.place(of: $0.id) != nil }),
+           let place = questions.place(of: target.id) {
+            reveal(chapter: place.section, body: "return lasaMarks.reveal(start, length);",
+                   arguments: ["start": place.start, "length": place.length])
+            await pause(1.5)
+            _ = await waitUntilShown()
+            for _ in 0..<30 where visiblePages.map(\.questionDotCount).reduce(0, +) == 0 {
+                await pause(0.2)
+            }
+            let report = visiblePages.compactMap { page -> String? in
+                guard let rect = page.questionDotRect(id: target.id) else { return nil }
+                let side = page.side == .left ? "vänstersidan" : (page.side == .right ? "högersidan" : "en sida")
+                return "\(side), x \(Int(rect.midX)) av \(Int(page.view.bounds.width))"
+            }
+            SelfTest.log("Frågor (K6) i uppslag: fråga \(target.number) på " + (report.isEmpty ? "ingen prick" : report.joined(separator: ", ")))
+            SelfTest.saveScreen(view, name: "11b-liggande-fragor")
+        }
+        QuestionsSetting.isEnabled = false
+        await pause(1.0)
     }
 }
