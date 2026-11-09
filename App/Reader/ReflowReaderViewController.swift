@@ -2264,6 +2264,15 @@ extension ReflowReaderViewController {
             CitationViewController.present(book: self.book, text: current.text, page: nil,
                                            from: self, sourceView: self.view, sourceRect: anchor)
         }
+        menu.onExplain = { [weak self] in
+            // A1: stycket där markeringen ligger, ur kapitlets fil.
+            guard let self = self, let current = AnnotationStore.shared.highlight(id: id),
+                  let content = self.content, current.section >= 0, current.section < content.chapters.count else { return }
+            PassageExplain.present(highlight: current, book: self.book, chapter: self.chapterName(current.section),
+                                   source: .chapter(content.chapters[current.section].url), from: self,
+                                   sourceView: self.view, sourceRect: anchor,
+                                   onSaved: { [weak self] in self?.reloadMarks(inChapter: current.section) })
+        }
         lastMarkMenuAnchor = anchor
         HighlightMenuViewController.present(menu, from: self, sourceView: view, sourceRect: anchor)
     }

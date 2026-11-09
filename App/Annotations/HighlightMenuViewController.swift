@@ -15,6 +15,8 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
     var onCite: (() -> Void)?
     /// K8: gör markeringen till ett begrepp i bokens register.
     var onConcept: (() -> Void)?
+    /// A1: Förklara stycket med AI. Läsaren visar rutan med förklaringen.
+    var onExplain: (() -> Void)?
 
     private let highlight: Highlight
     private var colorButtons: [HighlightColor: UIButton] = [:]
@@ -39,7 +41,8 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
                         from presenter: UIViewController,
                         sourceView: UIView,
                         sourceRect: CGRect) {
-        menu.compact = presenter.view.bounds.width < 470
+        // Sju knappar och färgerna ryms på en rad från cirka 700 punkter (iPad stående), annars två rader.
+        menu.compact = presenter.view.bounds.width < 700
         menu.loadViewIfNeeded()
         let height = menu.preferredContentSize.height + 24
         let bounds = sourceView.bounds
@@ -144,6 +147,12 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
                 self?.onLookUp?()
             }
         }
+        let explain = actionButton("Förklara", symbol: "sparkles", color: palette.ink) { [weak self] in
+            self?.dismiss(animated: true) {
+                self?.onExplain?()
+            }
+        }
+        explain.accessibilityLabel = "Förklara stycket med AI"
         let trash = actionButton("Ta bort", symbol: "trash", color: palette.ribbon) { [weak self] in
             self?.dismiss(animated: true) {
                 self?.onDelete?()
@@ -160,11 +169,24 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
         if onLookUp != nil {
             actionViews.append(lookUp)
         }
+        if onExplain != nil {
+            actionViews.append(explain)
+        }
         actionViews.append(trash)
-        let actions = UIStackView(arrangedSubviews: actionViews)
-        actions.axis = .horizontal
-        actions.spacing = 2
-        actions.distribution = .fillEqually
+        let actions = UIStackView()
+        actions.axis = .vertical
+        actions.spacing = 4
+        // I två rader (smal vy) delas fler än fem knappar på två rader, så att raden inte blir bredare än skärmen.
+        let perRow = compact && actionViews.count > 5 ? (actionViews.count + 1) / 2 : actionViews.count
+        var start = 0
+        while start < actionViews.count {
+            let line = UIStackView(arrangedSubviews: Array(actionViews[start..<min(start + perRow, actionViews.count)]))
+            line.axis = .horizontal
+            line.spacing = 2
+            line.distribution = .fillEqually
+            actions.addArrangedSubview(line)
+            start += perRow
+        }
 
         let divider = UIView()
         divider.backgroundColor = palette.rule
@@ -198,7 +220,8 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
         if highlight.hasNote {
             // Anteckningen i en rad under, så att man ser den utan att öppna den.
             let label = UILabel()
-            label.text = highlight.note
+            // Raderna i en rad, så att två rader räcker även för en förklaring med AI (A1) med tomrader.
+            label.text = highlight.note.split(whereSeparator: \.isNewline).joined(separator: " ")
             label.numberOfLines = 2
             label.font = .preferredFont(forTextStyle: .footnote)
             label.textColor = palette.inkSoft

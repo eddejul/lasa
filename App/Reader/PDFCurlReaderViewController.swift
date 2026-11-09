@@ -1761,6 +1761,13 @@ extension PDFCurlReaderViewController {
                                            onSetPages: { [weak self] in self?.showBookPages() },
                                            from: self, sourceView: self.view, sourceRect: anchor)
         }
+        menu.onExplain = { [weak self] in
+            // A1: meningarna runt markeringen på sidan, ur ett eget dokument i bakgrunden.
+            guard let self = self, let current = AnnotationStore.shared.highlight(id: id) else { return }
+            PassageExplain.present(highlight: current, book: self.book, chapter: self.chapterTitle(for: current.section),
+                                   source: .pdf(self.book.url), from: self, sourceView: self.view, sourceRect: anchor,
+                                   onSaved: { [weak self] in self?.refreshMarks(onPage: current.section) })
+        }
         lastMarkMenuAnchor = anchor
         HighlightMenuViewController.present(menu, from: self, sourceView: view, sourceRect: anchor)
     }

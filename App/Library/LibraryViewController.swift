@@ -506,6 +506,14 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         }
         SelfTest.log("Bokregistret: \(BookRegistry.shared.records().count) böcker, "
                      + "biblioteket visar \(books.count): \(books.map(\.path).joined(separator: ", "))")
+        if name == AISelfTest.name {
+            // A1 och U7: Förklara stycket och nyckelguiden mot en låtsas-Gemini.
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                await AISelfTest.run(from: self)
+            }
+            return
+        }
         if name == SelfTest.fas6Name {
             // Fas 6 utan bok: repetition, inställningar, AI-svaret och synken mot en låtsasserver.
             Task { @MainActor [weak self] in

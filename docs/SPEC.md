@@ -276,6 +276,11 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Begrepp (K8, första versionen):** knappen Begrepp i markeringsraden gör en term med definition (anteckningen eller markeringen som förslag). Mer, Begrepp listar bokens begrepp, och ett tryck söker efter termen i boken. Ingen karta.
 * Databasen: steg 6 `book_info`, 7 `reading_log`, 8 `page_notes`, 9 `concepts` i markeringar.sqlite. Färgernas namn och dagsmålet i `meta`. Allt följer med i säkerhetskopian. Ingen synk, inget i Windows-appen.
 
+### 6.15 Våg 8b, AI (9 november 2026)
+
+* **Förklara stycket (A1):** knappen Förklara i markeringsraden. Stycket där markeringen ligger (EPUB och text) eller meningen med två före och två efter (PDF), högst 2 400 tecken, skickas med bokens titel och kapitlets rubrik, aldrig hela kapitel. Svaret på svenska: kärnan på vanlig svenska, nyckelbegreppen med kort definition, ett eget exempel och en kontrollfråga (svaret bakom Visa svaret). Det sparas som anteckning på markeringen, under en egen anteckning om det finns en. Samma fråga hämtas aldrig två gånger (sparade svar i `ai-svar.sqlite`), rutan visar dagens anrop, och saknad nyckel, fel nyckel, kvot slut för dagen (fylls på vid midnatt i Kalifornien, klockan 9 svensk tid) eller minuten och inget nät ger begripliga besked. Knappen syns även utan nyckel, då leder rutan till guiden.
+* **AI-nyckeln steg för steg (U7):** Inställningar har en rad Förklaring med AI med läget i färg (inte uppsatt, inte provad, fungerar, fel). Guiden: Öppna Google AI Studio (sidan API keys i Safari i appen), Klistra in nyckeln (eller skriv in den), appen provar nyckeln med ett anrop som inte drar av kvoten för svar (models.get) och visar en grön bock eller vad som är fel. En nyckel som Google underkänner sparas inte. Modellen och dagens anrop ligger i guiden. Synkens rader är orörda (F1 bygger om synken).
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.
