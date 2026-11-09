@@ -281,6 +281,10 @@ Byggd 7 november 2026 på grenen `fas6`.
 * **Förklara stycket (A1):** knappen Förklara i markeringsraden. Stycket där markeringen ligger (EPUB och text) eller meningen med två före och två efter (PDF), högst 2 400 tecken, skickas med bokens titel och kapitlets rubrik, aldrig hela kapitel. Svaret på svenska: kärnan på vanlig svenska, nyckelbegreppen med kort definition, ett eget exempel och en kontrollfråga (svaret bakom Visa svaret). Det sparas som anteckning på markeringen, under en egen anteckning om det finns en. Samma fråga hämtas aldrig två gånger (sparade svar i `ai-svar.sqlite`), rutan visar dagens anrop, och saknad nyckel, fel nyckel, kvot slut för dagen (fylls på vid midnatt i Kalifornien, klockan 9 svensk tid) eller minuten och inget nät ger begripliga besked. Knappen syns även utan nyckel, då leder rutan till guiden.
 * **AI-nyckeln steg för steg (U7):** Inställningar har en rad Förklaring med AI med läget i färg (inte uppsatt, inte provad, fungerar, fel). Guiden: Öppna Google AI Studio (sidan API keys i Safari i appen), Klistra in nyckeln (eller skriv in den), appen provar nyckeln med ett anrop som inte drar av kvoten för svar (models.get) och visar en grön bock eller vad som är fel. En nyckel som Google underkänner sparas inte. Modellen och dagens anrop ligger i guiden. Synkens rader är orörda (F1 bygger om synken).
 
+### 6.15 Våg 8a, studiet (9 november 2026)
+
+* **Frågor i marginalen (K6):** en frågefil bredvid boken (`Bok.pdf.fragor.json`, formatet i `docs/FRAGOR.md`) ger en liten numrerad prick i marginalen vid varje frågas citat, också i smala marginaler och uppslag. Tryck visar frågan, Visa svaret visar svaret, och Kan, Osäker och Kan inte sparas (steg 10) och färgar pricken. Innehåll får fliken Frågor (hopp till stället, eller Välj frågefil). Av och på i Aa, från början av: avstängt ser läsaren ut som förut. Fotade sidor utan text får pricken på sidan och höjden i filen.
+
 ## 7. Bygge och installation
 
 1. Claude Code skriver koden på Windows och pushar till `main`.

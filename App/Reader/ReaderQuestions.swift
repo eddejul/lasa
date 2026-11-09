@@ -133,6 +133,9 @@ final class ReaderQuestions {
     private(set) var problem: String?
     /// Sant när citaten har letats upp (eller när det inte finns någon fil).
     private(set) var isLocated = false
+    /// Räknas upp när platserna har ändrats (inte när ett svar sparas), så att EPUB-läsaren vet när citaten
+    /// måste läggas in i webbvyn igen.
+    private(set) var placesVersion = 0
     /// Anropas när frågorna eller svaren har ändrats, så att läsaren ritar om prickarna.
     var onChange: (() -> Void)?
     private var task: Task<Void, Never>?
@@ -153,11 +156,6 @@ final class ReaderQuestions {
         })
     }
 
-    deinit {
-        observers.forEach(NotificationCenter.default.removeObserver)
-        task?.cancel()
-    }
-
     /// Prickarna syns: inställningen är på och boken har frågor.
     var showsDots: Bool {
         QuestionsSetting.isEnabled && !questions.isEmpty
@@ -173,6 +171,7 @@ final class ReaderQuestions {
         guard let url = fileURL else {
             questions = []
             places = [:]
+            placesVersion += 1
             isLocated = true
             onChange?()
             return
@@ -189,6 +188,7 @@ final class ReaderQuestions {
         let isPDF = chapterTitles.isEmpty
         guard !list.isEmpty else {
             places = [:]
+            placesVersion += 1
             isLocated = true
             onChange?()
             return
@@ -208,6 +208,7 @@ final class ReaderQuestions {
                 }
             }
             self.places = found
+            self.placesVersion += 1
             self.isLocated = true
             AppLog.shared.write("Frågor (K6): \(found.count) av \(list.count) placerade på "
                                 + "\(Int((CACurrentMediaTime() - started) * 1000)) ms")

@@ -62,6 +62,11 @@ final class PDFCurlReaderViewController: UIViewController {
     private var lastMarkMenuAnchor: CGRect?
     /// K12: anteckningarna bredvid texten, när panelen är framme.
     fileprivate var sideNotes: SideNotesPanel?
+    /// K6: bokens frågor i marginalen, citatens rutor per sida (räknade på renderingskön) och trycket på en prick.
+    fileprivate var questions: ReaderQuestions?
+    fileprivate var questionTap: UITapGestureRecognizer?
+    fileprivate var questionRects: [Int: [String: CGRect]] = [:]
+    fileprivate var questionRectsInFlight = Set<Int>()
     /// D4-1: bokens sida för filens första sida enligt tryckta sidnummer i textlagret, bara ett förslag.
     fileprivate var printedPageSuggestion: (first: Int, votes: Int)?
     /// Bubblan ovanför fingret när ett ord hålls (G12, gemensam med den andra läsaren).
@@ -185,6 +190,7 @@ final class PDFCurlReaderViewController: UIViewController {
         setUpBottomBar()
         setUpBackStack()
         setUpTaps()
+        setUpQuestions()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -854,7 +860,8 @@ final class PDFCurlReaderViewController: UIViewController {
         }
         let container = ReaderContentsContainerViewController(contents: outline,
                                                              annotations: makeAnnotationsList(),
-                                                             initial: 0)
+                                                             initial: 0,
+                                                             questions: makeQuestionsList())
         let navigation = UINavigationController(rootViewController: container)
         navigation.modalPresentationStyle = .popover
         navigation.popoverPresentationController?.barButtonItem = contentsItem
@@ -1337,6 +1344,14 @@ extension PDFCurlReaderViewController: UIGestureRecognizerDelegate {
         if gestureRecognizer === markDrag {
             return markMode
         }
+        // K6: en frågeprick i marginalen går före bandet, länkarna, markeringarna och kanttrycket som bläddrar.
+        let onQuestion = !markMode && questionHit(at: touch.location(in: view)) != nil
+        if gestureRecognizer === questionTap {
+            return onQuestion
+        }
+        if onQuestion {
+            return false
+        }
         // Bandet i hörnet (U3) går före kanttrycket som bläddrar och före menyn.
         let onRibbon = !markMode && ribbonPage(at: touch.location(in: view)) != nil
         if gestureRecognizer === ribbonTap {
@@ -1478,6 +1493,7 @@ extension PDFCurlReaderViewController {
         page.pdfPage = document.page(at: page.pageIndex)
         page.setMarks(marks(forPage: page.pageIndex), dark: theme.isDark)
         applyWordMarks(to: page)
+        applyQuestions(to: page)
         page.isBookmarked = bookmarkedPages.contains(page.pageIndex)
         page.showsRibbonHint = !chromeHidden
         loadLinks(onPage: page.pageIndex)
@@ -2395,6 +2411,9 @@ extension PDFCurlReaderViewController {
         await pause(0.4)
 
         await selfTestStudy()
+        if BookQuestionFile.url(for: book) != nil {
+            await selfTestQuestions()
+        }
         await selfTestFoldWork()
         await selfTestResumeCard()
 
@@ -2666,5 +2685,197 @@ extension PDFCurlReaderViewController {
                      + "och \(skippedWordProbes) överhoppade på 12 rörelser" + (wordProbes > 2 ? " FEL" : ""))
         wordBubble.hide()
         clearPressedWord()
+    }
+}
+
+// MARK: Frågor i marginalen (K6)
+
+extension PDFCurlReaderViewController {
+
+    fileprivate func setUpQuestions() {
+        let questions = ReaderQuestions(book: book, bookKey: bookKey)
+        questions.onChange = { [weak self] in
+            self?.questionsChanged()
+        }
+        self.questions = questions
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleQuestionTap(_:)))
+        tap.delegate = self
+        view.addGestureRecognizer(tap)
+        questionTap = tap
+        NotificationCenter.default.addObserver(self, selector: #selector(questionsSettingChanged),
+                                               name: QuestionsSetting.didChange, object: nil)
+        if QuestionsSetting.isEnabled {
+            loadQuestions()
+        }
+    }
+
+    /// Läser frågefilen och letar upp citaten i bakgrunden med sökningens eget dokument.
+    fileprivate func loadQuestions() {
+        questionRects.removeAll()
+        questionRectsInFlight.removeAll()
+        questions?.load(search: bookSearch, chapterTitles: [], sectionCount: renderer.pageCount)
+    }
+
+    @objc fileprivate func questionsSettingChanged() {
+        if QuestionsSetting.isEnabled {
+            loadQuestions()
+        } else {
+            questionsChanged()
+        }
+    }
+
+    fileprivate func questionsChanged() {
+        for page in visiblePages where !page.isBlank {
+            applyQuestions(to: page)
+        }
+    }
+
+    /// Prickarna på en sida. Citatens rutor räknas på renderingskön första gången sidan visas, aldrig här.
+    fileprivate func applyQuestions(to page: PDFPageViewController) {
+        guard let questions = questions, questions.showsDots, !page.isBlank else {
+            page.setQuestionDots([])
+            return
+        }
+        let index = page.pageIndex
+        let here = questions.questions(inSection: index)
+        let rects = questionRects[index] ?? [:]
+        page.setQuestionDots(here.compactMap { question in
+            guard let place = questions.place(of: question.id), let info = questions.info(for: question.id) else {
+                return nil
+            }
+            if place.length > 0 {
+                guard let rect = rects[question.id] else { return nil }
+                return PDFPageViewController.QuestionDot(id: question.id, number: info.number, status: info.status,
+                                                         pageRect: rect, fraction: 0)
+            }
+            return PDFPageViewController.QuestionDot(id: question.id, number: info.number, status: info.status,
+                                                     pageRect: nil, fraction: place.y ?? 0.08)
+        })
+        let missing = here.filter { (questions.place(of: $0.id)?.length ?? 0) > 0 }
+        guard questionRects[index] == nil, !missing.isEmpty, questionRectsInFlight.insert(index).inserted else { return }
+        let ranges = missing.compactMap { question in
+            questions.place(of: question.id).map { NSRange(location: $0.start, length: $0.length) }
+        }
+        renderer.rects(onPage: index, ranges: ranges) { [weak self] result in
+            guard let self = self, self.questionRectsInFlight.remove(index) != nil else { return }
+            var found: [String: CGRect] = [:]
+            for (question, list) in zip(missing, result) {
+                if let first = list.first {
+                    found[question.id] = first
+                }
+            }
+            self.questionRects[index] = found
+            for shown in self.visiblePages where shown.pageIndex == index {
+                self.applyQuestions(to: shown)
+            }
+        }
+    }
+
+    fileprivate func questionHit(at point: CGPoint) -> (page: PDFPageViewController, id: String)? {
+        guard questions?.showsDots == true else { return nil }
+        for page in visiblePages where !page.isBlank {
+            let local = page.view.convert(point, from: view)
+            if page.view.bounds.contains(local), let id = page.questionID(at: local) {
+                return (page, id)
+            }
+        }
+        return nil
+    }
+
+    @objc fileprivate func handleQuestionTap(_ tap: UITapGestureRecognizer) {
+        guard let hit = questionHit(at: tap.location(in: view)) else { return }
+        showQuestion(hit.id, on: hit.page)
+    }
+
+    fileprivate func showQuestion(_ id: String, on page: PDFPageViewController) {
+        let rect = page.questionDotRect(id: id).map { view.convert($0, from: page.view) }
+            ?? CGRect(x: view.bounds.midX, y: 120, width: 2, height: 2)
+        questions?.presentCard(for: id, from: self, sourceView: view, sourceRect: rect)
+    }
+
+    /// Fliken Frågor i Innehåll, bara när frågorna är påslagna.
+    fileprivate func makeQuestionsList() -> UIViewController? {
+        guard QuestionsSetting.isEnabled, let questions = questions else { return nil }
+        return questions.makeList(placeLabel: { [weak self] place in
+            self?.placeLabel(place.section) ?? "s. \(place.section + 1)"
+        }, onSelect: { [weak self] _, place in
+            guard let self = self else { return }
+            self.dismiss(animated: true)
+            self.hop(to: place.section)
+            if place.length > 0 {
+                self.flash(NSRange(location: place.start, length: place.length), onPage: place.section)
+            }
+        })
+    }
+
+    /// Självtestet (K6): frågefilen bredvid test.pdf, prickarna, rutan och svaret i databasen.
+    fileprivate func selfTestQuestions() async {
+        let wasEnabled = QuestionsSetting.isEnabled
+        QuestionsSetting.isEnabled = true
+        for _ in 0..<40 where questions?.isLocated != true {
+            await pause(0.2)
+        }
+        guard let questions = questions else { return }
+        let placed = questions.questions.filter { questions.place(of: $0.id) != nil }
+        let where_ = placed.map { "\($0.number) på sida \((questions.place(of: $0.id)?.section ?? -1) + 1)" }
+        SelfTest.log("Frågor (K6): fil \(questions.fileURL?.lastPathComponent ?? "saknas"), \(questions.questions.count) frågor, "
+                     + "\(placed.count) placerade: " + where_.joined(separator: ", "))
+        let listed = LibraryStore.shared.allBooks().filter { BookQuestionFile.isQuestionFile($0.url.lastPathComponent) }
+        SelfTest.log("Frågor (K6): frågefiler i biblioteket \(listed.count) (ska vara 0)")
+        guard let first = placed.first, let place = questions.place(of: first.id) else {
+            SelfTest.log("FEL: ingen fråga placerad (K6)")
+            QuestionsSetting.isEnabled = wasEnabled
+            return
+        }
+        hop(to: place.section)
+        _ = await waitForImages()
+        for _ in 0..<20 where (visiblePages.first { $0.pageIndex == place.section }?.questionDotCount ?? 0) == 0 {
+            await pause(0.2)
+        }
+        let page = visiblePages.first { $0.pageIndex == place.section }
+        let dotText = page?.questionDotRect(id: first.id).map { "\(Int($0.midX)),\(Int($0.midY))" } ?? "ingen"
+        SelfTest.log("Frågor (K6): \(page?.questionDotCount ?? 0) prickar på sidan \(place.section + 1), pricken vid \(dotText)")
+        SelfTest.saveScreen(view, name: "13-fragor")
+        if let page = page, let rect = page.questionDotRect(id: first.id) {
+            let point = view.convert(CGPoint(x: rect.midX, y: rect.midY), from: page.view)
+            SelfTest.log("Frågor (K6): trycket på pricken hittar \(questionHit(at: point)?.id ?? "ingen fråga")")
+            showQuestion(first.id, on: page)
+            await pause(0.9)
+            if let navigation = presentedViewController as? UINavigationController,
+               let card = navigation.viewControllers.first as? QuestionCardViewController {
+                SelfTest.saveScreen(navigation.view, name: "13b-fraga")
+                card.revealAnswer()
+                await pause(0.4)
+                SelfTest.saveScreen(navigation.view, name: "13c-svar")
+                card.choose(.unsure)
+                await pause(0.3)
+                let saved = QuestionStore.shared.statuses(book: bookKey)[first.id]?.title ?? "inget"
+                SelfTest.log("Frågor (K6): svaret syns \(card.showsAnswer), sparat \(saved)")
+            } else {
+                SelfTest.log("FEL: rutan med frågan öppnades inte")
+            }
+            await dismissPresented()
+            await pause(0.4)
+            SelfTest.saveScreen(view, name: "13d-osaker")
+        }
+        // Fliken Frågor i Innehåll.
+        showContents()
+        await pause(0.8)
+        if let navigation = presentedViewController as? UINavigationController,
+           let container = navigation.viewControllers.first as? ReaderContentsContainerViewController {
+            container.showTab(3)
+            await pause(0.5)
+            SelfTest.log("Frågor (K6): flikar i Innehåll \(container.tabCount), rader i Frågor \(container.questionRowCount)")
+            SelfTest.saveScreen(navigation.view, name: "13e-flik")
+        } else {
+            SelfTest.log("FEL: Innehåll öppnades inte (K6)")
+        }
+        await dismissPresented()
+        // Avstängt: inga prickar, som förut.
+        QuestionsSetting.isEnabled = false
+        await pause(0.4)
+        let left = visiblePages.map(\.questionDotCount).reduce(0, +)
+        SelfTest.log("Frågor (K6): avstängt ger \(left) prickar (ska vara 0)")
+        QuestionsSetting.isEnabled = wasEnabled
     }
 }

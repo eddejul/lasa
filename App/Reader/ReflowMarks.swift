@@ -670,6 +670,14 @@ enum ReflowMarks {
             out.push({ id: id, x: r.left, y: r.top, w: r.width, h: r.height });
           }
         }
+        // K6: finns ett citat till en fråga på sidan följer textens kolumn med, så att pricken hamnar i marginalen.
+        for (var q = 0; q < out.length; q++) {
+          if (out[q].id && out[q].id.indexOf('fraga:') === 0) {
+            var side = parseFloat(getComputedStyle(root).paddingLeft) || 0;
+            out.push({ id: 'fraga-kolumn', x: side, y: 0, w: Math.max(1, w - 2 * side), h: h });
+            break;
+          }
+        }
         return out;
       }
 

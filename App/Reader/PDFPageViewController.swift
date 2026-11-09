@@ -76,6 +76,17 @@ final class PDFPageViewController: UIViewController {
         }
     }
     private var wordMarks: [WordMark] = []
+    /// K6: en frågeprick i marginalen. `pageRect` är citatets första rad i sidans koordinater, eller nil för en
+    /// fotad sida utan text, där pricken står på `fraction` av sidans höjd (0 överst).
+    struct QuestionDot: Equatable {
+        let id: String
+        let number: Int
+        let status: QuestionStatus?
+        let pageRect: CGRect?
+        let fraction: Double
+    }
+    private var questionDots: [QuestionDot] = []
+    private var questionFrames: [String: CGRect] = [:]
     private var darkMarks = false
     private let marksView = UIView()
     private let ribbon = UIImageView(image: UIImage(systemName: "bookmark.fill"))
@@ -188,6 +199,31 @@ final class PDFPageViewController: UIViewController {
         wordMarks.count
     }
 
+    /// K6: prickarna i marginalen. Ritas som vyer ovanpå bladet, som markeringarna.
+    func setQuestionDots(_ dots: [QuestionDot]) {
+        guard dots != questionDots else { return }
+        questionDots = dots
+        overlaysDirty = true
+        if isViewLoaded {
+            view.setNeedsLayout()
+        }
+    }
+
+    /// Frågan vars prick ligger under en punkt i bladet, med lite marginal runt den lilla pricken.
+    func questionID(at point: CGPoint) -> String? {
+        questionFrames.first { $0.value.insetBy(dx: -10, dy: -10).contains(point) }?.key
+    }
+
+    /// Prickens ruta i bladet, till rutans pil.
+    func questionDotRect(id: String) -> CGRect? {
+        questionFrames[id]
+    }
+
+    /// Antalet prickar som ritats, till självtestet.
+    var questionDotCount: Int {
+        questionFrames.count
+    }
+
     /// En ruta i sidans koordinater omräknad till bladet, när sidbilden finns.
     func viewRect(forPageRect rect: CGRect) -> CGRect? {
         guard let frame = imageFrame, let page = pdfPage else { return nil }
@@ -257,9 +293,20 @@ final class PDFPageViewController: UIViewController {
         overlayFrame = frame
         marksView.frame = view.bounds
         marksView.subviews.forEach { $0.removeFromSuperview() }
+        questionFrames = [:]
         guard !frame.isNull, let page = pdfPage else {
             ribbon.isHidden = true
             return
+        }
+        if !questionDots.isEmpty {
+            let placements = questionDots.map { dot -> QuestionDotPlacement in
+                let y = dot.pageRect.map { PDFPageGeometry.viewRect(for: $0, imageFrame: frame, page: page).midY }
+                    ?? frame.minY + frame.height * CGFloat(dot.fraction)
+                return QuestionDotPlacement(id: dot.id, number: dot.number, status: dot.status, anchorY: y)
+            }
+            questionFrames = QuestionDotView.layout(placements, in: marksView, contentMinX: frame.minX,
+                                                    contentMaxX: frame.maxX, top: frame.minY, bottom: frame.maxY,
+                                                    outerIsLeft: side == .left)
         }
         for mark in marks {
             for rect in mark.rects {
