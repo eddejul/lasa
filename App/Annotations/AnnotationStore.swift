@@ -605,12 +605,20 @@ extension AnnotationStore {
         return result
     }
 
-    /// Sparar en markering från en annan enhet med dess egna tider.
+    /// Sparar en markering från en annan enhet med dess egna tider. Ingen `INSERT OR REPLACE`: den tar bort raden
+    /// först, och då skulle kolumner som synken inte känner till bli tomma (F1). Rutorna på sidan (G6) räknas om
+    /// bara när platsen ändrats.
     func applySynced(_ highlight: Highlight, deleted: Bool) {
         write("markeringen från synken") { db in
             try db.execute("""
-                INSERT OR REPLACE INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
+                INSERT INTO highlights (id, book, section, start, length, text, color, note, created, updated, deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    rects = CASE WHEN highlights.section = excluded.section AND highlights.start = excluded.start
+                                  AND highlights.length = excluded.length THEN highlights.rects ELSE '' END,
+                    book = excluded.book, section = excluded.section, start = excluded.start,
+                    length = excluded.length, text = excluded.text, color = excluded.color, note = excluded.note,
+                    created = excluded.created, updated = excluded.updated, deleted = excluded.deleted
                 """, [highlight.id, highlight.book, highlight.section, highlight.start, highlight.length, highlight.text,
                       highlight.color.rawValue, highlight.note, highlight.created.timeIntervalSince1970,
                       highlight.updated.timeIntervalSince1970, deleted ? 1 : 0])
@@ -634,8 +642,12 @@ extension AnnotationStore {
     func applySynced(_ bookmark: Bookmark, deleted: Bool) {
         write("bokmärket från synken") { db in
             try db.execute("""
-                INSERT OR REPLACE INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
+                INSERT INTO bookmarks (id, book, section, progression, label, created, updated, deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    book = excluded.book, section = excluded.section, progression = excluded.progression,
+                    label = excluded.label, created = excluded.created, updated = excluded.updated,
+                    deleted = excluded.deleted
                 """, [bookmark.id, bookmark.book, bookmark.section, bookmark.progression, bookmark.label,
                       bookmark.created.timeIntervalSince1970, bookmark.updated.timeIntervalSince1970, deleted ? 1 : 0])
         }

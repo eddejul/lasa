@@ -76,51 +76,70 @@ for BOOK in test.epub test.md test.txt test.rtf test.pdf foto.pdf; do
   sleep 2
 done
 
-# Fas 6 utan bok: repetition, inställningar, AI-svaret och synken mot en låtsas-Supabase.
+# Fas 6 utan bok: repetition, inställningar, AI-svaret och synken (F1) via en vanlig mapp i stället för
+# iCloud Drive. Mappen får en fil från en påhittad Windows-dator i samma format som windows/src/js/sync.js
+# skriver, och tre filer som ska hoppas över: en trasig (halvt hämtad), en tom och en från en nyare version.
 echo "== fas6"
 EPUB_ID=$(shasum -a 256 "$BOOKS/test.epub" | cut -d' ' -f1)
-cat > build/mock_seed.json << SEED
+SYNC="$DATA/Documents/Synkprov/Sensus synk"
+rm -rf "$DATA/Documents/Synkprov"
+mkdir -p "$SYNC"
+cat > "$SYNC/windows-prov.json" << SEED
 {
+  "format": 1, "app": "Sensus",
+  "device": {"id": "windows-prov", "name": "Datorn", "platform": "windows"},
+  "written_at": "2030-01-01T10:00:01.000Z",
   "positions": [{"book_id": "$EPUB_ID", "title": "test", "kind": "reflow", "section": 4, "progression": 0.25,
-                 "updated_at": "2030-01-01T10:00:00.123456+00:00"}],
+                 "updated_at": "2030-01-01T10:00:00.123Z"}],
   "highlights": [{"id": "6f1c2d3e-0000-4000-8000-00000000abcd", "book_id": "$EPUB_ID", "section": 1, "start": 5,
-                  "length": 12, "text": "från servern", "color": "pink", "note": "", "deleted": false,
-                  "created_at": "2030-01-01T10:00:00+00:00", "updated_at": "2030-01-01T10:00:00.5+00:00"}],
+                  "length": 12, "text": "från Windows", "color": "pink", "note": "", "deleted": false,
+                  "created_at": "2030-01-01T10:00:00.000Z", "updated_at": "2030-01-01T10:00:00.500Z"},
+                 {"id": "7a000000-0000-4000-8000-0000000000ff", "book_id": "0000000000000000000000000000000000000000000000000000000000000000",
+                  "section": 0, "start": 0, "length": 4, "text": "bok som inte finns här", "color": "blue", "note": "",
+                  "deleted": false, "created_at": "2030-01-01T10:00:00.000Z", "updated_at": "2030-01-01T10:00:00.000Z"},
+                 {"id": "", "book_id": "trasig rad"}],
   "bookmarks": [],
-  "saved_words": [{"lemma": "fjärrord", "language": "sv", "word": "fjärrord", "sentence": "Ett ord från servern.",
+  "saved_words": [{"lemma": "fjärrord", "language": "sv", "word": "fjärrord", "sentence": "Ett ord från datorn.",
                    "book": "Windows", "page": 0, "lookups": 1, "deleted": false, "due": null, "interval": null,
                    "ease": null, "reps": null, "lapses": null, "review_updated_at": null,
-                   "created_at": "2030-01-01T10:00:00+00:00", "updated_at": "2030-01-01T10:00:00+00:00"}]
+                   "created_at": "2030-01-01T10:00:00.000Z", "updated_at": "2030-01-01T10:00:00.000Z"}],
+  "framtida_falt": {"ignoreras": true}
 }
 SEED
-python3 tools/simtest/mock_supabase.py 54321 build/mock_seed.json "$OUT/mock-supabase.json" &
-MOCK=$!
-sleep 1
+printf '{"format": 1, "device": {"id": "trasig", "name": "Halvt hä' > "$SYNC/trasig.json"
+: > "$SYNC/tom.json"
+printf '{"format": 99, "device": {"id": "framtid", "name": "Ny version"}, "positions": []}' > "$SYNC/framtid.json"
 rm -f "$DATA/Documents/selftest/fas6.klar"
-xcrun simctl launch "$UDID" "$BUNDLE" -LasaSelfTest fas6 -LasaSyncURL http://127.0.0.1:54321
+xcrun simctl launch "$UDID" "$BUNDLE" -LasaSelfTest fas6
 waited=0
-while [ ! -f "$DATA/Documents/selftest/fas6.klar" ] && [ $waited -lt 180 ]; do
+while [ ! -f "$DATA/Documents/selftest/fas6.klar" ] && [ $waited -lt 240 ]; do
   sleep 5
   waited=$((waited + 5))
 done
 if [ -f "$DATA/Documents/selftest/fas6.klar" ]; then
   echo "Klart efter cirka $waited sekunder."
 else
-  echo "Självtestet för fas 6 blev inte klart inom 180 sekunder."
+  echo "Självtestet för fas 6 blev inte klart inom 240 sekunder."
   status=1
 fi
 xcrun simctl terminate "$UDID" "$BUNDLE" || true
-kill $MOCK 2> /dev/null || true
-python3 - "$OUT/mock-supabase.json" << 'SUMMARY'
-import json, sys
-data = json.load(open(sys.argv[1], encoding="utf-8"))
-print("Låtsasservern efter synken:")
-for table, rows in data["tables"].items():
-    print(f"  {table}: {len(rows)} rader")
-    for row in rows:
-        short = {k: v for k, v in row.items() if k not in ("user_id", "created_at")}
-        print("    ", json.dumps(short, ensure_ascii=False)[:220])
-print("  anrop:", len(data["requests"]))
+mkdir -p "$OUT/synkmappen"
+cp "$SYNC"/*.json "$OUT/synkmappen/" 2> /dev/null || true
+ls -la "$SYNC" > "$OUT/synkmappen/innehall.txt" 2> /dev/null || true
+python3 - "$SYNC" << 'SUMMARY'
+import json, os, sys
+folder = sys.argv[1]
+print("Synkmappen efter självtestet:")
+for name in sorted(os.listdir(folder)):
+    path = os.path.join(folder, name)
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+    except Exception as error:
+        print(f"  {name}: går inte att läsa ({type(error).__name__}), {os.path.getsize(path)} byte")
+        continue
+    device = data.get("device", {})
+    counts = {key: len(data.get(key, [])) for key in ("positions", "highlights", "bookmarks", "saved_words")}
+    print(f"  {name}: format {data.get('format')}, {device.get('platform')} {device.get('name')}, {counts}")
 SUMMARY
 
 # A1 och U7 utan riktig nyckel: Förklara stycket och nyckelguiden mot en låtsas-Gemini.

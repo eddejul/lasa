@@ -1,7 +1,7 @@
 import UIKit
 
 /// Självtestet för fas 6 i simulatorn, utan bok: repetitionen, inställningarna, tolkningen av AI-svaret och
-/// synken mot en låtsasserver (`tools/simtest/mock_supabase.py`). Körs bara med `-LasaSelfTest fas6`.
+/// synken via en mapp (F1, `SyncSelfTest`). Körs bara med `-LasaSelfTest fas6`.
 @MainActor
 enum Fas6SelfTest {
 
@@ -89,8 +89,10 @@ enum Fas6SelfTest {
 
         await testWordCard(navigation: navigation)
 
-        // Synken mot låtsasservern.
-        await testSync(navigation: navigation)
+        // Synken via en vanlig mapp i stället för iCloud Drive (F1), och böcker i mappen (B4).
+        if let list = library as? LibraryViewController {
+            await SyncSelfTest.run(navigation: navigation, library: list)
+        }
 
         navigation.pushViewController(SettingsViewController(), animated: false)
         await pause(1.0)
@@ -690,77 +692,5 @@ enum Fas6SelfTest {
         SelfTest.log("Synken efter återställning (fynd 3): \(paused ? "pausad" : "FEL, körde"), pausen sparad "
                      + "\(saved ? "(gäller efter omstart)" : "FEL, bara i minnet"), startad igen: "
                      + "\(engine.isPaused ? "FEL" : "ja"). \(paused && saved && !engine.isPaused ? "Rätt" : "FEL")")
-    }
-
-    private static func testSync(navigation: UINavigationController) async {
-        guard let url = UserDefaults.standard.string(forKey: "LasaSyncURL") else {
-            SelfTest.log("Synk: ingen låtsasserver angiven, hoppar över")
-            return
-        }
-        let client = SyncClient.shared
-        client.projectURL = url
-        client.anonKey = "test-anon"
-        client.email = "test@example.com"
-        SelfTest.log("Synk: nyckelringen svarade \(Keychain.lastStatus) (0 är ok, annars sparas nyckeln bara i minnet)")
-        do {
-            try await client.signIn(email: "test@example.com", password: "test-password")
-            SelfTest.log("Synk: inloggad som \(client.userID ?? "?")")
-        } catch {
-            SelfTest.log("FEL: inloggningen misslyckades: \(error.localizedDescription)")
-            return
-        }
-
-        // Något lokalt att skicka: en markering och ett bokmärke i testboken, och läspositionen.
-        let book = LibraryStore.shared.allBooks().first { $0.url.lastPathComponent == "test.epub" }
-        if let book = book {
-            let key = AnnotationStore.key(for: book)
-            AnnotationStore.shared.addHighlight(book: key, section: 2, start: 10, length: 20, text: "lokal markering",
-                                                color: .green)
-            AnnotationStore.shared.addBookmark(book: key, section: 3, progression: 0.5, label: "Lokalt bokmärke")
-        } else {
-            SelfTest.log("FEL: test.epub finns inte i biblioteket")
-        }
-        UserWords.shared.save(word: "tillfällig", lemma: "tillfällig", language: .swedish,
-                              sentence: "Ett tillfälligt ord.", book: "test", pageIndex: 1)
-
-        do {
-            let first = try await SyncEngine.shared.sync()
-            SelfTest.log("Synk 1: \(first.summary)")
-        } catch {
-            SelfTest.log("FEL: synk 1 misslyckades: \(error.localizedDescription)")
-            return
-        }
-        let remoteWord = UserWords.shared.isSaved(lemma: "fjärrord", language: .swedish)
-        SelfTest.log("Ord från servern finns lokalt: \(remoteWord ? "ja" : "NEJ")")
-        if let book = book {
-            let marks = AnnotationStore.shared.highlights(book: AnnotationStore.key(for: book))
-            SelfTest.log("Markeringar i test.epub efter synk: \(marks.map(\.text).joined(separator: " | "))")
-            let location = LibraryStore.shared.savedLocation(for: book)
-            SelfTest.log("Läsposition i test.epub efter synk: kapitel \(location?.chapter ?? -1), andel \(location?.progression ?? -1)")
-        }
-
-        // En gång till: inget nytt ska skickas eller hämtas.
-        do {
-            let second = try await SyncEngine.shared.sync()
-            SelfTest.log("Synk 2 (ska vara 0 och 0): \(second.summary)")
-        } catch {
-            SelfTest.log("FEL: synk 2 misslyckades: \(error.localizedDescription)")
-        }
-
-        // Ta bort ett ord: borttagningen ska skickas.
-        await pause(0.05)
-        UserWords.shared.delete(lemma: "tillfällig", language: .swedish)
-        do {
-            let third = try await SyncEngine.shared.sync()
-            SelfTest.log("Synk 3 efter borttaget ord: \(third.summary)")
-        } catch {
-            SelfTest.log("FEL: synk 3 misslyckades: \(error.localizedDescription)")
-        }
-
-        navigation.pushViewController(SettingsViewController(), animated: false)
-        await pause(1.0)
-        SelfTest.saveScreen(navigation.view, name: "04-synk")
-        navigation.popToRootViewController(animated: false)
-        client.signOut()
     }
 }

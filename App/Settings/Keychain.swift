@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-/// Hemligheter (API-nyckeln till Gemini, inloggningen till synken) i iOS nyckelring.
+/// Hemligheter (API-nyckeln till Gemini) i iOS nyckelring. Synken (F1) har inga hemligheter.
 /// Inget av det sparas i filer, i UserDefaults eller i repot.
 enum Keychain {
 
@@ -16,9 +16,6 @@ enum Keychain {
 
     enum Key: String {
         case geminiAPIKey = "gemini.apiKey"
-        case syncRefreshToken = "sync.refreshToken"
-        case syncAccessToken = "sync.accessToken"
-        case syncAnonKey = "sync.anonKey"
     }
 
     static func string(_ key: Key) -> String? {
