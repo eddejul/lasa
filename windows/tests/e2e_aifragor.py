@@ -77,6 +77,16 @@ def make_pdf(path):
     doc.save(path)
 
 
+def make_photo_pdf(path):
+    """En PDF utan text, som en fotad bok som inte gjorts sökbar."""
+    doc = fitz.open()
+    for _ in range(3):
+        page = doc.new_page(width=595, height=842)
+        page.draw_rect(fitz.Rect(60, 70, 535, 800), color=(0.4, 0.4, 0.4), fill=(0.9, 0.9, 0.9))
+    doc.set_metadata({'title': 'Fotad bok'})
+    doc.save(path)
+
+
 class Gemini:
     """Svarar på anropen som Gemini: frågor ur texten i frågan, eller ett fel som testet har valt."""
 
@@ -307,7 +317,9 @@ def pdf_part(page, server, gemini, out):
     question_file = os.path.join(out, 'Vanor i artikeln.fragor.json')
     with open(question_file, 'w', encoding='utf-8') as file:
         json.dump({'sensus': 'frågor', 'version': 1, 'fragor': [
-            {'id': 'f1', 'sida': 1, 'citat': quote, 'titel': 'Ur filen', 'fraga': 'Vad visar exempel nummer 305?', 'svar': ['Att sakerna hänger ihop.']},
+            {'id': 'f1', 'sida': 1, 'citat': quote, 'titel': 'Ur filen', 'fraga': 'Vad visar exempel nummer 305?', 'svar': ['Att sakerna hänger ihop.'],
+             'kalla': 'I artikeln visar författaren att signaler och viljan påverkar varandra i vardagen enligt exempel nummer 305'},
+            {'id': 'f-fore', 'sida': 1, 'nar': 'fore', 'typ': 'huvudpoang', 'fraga': 'En fråga före läsningen ur filen.'},
             {'sida': 2, 'y': 0.5, 'fraga': 'En fråga utan citat på sida 2.'}]}, file, ensure_ascii=False)
     open_reader_panel(page, 'questions-button')
     with page.expect_file_chooser() as chooser:
@@ -320,8 +332,24 @@ def pdf_part(page, server, gemini, out):
     page.locator('.pdf-dots .question-dot').first.click()
     check(wait_for(lambda: 'Ur filen' in page.locator('[data-testid="question-box"]').inner_text(), 3), 'frågefilens fråga i rutan')
     check(page.locator('[data-testid="my-answer"]').count() == 0, 'frågefilens fråga ser ut som i dag (ingen ruta Ditt svar)')
+    page.locator('[data-testid="reveal"]').click()
+    check(page.locator('[data-testid="source"]').is_visible() and page.locator('[data-testid="show-in-book"]').is_visible(),
+          'frågefilens valfria kalla ger Ur boken och Visa i boken')
     page.keyboard.press('Escape')
     page.screenshot(path=os.path.join(out, 'ai-13-fragefil.png'))
+    back_to_library(page)
+
+
+def no_text_part(page, gemini, out):
+    before = len(gemini.requests)
+    open_book(page, 'Fotad bok')
+    page.wait_for_selector('.pdf-spread .pdf-page canvas')
+    wait_for(lambda: page.locator('[data-testid="questions-button"]').is_visible(), 10)
+    open_reader_panel(page, 'questions-button')
+    check(wait_for(lambda: 'Boken har ingen text att göra frågor av. Gör den sökbar först.' in page.locator('[data-testid="questions-panel"]').inner_text(), 10),
+          'en PDF utan text: beskedet i panelen')
+    check(len(gemini.requests) == before, 'en PDF utan text skickas inte')
+    page.keyboard.press('Escape')
     back_to_library(page)
 
 
@@ -357,6 +385,7 @@ def main():
     os.makedirs(os.path.join(data, 'Böcker'), exist_ok=True)
     make_epub(os.path.join(books, 'Vanans väg.epub'))
     make_pdf(os.path.join(books, 'Vanor i artikeln.pdf'))
+    make_photo_pdf(os.path.join(books, 'Fotad bok.pdf'))
     server = Server(args.dictionary, data, args.port, os.path.join(args.out, 'server.log'))
     gemini = Gemini()
     console = []
@@ -368,10 +397,11 @@ def main():
             page.on('console', lambda m: console.append(f'{m.type}: {m.text}'))
             page.route(GEMINI, gemini.handle)
             page.goto(server.url)
-            page.set_input_files('[data-testid="file-input"]', [os.path.join(books, 'Vanans väg.epub'), os.path.join(books, 'Vanor i artikeln.pdf')])
-            check(wait_for(lambda: page.locator('[data-testid="book"]').count() == 2, 20), 'två testböcker i biblioteket')
+            page.set_input_files('[data-testid="file-input"]', [os.path.join(books, name) for name in ('Vanans väg.epub', 'Vanor i artikeln.pdf', 'Fotad bok.pdf')])
+            check(wait_for(lambda: page.locator('[data-testid="book"]').count() == 3, 20), 'tre testböcker i biblioteket')
             epub_part(page, server, gemini, args.out)
             pdf_part(page, server, gemini, args.out)
+            no_text_part(page, gemini, args.out)
             no_key_part(page, server, args.out)
             check(all(r['key'] == 'provnyckel-aifragor' for r in gemini.requests), 'alla anrop har testets nyckel')
             browser.close()

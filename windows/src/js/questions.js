@@ -4,7 +4,7 @@
 // kapitlet. Läsarna (pdfreader.js och reflowreader.js) ger kapitlen och texten och ritar prickarna.
 
 import {
-  KIND_QUESTIONS, MIN_CHAPTER, SCHEMA_COMPARE, SCHEMA_QUESTIONS, buildCompare, buildPrompt, capFor, chapterKeyFor, check,
+  KIND_QUESTIONS, MIN_CHAPTER, OPEN_TYPES, TYPE_IDS, SCHEMA_COMPARE, SCHEMA_QUESTIONS, buildCompare, buildPrompt, capFor, chapterKeyFor, check,
   checkSummary, foldedQuery, locateRange, partCount, splitParts, typeName, validAnswer, validCompare,
 } from './aiquestions.js';
 import { chapterNodes } from './chaptertext.js';
@@ -142,7 +142,7 @@ export function parseQuestionFile(text) {
     result.push({
       source: 'file', id, number, title: plain(entry.titel ?? entry.title), fraga: question, svar: pointList(entry.svar ?? entry.answer),
       quote, page, chapterNumber: integer(chapter), chapterTitle: typeof chapter === 'string' && integer(chapter) === null ? plain(chapter) : null,
-      y, typ, nar, kalla: plain(entry.kalla), oppen: false,
+      y, typ: TYPE_IDS.includes(typ) ? typ : '', nar, kalla: plain(entry.kalla), oppen: OPEN_TYPES.has(typ),
     });
   }
   return result;
@@ -411,29 +411,37 @@ export class BookQuestions {
           q.section = hint;
           q.y = q.y ?? 0.08;
         }
-        continue;
-      }
-      const needle = foldedQuery(q.quote);
-      const order = [...Array(count).keys()].sort((a, b) => (hint === null ? a - b : Math.abs(a - hint) - Math.abs(b - hint) || a - b));
-      for (const section of order) {
-        const text = await foldedOf(section);
-        let at = text.text.indexOf(needle);
-        if (at < 0 && section === hint) {
-          const range = locateRange(q.quote, await this.reader.sectionText(section));
-          if (range) {
+      } else {
+        const needle = foldedQuery(q.quote);
+        const order = [...Array(count).keys()].sort((x, y) => (hint === null ? x - y : Math.abs(x - hint) - Math.abs(y - hint) || x - y));
+        for (const section of order) {
+          const text = await foldedOf(section);
+          const at = text.text.indexOf(needle);
+          if (at >= 0) {
             q.section = section;
-            q.offset = range.end;
+            q.offset = text.map[at + needle.length - 1] + 1;
             break;
           }
+          if (section === hint) {
+            const range = locateRange(q.quote, await this.reader.sectionText(section));
+            if (range) {
+              q.section = section;
+              q.offset = range.end;
+              break;
+            }
+          }
+          if (section % 8 === 7) await breathe();
         }
-        if (at >= 0) {
-          q.section = section;
-          q.offset = text.map[at + needle.length - 1] + 1;
-          break;
-        }
-        at = -1;
-        if (section % 8 === 7) await breathe();
       }
+      if (!Number.isInteger(q.section)) continue;
+      // De valfria fälten (docs/FRAGOR.md): källan letas upp i samma avsnitt, och kapitlet behövs för fore och slut.
+      if (q.kalla) {
+        const range = locateRange(q.kalla, await this.reader.sectionText(q.section));
+        if (range) q.kallaPlace = { section: q.section, start: range.start, end: range.end };
+      }
+      const chapter = this.chapters?.length
+        ? this.reader.chapterForPlace(pdf ? { pages: [q.section] } : { section: q.section }, this.chapters) : null;
+      q.chapterKey = chapter?.key ?? null;
     }
   }
 
@@ -754,8 +762,7 @@ export class BookQuestions {
   }
 
   chapterQuestions(chapter) {
-    if (this.hasFile) return [];
-    return (this.list ?? []).filter((q) => q.source === 'ai' && q.chapterKey === chapter.key)
+    return (this.list ?? []).filter((q) => q.chapterKey === chapter.key)
       .sort((a, b) => (a.part - b.part) || 0);
   }
 
@@ -861,8 +868,8 @@ function showQuestionBox(controller, list, startIndex) {
     answerArea?.addEventListener('input', updateCompare);
     const answerBox = el('div', { class: 'question-reveal', hidden: true, dataset: { testid: 'answer-box' } },
       q.svar?.length ? el('ul', { class: 'question-points' }, q.svar.map((point) => el('li', {}, point))) : el('p', { class: 'muted' }, 'Inget svar i frågan.'),
-      isAi && q.kalla ? el('p', { class: 'question-source', dataset: { testid: 'source' } }, 'Ur boken: ', el('em', {}, q.kalla)) : null,
-      isAi && q.kalla && q.kallaPlace ? el('button', { class: 'button', dataset: { testid: 'show-in-book' }, onclick: async () => {
+      q.kalla ? el('p', { class: 'question-source', dataset: { testid: 'source' } }, 'Ur boken: ', el('em', {}, q.kalla)) : null,
+      q.kalla && q.kallaPlace ? el('button', { class: 'button', dataset: { testid: 'show-in-book' }, onclick: async () => {
         await close();
         controller.showInBook(q);
       } }, 'Visa i boken') : null);
