@@ -707,18 +707,25 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         return .loading
     }
 
-    private static var didFillHashes = false
+    /// Böckerna vars kontrollsumma redan försökts räknas den här starten.
+    private static var hashAttempted = Set<String>()
+    private static var isFillingHashes = false
 
-    /// Böcker från före G3 har ingen kontrollsumma i registret. Den räknas i bakgrunden en gång per start,
-    /// så att en bok som sedan döps om eller flyttas känns igen på innehållet.
+    /// Böcker från före G3, och filer som lagts i Böcker från Filer, har ingen kontrollsumma i registret. Den räknas
+    /// i bakgrunden, en gång per bok och start, så att en bok som sedan döps om, flyttas eller också läggs i
+    /// iCloud-mappen (granskning 6, M2) känns igen på innehållet.
     private func fillMissingHashes(_ books: [Book]) {
-        guard !Self.didFillHashes else { return }
-        Self.didFillHashes = true
-        let missing = books.filter { BookRegistry.shared.record(id: $0.id)?.sha256.isEmpty ?? false }
+        guard !Self.isFillingHashes else { return }
+        let missing = books.filter {
+            !Self.hashAttempted.contains($0.id) && (BookRegistry.shared.record(id: $0.id)?.sha256.isEmpty ?? false)
+        }
         guard !missing.isEmpty else { return }
+        missing.forEach { Self.hashAttempted.insert($0.id) }
+        Self.isFillingHashes = true
         Task { @MainActor in
             let started = CACurrentMediaTime()
             let ids = await BookIdentity.ids(for: missing)
+            Self.isFillingHashes = false
             AppLog.shared.write("Kontrollsumma räknad för \(ids.count) av \(missing.count) böcker på "
                                 + "\(Int(((CACurrentMediaTime() - started) * 1000).rounded())) ms")
         }

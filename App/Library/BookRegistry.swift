@@ -513,15 +513,36 @@ final class BookRegistry {
     @MainActor
     func resolve(_ files: [BookFile], urls: [String: URL]) async -> [VersionQuestion] {
         let targets = files.compactMap { file in urls[file.path].map { (file, $0) } }
-        let hashes = await Task.detached(priority: .userInitiated) { () -> [String: String] in
+        // M2: en bok utan kontrollsumma (till exempel lagd i Böcker från Filer) med samma storlek som en fil som
+        // ska läggas in räknas samtidigt, så att samma bok i Böcker och i iCloud-mappen känns igen.
+        let sizes = Set(files.map(\.size))
+        let unhashed = records().filter { $0.sha256.isEmpty && !$0.missing && $0.size > 0 && sizes.contains($0.size) }
+            .compactMap { record in urls[record.file].map { (record, $0) } }
+        let (hashes, twinHashes) = await Task.detached(priority: .userInitiated) {
+            () -> ([String: String], [String: String]) in
             var result: [String: String] = [:]
             for (file, url) in targets {
                 if let hash = BookIdentity.hash(of: url) {
                     result[file.path] = hash
                 }
             }
-            return result
+            var twins: [String: String] = [:]
+            for (record, url) in unhashed {
+                // Bara om filen fortfarande är den som raden beskriver (samma storlek och ändringstid).
+                let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                guard values?.fileSize == record.size,
+                      Int(values?.contentModificationDate?.timeIntervalSince1970 ?? -1) == record.modified else { continue }
+                if let hash = BookIdentity.hash(of: url) {
+                    twins[record.id] = hash
+                }
+            }
+            return (result, twins)
         }.value
+        for (record, _) in unhashed {
+            if let hash = twinHashes[record.id] {
+                setHash(hash, for: record.id, size: record.size, modified: record.modified)
+            }
+        }
         var records = self.records()
         let present = LibraryStore.shared.presentPaths()
         var changed: [BookRecord] = []
