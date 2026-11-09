@@ -579,7 +579,8 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         books = scanned.books
         guard isViewLoaded else { return }
         if !showsEmptyForSelfTest {
-            CourseStore.shared.addFolderCourses(for: books)
+            // P4: en mapp med bara txt-filer till PDF:er (undermappen txt) blir ingen egen kurs.
+            CourseStore.shared.addFolderCourses(for: PDFTextCompanion.withoutCompanions(books))
         }
         reviewCount = UserWords.shared.reviewCount()
         savedCount = UserWords.shared.savedWords().count

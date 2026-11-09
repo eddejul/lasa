@@ -128,5 +128,9 @@ final class PhotoPagesTests: XCTestCase {
                      book("Bok.PDF", "e"), book("bok.txt", "f")]
         XCTAssertEqual(PDFTextCompanion.companionTextIDs(in: books), ["b", "f"])
         XCTAssertEqual(PDFTextCompanion.withoutCompanions(books).map(\.id), ["a", "c", "d", "e"])
+        // Txt-filen i undermappen txt, där OCR-flödet lägger den.
+        let ocr = [book("Kurs/Kap 1 (s15-24).pdf", "p"), book("Kurs/txt/Kap 1 (s15-24).txt", "t"),
+                   book("txt/Kap 1 (s15-24).txt", "u"), book("Kurs/txt/Annat.txt", "v")]
+        XCTAssertEqual(PDFTextCompanion.companionTextIDs(in: ocr), ["t"])
     }
 }

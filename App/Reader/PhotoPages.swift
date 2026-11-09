@@ -591,14 +591,26 @@ enum PDFTextCompanion {
     /// Txt-filen bredvid en PDF, om den finns.
     static func textURL(forPDF url: URL) -> URL? {
         guard url.pathExtension.lowercased() == "pdf" else { return nil }
-        return sibling(of: url, extensions: ["txt", "TXT"])
+        // Bredvid PDF:en, eller i undermappen txt där OCR-flödet lägger den (<mapp>/txt/<namn>.txt).
+        let inFolder = url.deletingLastPathComponent().appendingPathComponent(textFolder, isDirectory: true)
+            .appendingPathComponent(url.lastPathComponent)
+        return sibling(of: url, extensions: ["txt", "TXT"]) ?? sibling(of: inFolder, extensions: ["txt", "TXT"])
     }
 
-    /// PDF:en bredvid en txt-fil, om den finns.
+    /// PDF:en bredvid en txt-fil (eller i mappen ovanför, när txt-filen ligger i undermappen txt), om den finns.
     static func pdfURL(forText url: URL) -> URL? {
         guard url.pathExtension.lowercased() == "txt" else { return nil }
-        return sibling(of: url, extensions: ["pdf", "PDF"])
+        if let found = sibling(of: url, extensions: ["pdf", "PDF"]) {
+            return found
+        }
+        let folder = url.deletingLastPathComponent()
+        guard folder.lastPathComponent.lowercased() == textFolder else { return nil }
+        let above = folder.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent)
+        return sibling(of: above, extensions: ["pdf", "PDF"])
     }
+
+    /// Undermappen där OCR-flödet i Reta 30 lägger txt-filerna.
+    static let textFolder = "txt"
 
     private static func sibling(of url: URL, extensions: [String]) -> URL? {
         let base = url.deletingPathExtension()
@@ -615,7 +627,18 @@ enum PDFTextCompanion {
     static func companionTextIDs(in books: [Book]) -> Set<String> {
         let pdfs = Set(books.filter { $0.kind == .pdf }.map { stem($0.path) })
         guard !pdfs.isEmpty else { return [] }
-        return Set(books.filter { $0.url.pathExtension.lowercased() == "txt" && pdfs.contains(stem($0.path)) }.map(\.id))
+        return Set(books.filter { book in
+            guard book.url.pathExtension.lowercased() == "txt" else { return false }
+            let own = stem(book.path)
+            if pdfs.contains(own) {
+                return true
+            }
+            // Txt-filen i undermappen txt bredvid PDF:en.
+            var parts = own.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 2, parts[parts.count - 2] == textFolder else { return false }
+            parts.remove(at: parts.count - 2)
+            return pdfs.contains(parts.joined(separator: "/"))
+        }.map(\.id))
     }
 
     /// Biblioteket utan de txt-filer som hör till en PDF.
