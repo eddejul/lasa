@@ -79,12 +79,54 @@ final class LibraryStore {
 
     /// Böckerna i iCloud-mappen som hämtas just nu, till raden i biblioteket.
     private(set) var waitingCloudBooks: [String] = []
+    /// Bara på `cloudQueue`.
     private var downloadRequested: [String: Date] = [:]
+
+    /// Det som den senaste läsningen av iCloud-mappen gav (granskning 6, M1). Mappen läses aldrig på huvudtråden:
+    /// biblioteket använder den senaste läsningen, och en ny görs i bakgrunden med gränser för antal filer och
+    /// djup. Innan mappen lästs en första gång räknas dess böcker som utom räckhåll (inget markeras som borta).
+    struct CloudListing: Equatable {
+        /// Mappen läsningen gäller.
+        let root: String
+        var files: [BookFile] = []
+        var urls: [String: URL] = [:]
+        var waiting: [String] = []
+        /// Falskt när mappen inte fanns eller inte gick att läsa (L2).
+        var reachable = true
+        /// Sant när gränsen för antal filer eller böcker nåddes.
+        var truncated = false
+    }
+
+    /// Gränserna för läsningen av iCloud-mappen (M1): poster i mappen, böcker och djup (en bok direkt i mappen
+    /// har djup 1). Guiden låter inte en större mapp väljas.
+    static let cloudEntryLimit = 3000
+    static let cloudBookLimit = 300
+    static let cloudDepthLimit = 4
+    /// Hur många böcker som högst börjar hämtas från iCloud per läsning.
+    static let cloudDownloadLimit = 20
+
+    /// Biblioteket läser om när läsningen av iCloud-mappen gett något nytt.
+    static let cloudDidChange = Notification.Name("LibraryStoreCloudDidChange")
+
+    private let cloudQueue = DispatchQueue(label: "se.edvin.lasa.icloudmappen", qos: .utility)
+    /// Bara på huvudtråden.
+    private var cloudListing: CloudListing?
+    private var cloudRefreshRunning = false
+    private var cloudRefreshAgain = false
+    private var cloudRefreshed: Date?
+    /// Räknas upp när appen själv ändrar i mappen (flytt, borttagning), så att en läsning som började före
+    /// ändringen aldrig ersätter den.
+    private var cloudGeneration = 0
+    private var didCleanLocalLeftovers = false
 
     private init() {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         booksDirectory = documents.appendingPathComponent("Böcker", isDirectory: true)
         try? FileManager.default.createDirectory(at: booksDirectory, withIntermediateDirectories: true)
+    }
+
+    private static func key(_ url: URL) -> String {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     /// Alla filer i Böcker, också i undermappar (G3), och i iCloud-mappen (B4), med sökvägen som nyckel.
@@ -96,14 +138,100 @@ final class LibraryStore {
     func listing() -> Listing {
         var result = Listing()
         listLocal(into: &result)
+        cleanLocalLeftoversOnce()
         if SyncFolder.shared.isChosen {
             if let cloud = SyncFolder.shared.url {
-                listCloud(cloud, into: &result)
+                // M1: den senaste läsningen av mappen, och en ny i bakgrunden.
+                if let listed = cloudListing, listed.root == Self.key(cloud), listed.reachable {
+                    result.files += listed.files
+                    for (path, url) in listed.urls where result.urls[path] == nil {
+                        result.urls[path] = url
+                    }
+                    result.waiting += listed.waiting
+                } else {
+                    // Inte läst än, eller mappen saknades (L2): böckerna där räknas inte som borttagna.
+                    result.cloudReachable = false
+                }
+                refreshCloud()
             } else {
                 result.cloudReachable = false
             }
         }
         return result
+    }
+
+    /// Läser iCloud-mappen i bakgrunden (M1). Högst en läsning åt gången och, utan `force`, högst en var annan
+    /// sekund. Ger läsningen något nytt läser biblioteket om (`cloudDidChange`).
+    func refreshCloud(force: Bool = false) {
+        guard SyncFolder.shared.isChosen, let root = SyncFolder.shared.url else { return }
+        if cloudRefreshRunning {
+            cloudRefreshAgain = cloudRefreshAgain || force
+            return
+        }
+        if !force, let last = cloudRefreshed, Date().timeIntervalSince(last) < 2 {
+            return
+        }
+        cloudRefreshRunning = true
+        let key = Self.key(root)
+        let generation = cloudGeneration
+        cloudQueue.async { [weak self] in
+            guard let self = self else { return }
+            let started = Date()
+            let listed = self.readCloud(root, key: key)
+            let elapsed = Date().timeIntervalSince(started)
+            DispatchQueue.main.async {
+                self.cloudRefreshRunning = false
+                self.cloudRefreshed = Date()
+                if elapsed > 2 || listed.truncated {
+                    AppLog.shared.write("iCloud-mappen lästes på \(Int((elapsed * 1000).rounded())) ms: \(listed.files.count) "
+                                        + "böcker\(listed.truncated ? ", gränsen nåddes" : "")")
+                }
+                let current = SyncFolder.shared.isChosen ? SyncFolder.shared.url.map(Self.key) : nil
+                // En läsning som började före en egen ändring, eller gäller en annan mapp, används inte.
+                guard generation == self.cloudGeneration, current == key else {
+                    self.cloudRefreshAgain = false
+                    if current != nil {
+                        self.refreshCloud(force: true)
+                    }
+                    return
+                }
+                let changed = self.cloudListing != listed
+                self.cloudListing = listed
+                if !listed.reachable {
+                    // L2: mappen finns inte längre där den var. Bokmärket läses om, och problemet syns i biblioteket.
+                    SyncFolder.shared.refresh()
+                }
+                if changed {
+                    NotificationCenter.default.post(name: Self.cloudDidChange, object: nil)
+                }
+                if self.cloudRefreshAgain {
+                    self.cloudRefreshAgain = false
+                    self.refreshCloud(force: true)
+                }
+            }
+        }
+    }
+
+    /// En egen ändring i iCloud-mappen (B4): en flyttad bok kommer med i den senaste läsningen direkt, och en
+    /// borttagen eller bortflyttad försvinner ur den, så att biblioteket inte visar den eller markerar den som borta
+    /// medan mappen läses om.
+    func noteCloudChange(added: BookFile? = nil, url: URL? = nil, removed: String? = nil) {
+        cloudGeneration += 1
+        if var listed = cloudListing {
+            if let removed = removed {
+                listed.files.removeAll { $0.path == removed }
+                listed.urls[removed] = nil
+                listed.waiting.removeAll { $0 == removed }
+            }
+            if let added = added, let url = url {
+                listed.files.removeAll { $0.path == added.path }
+                listed.waiting.removeAll { $0 == added.path }
+                listed.files.append(added)
+                listed.urls[added.path] = url
+            }
+            cloudListing = listed
+        }
+        refreshCloud(force: true)
     }
 
     /// Platserna som räknas som närvarande när en fil matchas mot registret: filerna, böcker i iCloud-mappen som
@@ -143,25 +271,48 @@ final class LibraryStore {
 
     /// Böckerna i iCloud-mappen (B4): bara filer som är böcker, inte undermappen Sensus synk. En bok som bara
     /// finns som platshållare (".Bok.pdf.icloud" i iOS 15) börjar hämtas och kommer med när den är hämtad.
-    private func listCloud(_ root: URL, into result: inout Listing) {
-        let base = root.resolvingSymlinksInPath().standardizedFileURL.pathComponents
-        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey,
-                                      .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
-                                                              options: [.skipsPackageDescendants]) else {
-            return
+    /// Körs på `cloudQueue`, aldrig på huvudtråden (M1), och slutar vid gränserna för antal poster, böcker och djup.
+    /// Finns mappen inte (borttagen, i papperskorgen) blir `reachable` falskt (L2).
+    private func readCloud(_ root: URL, key: String) -> CloudListing {
+        var result = CloudListing(root: key)
+        let manager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue,
+              !key.contains("/.Trash/") else {
+            result.reachable = false
+            return result
         }
-        var waiting: [String] = []
+        let base = root.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey,
+                                      .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]
+        guard let enumerator = manager.enumerator(at: root, includingPropertiesForKeys: keys,
+                                                  options: [.skipsPackageDescendants]) else {
+            result.reachable = false
+            return result
+        }
+        var entries = 0
+        var downloads = 0
         for case let url as URL in enumerator {
+            entries += 1
+            if entries > Self.cloudEntryLimit || result.files.count + result.waiting.count >= Self.cloudBookLimit {
+                result.truncated = true
+                break
+            }
             let name = url.lastPathComponent
             let values = try? url.resourceValues(forKeys: Set(keys))
             let components = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
             guard components.count > base.count, Array(components.prefix(base.count)) == base else { continue }
             let inside = Array(components.dropFirst(base.count))
             if values?.isDirectory == true {
-                if name.hasPrefix(".") || (inside.count == 1 && name == SyncFile.folderName) {
+                if name.hasPrefix(".") || (inside.count == 1 && name == SyncFile.folderName)
+                    || inside.count >= Self.cloudDepthLimit {
                     enumerator.skipDescendants()
                 }
+                continue
+            }
+            if name.hasPrefix(BookPlace.temporaryPrefix) {
+                // L5: en kopia som blev kvar när appen stängdes mitt i en flytt.
+                Self.removeLeftover(url, created: values?.creationDate, coordinated: true)
                 continue
             }
             if name.hasPrefix(".") {
@@ -169,16 +320,21 @@ final class LibraryStore {
                 guard let real = SyncFiles.placeholderTarget(name),
                       BookPlace.bookExtensions.contains((real as NSString).pathExtension.lowercased()) else { continue }
                 let path = BookPlace.cloudPrefix + (inside.dropLast() + [real]).joined(separator: "/")
-                waiting.append(path)
-                requestDownload(url.deletingLastPathComponent().appendingPathComponent(real), path: path)
+                result.waiting.append(path)
+                if downloads < Self.cloudDownloadLimit,
+                   requestDownload(url.deletingLastPathComponent().appendingPathComponent(real), path: path) {
+                    downloads += 1
+                }
                 continue
             }
             guard BookPlace.bookExtensions.contains(url.pathExtension.lowercased()) else { continue }
             let path = BookPlace.cloudPrefix + inside.joined(separator: "/")
             if values?.isUbiquitousItem == true, let status = values?.ubiquitousItemDownloadingStatus,
                status != .current, status != .downloaded {
-                waiting.append(path)
-                requestDownload(url, path: path)
+                result.waiting.append(path)
+                if downloads < Self.cloudDownloadLimit, requestDownload(url, path: path) {
+                    downloads += 1
+                }
                 continue
             }
             let file = BookFile(path: path, size: values?.fileSize ?? 0,
@@ -186,19 +342,56 @@ final class LibraryStore {
             result.files.append(file)
             result.urls[path] = url
         }
-        result.waiting += waiting
+        return result
     }
 
-    /// Ber iCloud hämta en bok, högst en gång i minuten per bok.
-    private func requestDownload(_ url: URL, path: String) {
+    /// Ber iCloud hämta en bok, högst en gång i minuten per bok. Sant om hämtningen begärdes nu. På `cloudQueue`.
+    private func requestDownload(_ url: URL, path: String) -> Bool {
         if let last = downloadRequested[path], Date().timeIntervalSince(last) < 60 {
-            return
+            return false
         }
         downloadRequested[path] = Date()
         do {
             try FileManager.default.startDownloadingUbiquitousItem(at: url)
         } catch {
             AppLog.shared.write("Boken \(path) kunde inte hämtas från iCloud: \(error.localizedDescription)")
+        }
+        return true
+    }
+
+    /// L5: tar bort en kvarlämnad kopia från en avbruten flytt, om den skapades för mer än en timme sedan.
+    /// Skapelsetiden avgör, inte ändringstiden (kopian får originalets ändringstid).
+    private static func removeLeftover(_ url: URL, created: Date?, coordinated: Bool) {
+        guard let created = created, Date().timeIntervalSince(created) > 3600 else { return }
+        do {
+            if coordinated {
+                try BookPlace.removeCoordinated(url)
+            } else {
+                try FileManager.default.removeItem(at: url)
+            }
+            AppLog.shared.write("Tog bort en kvarlämnad kopia från en avbruten flytt: \(url.lastPathComponent)")
+        } catch {
+            AppLog.shared.write("Kvarlämnad kopia gick inte att ta bort: \(error.localizedDescription)")
+        }
+    }
+
+    /// L5: kvarlämnade kopior i Böcker tas bort en gång per start, i bakgrunden.
+    private func cleanLocalLeftoversOnce() {
+        guard !didCleanLocalLeftovers else { return }
+        didCleanLocalLeftovers = true
+        let directory = booksDirectory
+        cloudQueue.async {
+            guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys:
+                                                                    [.creationDateKey, .isDirectoryKey],
+                                                                  options: [.skipsPackageDescendants]) else { return }
+            var entries = 0
+            for case let url as URL in enumerator {
+                entries += 1
+                if entries > Self.cloudEntryLimit { break }
+                guard url.lastPathComponent.hasPrefix(BookPlace.temporaryPrefix) else { continue }
+                let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+                Self.removeLeftover(url, created: created, coordinated: false)
+            }
         }
     }
 
@@ -253,6 +446,7 @@ final class LibraryStore {
         if BookPlace.isCloud(book.path) {
             // B4: en bok i iCloud-mappen tas bort genom filkoordineringen (den försvinner på alla enheter).
             try BookPlace.removeCoordinated(book.url)
+            noteCloudChange(removed: book.path)
         } else {
             try FileManager.default.removeItem(at: book.url)
         }

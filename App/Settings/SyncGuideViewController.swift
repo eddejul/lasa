@@ -118,9 +118,10 @@ final class SyncGuideViewController: UITableViewController, UIDocumentPickerDele
         let chosen = SyncFolder.shared.isChosen
         var sections: [Section] = [
             Section(title: "1. Välj mappen i iCloud Drive", rows: [.choose],
-                    footer: "Skapa gärna en mapp som heter Sensus i iCloud Drive först, i appen Filer. Sensus lägger en "
-                        + "undermapp, Sensus synk, där med en liten fil per enhet. Böcker du lägger i mappen syns i "
-                        + "biblioteket och finns då på alla dina enheter."),
+                    footer: "Tryck Välj mapp, gå till iCloud Drive överst och tryck Öppna. Sensus skapar då en egen mapp, "
+                        + "Sensus, där (finns den redan används den). Välj inte en mapp som redan har mycket i sig: allt "
+                        + "i mappen blir böcker i biblioteket och hämtas till iPaden. Sensus lägger en undermapp, Sensus "
+                        + "synk, i mappen med en liten fil per enhet. Böcker du lägger i mappen finns på alla dina enheter."),
         ]
         if chosen {
             var statusRows: [Row] = [.status]
@@ -156,7 +157,7 @@ final class SyncGuideViewController: UITableViewController, UIDocumentPickerDele
     private var status: (title: String, detail: String?, color: UIColor, symbol: String?) {
         let palette = Theme.current
         if busy {
-            return ("Provar mappen …", nil, palette.inkSoft, nil)
+            return (SyncFolder.shared.isChosen ? "Provar mappen …" : "Läser mappen …", nil, palette.inkSoft, nil)
         }
         if let result = probeResult {
             if let problem = result {
@@ -205,7 +206,8 @@ final class SyncGuideViewController: UITableViewController, UIDocumentPickerDele
             let chosen = SyncFolder.shared.isChosen
             content.text = chosen ? "Byt mapp" : "Välj mapp i iCloud Drive"
             content.textProperties.color = tint
-            content.secondaryText = chosen ? "Vald: \(SyncFolder.shared.name)" : "Öppnar Filer, välj mappen och tryck Öppna."
+            content.secondaryText = chosen ? "Vald: \(SyncFolder.shared.name)"
+                : "Öppnar Filer: gå till iCloud Drive och tryck Öppna."
             content.image = UIImage(systemName: "folder")
             cell.accessoryType = .disclosureIndicator
         case .status:
@@ -302,7 +304,9 @@ final class SyncGuideViewController: UITableViewController, UIDocumentPickerDele
         use(url)
     }
 
-    /// Sparar mappen, provar att skriva och läsa där och synkar om provet gick bra. Också till självtestet.
+    /// Mappen som dokumentväljaren gav (M1): roten i iCloud Drive får en egen mapp Sensus, en mapp med mycket i
+    /// sig ger en fråga (eller vägras när den är för stor), och en mapp utanför iCloud Drive vägras (L6). Sedan
+    /// sparas mappen, provet körs och synken går. Också till självtestet.
     func use(_ url: URL) {
         // Appens egen mapp Böcker (eller mappen den ligger i) går inte: böckerna skulle synas två gånger.
         let books = LibraryStore.shared.booksDirectory.resolvingSymlinksInPath().standardizedFileURL.path
@@ -312,8 +316,94 @@ final class SyncGuideViewController: UITableViewController, UIDocumentPickerDele
             rebuild()
             return
         }
+        busy = true
+        probeResult = nil
+        message = nil
+        rebuild()
+        Task { @MainActor [weak self] in
+            let started = url.startAccessingSecurityScopedResource()
+            let (survey, inCloud) = await Task.detached(priority: .userInitiated) { () -> (FolderSurvey, Bool) in
+                (FolderSurvey.of(url), FolderSurvey.isInCloudDrive(url))
+            }.value
+            if started {
+                url.stopAccessingSecurityScopedResource()
+            }
+            guard let self = self else { return }
+            self.busy = false
+            let name = url.lastPathComponent
+            AppLog.shared.write("Synkguiden: mappen har \(survey.description)\(inCloud ? "" : ", inte i iCloud Drive")")
+            if !inCloud, !SelfTest.isActive {
+                self.probeResult = .some("Mappen \(name) ligger inte i iCloud Drive, så den når inte dina andra enheter. "
+                                         + "Välj iCloud Drive i Filer.")
+                self.rebuild()
+                return
+            }
+            if FolderSurvey.isCloudDriveRoot(url) {
+                // Vägen guiden visar: iCloud Drive överst och Öppna. Sensus får en egen mapp där.
+                self.makeOwnFolder(in: url)
+            } else if survey.isTooBig {
+                self.askAboutFolder(url, survey: survey, allowAnyway: false)
+            } else if !survey.isSmall {
+                self.askAboutFolder(url, survey: survey, allowAnyway: true)
+            } else {
+                self.save(url, subfolder: nil)
+            }
+        }
+    }
+
+    /// En mapp med mycket i sig: skapa mappen Sensus i den, använd den ändå (bara när den inte är för stor) eller avbryt.
+    private func askAboutFolder(_ url: URL, survey: FolderSurvey, allowAnyway: Bool) {
+        let name = url.lastPathComponent
+        let effect = "Allt i mappen blir böcker i biblioteket och hämtas till iPaden, och varje undermapp blir en kurs."
+        let alert = UIAlertController(
+            title: allowAnyway ? "\(name) har redan mycket i sig" : "\(name) är för stor",
+            message: "Mappen har \(survey.description). " + effect
+                + (allowAnyway ? " Sensus fungerar bäst med en egen, ny mapp."
+                    : " Sensus visar högst \(LibraryStore.cloudBookLimit) böcker. Välj en egen, ny mapp."),
+            preferredStyle: .alert)
+        let create = UIAlertAction(title: "Skapa mappen Sensus i \(name)", style: .default) { [weak self] _ in
+            self?.makeOwnFolder(in: url)
+        }
+        alert.addAction(create)
+        if allowAnyway {
+            alert.addAction(UIAlertAction(title: "Använd \(name) ändå", style: .default) { [weak self] _ in
+                self?.save(url, subfolder: nil)
+            })
+        }
+        alert.addAction(UIAlertAction(title: "Avbryt", style: .cancel) { [weak self] _ in
+            self?.rebuild()
+        })
+        alert.preferredAction = create
+        present(alert, animated: true)
+    }
+
+    /// Skapar (eller använder en liten befintlig) mappen Sensus i `parent` och sparar den.
+    private func makeOwnFolder(in parent: URL) {
+        busy = true
+        rebuild()
+        Task { @MainActor [weak self] in
+            let started = parent.startAccessingSecurityScopedResource()
+            let result = await Task.detached(priority: .userInitiated) { FolderSurvey.makeOwnFolder(in: parent) }.value
+            if started {
+                parent.stopAccessingSecurityScopedResource()
+            }
+            guard let self = self else { return }
+            self.busy = false
+            switch result {
+            case .success(let name):
+                self.save(parent, subfolder: name)
+            case .failure(let error):
+                self.probeResult = .some("Mappen Sensus kunde inte skapas i \(parent.lastPathComponent): "
+                                         + error.localizedDescription)
+                self.rebuild()
+            }
+        }
+    }
+
+    /// Sparar mappen, provar att skriva och läsa där (och att iCloud tar emot filen) och synkar om provet gick bra.
+    private func save(_ url: URL, subfolder: String?) {
         do {
-            try SyncFolder.shared.choose(url)
+            try SyncFolder.shared.choose(url, subfolder: subfolder)
         } catch {
             probeResult = .some("Mappen gick inte att spara: \(error.localizedDescription)")
             rebuild()

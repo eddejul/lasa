@@ -14,6 +14,9 @@ final class SyncFolder {
 
     private static let bookmarkKey = "sync.folder.bookmark"
     private static let nameKey = "sync.folder.name"
+    /// M1: när guiden skapat mappen Sensus i den valda mappen (till exempel i iCloud Drive överst) gäller
+    /// bokmärket den valda mappen, och synkmappen är undermappen med det här namnet. Saknas: bokmärkets mapp.
+    private static let subfolderKey = "sync.folder.subfolder"
     private static let deviceKey = "sync.device.id"
     private static let vendorKey = "sync.device.vendor"
 
@@ -75,12 +78,14 @@ final class SyncFolder {
                     accessing = url
                 }
             }
+            let subfolder = defaults.string(forKey: Self.subfolderKey) ?? ""
+            let folder = subfolder.isEmpty ? url : url.appendingPathComponent(subfolder, isDirectory: true)
             var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue,
-                  !url.path.contains("/.Trash/") else {
+            guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue,
+                  !folder.path.contains("/.Trash/") else {
                 resolved = nil
                 problem = "Mappen \(name) finns inte längre i iCloud Drive. Välj en mapp igen under Inställningar, Synk."
-                AppLog.shared.write("Synkmappen finns inte längre (\(url.lastPathComponent))")
+                AppLog.shared.write("Synkmappen finns inte längre (\(folder.lastPathComponent))")
                 return
             }
             if stale, let fresh = try? url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil,
@@ -88,7 +93,7 @@ final class SyncFolder {
                 defaults.set(fresh, forKey: Self.bookmarkKey)
                 AppLog.shared.write("Synkmappens bokmärke förnyat")
             }
-            resolved = url
+            resolved = folder
             problem = nil
         } catch {
             stopAccess()
@@ -104,7 +109,8 @@ final class SyncFolder {
     }
 
     /// Sparar mappen som dokumentväljaren gav. Inget i mappen ändras här, det gör provet (`probe`).
-    func choose(_ url: URL) throws {
+    /// `subfolder`: synkmappen är undermappen med det namnet i den valda mappen (M1, guiden har skapat den).
+    func choose(_ url: URL, subfolder: String? = nil) throws {
         let started = url.startAccessingSecurityScopedResource()
         defer {
             if started {
@@ -113,8 +119,14 @@ final class SyncFolder {
         }
         let data = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
         defaults.set(data, forKey: Self.bookmarkKey)
-        defaults.set(url.lastPathComponent, forKey: Self.nameKey)
-        AppLog.shared.write("Synkmappen vald: \(url.lastPathComponent)")
+        if let subfolder = subfolder, !subfolder.isEmpty {
+            defaults.set(subfolder, forKey: Self.subfolderKey)
+            defaults.set(subfolder, forKey: Self.nameKey)
+        } else {
+            defaults.removeObject(forKey: Self.subfolderKey)
+            defaults.set(url.lastPathComponent, forKey: Self.nameKey)
+        }
+        AppLog.shared.write("Synkmappen vald: \(name)" + ((subfolder ?? "").isEmpty ? "" : " (ny mapp i \(url.lastPathComponent))"))
         refresh()
         NotificationCenter.default.post(name: Self.didChange, object: nil)
     }
@@ -124,6 +136,7 @@ final class SyncFolder {
         stopAccess()
         defaults.removeObject(forKey: Self.bookmarkKey)
         defaults.removeObject(forKey: Self.nameKey)
+        defaults.removeObject(forKey: Self.subfolderKey)
         resolved = nil
         problem = nil
         resolvedOnce = true
@@ -156,6 +169,111 @@ final class SyncFolder {
 
     static func fileName(for deviceID: String) -> String {
         deviceID + "." + SyncFile.fileExtension
+    }
+}
+
+/// Vad en mapp innehåller, innan den väljs som synkmapp (granskning 6, M1). Allt i synkmappen blir böcker i
+/// biblioteket och hämtas till iPaden, så guiden vill ha en egen, ny mapp: roten i iCloud Drive väljs aldrig, och en
+/// mapp med många böcker eller djupa undermappar ger en fråga eller vägras. Räkningen slutar vid gränsen för antal
+/// poster, så den tar aldrig lång tid. Körs i bakgrunden.
+struct FolderSurvey: Equatable {
+    /// Böcker, också platshållare för böcker som inte är hämtade.
+    var books = 0
+    var folders = 0
+    /// Den djupaste bokens djup: 1 direkt i mappen, 2 i en undermapp.
+    var depth = 0
+    /// Sant när räkningen slutade vid gränsen, mappen har fler poster än så.
+    var truncated = false
+
+    /// Liten nog att väljas utan fråga.
+    var isSmall: Bool {
+        !truncated && books <= 20 && folders <= 10 && depth <= 3
+    }
+
+    /// För stor: biblioteket skulle inte visa allt (gränserna i `LibraryStore`). Bara en egen ny mapp går då.
+    var isTooBig: Bool {
+        truncated || books > LibraryStore.cloudBookLimit || depth > LibraryStore.cloudDepthLimit
+    }
+
+    /// "45 böcker och 12 mappar", till frågan.
+    var description: String {
+        let more = truncated ? "fler än " : ""
+        let bookText = books == 1 ? "en bok" : "\(more)\(books) böcker"
+        let folderText = folders == 0 ? "inga undermappar" : (folders == 1 ? "en undermapp" : "\(more)\(folders) undermappar")
+        return "\(bookText) och \(folderText)"
+    }
+
+    /// Roten i iCloud Drive (iCloud Drive överst i Filer).
+    static func isCloudDriveRoot(_ url: URL) -> Bool {
+        url.standardizedFileURL.lastPathComponent == "com~apple~CloudDocs"
+    }
+
+    /// Sant om mappen ligger i iCloud Drive (L6), och inte under På min iPad eller hos en annan tjänst.
+    static func isInCloudDrive(_ url: URL) -> Bool {
+        if (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true {
+            return true
+        }
+        return url.resolvingSymlinksInPath().standardizedFileURL.path.contains("/Mobile Documents/")
+    }
+
+    static func of(_ root: URL) -> FolderSurvey {
+        var survey = FolderSurvey()
+        let base = root.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey],
+                                                              options: [.skipsPackageDescendants]) else {
+            return survey
+        }
+        var entries = 0
+        for case let url as URL in enumerator {
+            entries += 1
+            if entries > LibraryStore.cloudEntryLimit {
+                survey.truncated = true
+                break
+            }
+            let name = url.lastPathComponent
+            let components = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+            guard components.count > base.count, Array(components.prefix(base.count)) == base else { continue }
+            let depth = components.count - base.count
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                if name.hasPrefix(".") || (depth == 1 && name == SyncFile.folderName) {
+                    enumerator.skipDescendants()
+                } else {
+                    survey.folders += 1
+                }
+                continue
+            }
+            let real = name.hasPrefix(".") ? SyncFiles.placeholderTarget(name) : name
+            guard let bookName = real,
+                  BookPlace.bookExtensions.contains((bookName as NSString).pathExtension.lowercased()) else { continue }
+            survey.books += 1
+            survey.depth = max(survey.depth, depth)
+        }
+        return survey
+    }
+
+    /// Skapar mappen Sensus i `parent` (eller använder en liten befintlig Sensus, till exempel en som datorn
+    /// redan skapat). Är Sensus upptagen av något stort blir det Sensus 2 och så vidare. Ger mappens namn.
+    static func makeOwnFolder(in parent: URL) -> Result<String, Error> {
+        let manager = FileManager.default
+        for number in 1...20 {
+            let name = number == 1 ? "Sensus" : "Sensus \(number)"
+            let folder = parent.appendingPathComponent(name, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            if manager.fileExists(atPath: folder.path, isDirectory: &isDirectory) {
+                if isDirectory.boolValue, of(folder).isSmall {
+                    return .success(name)
+                }
+                continue
+            }
+            do {
+                try manager.createDirectory(at: folder, withIntermediateDirectories: false)
+                AppLog.shared.write("Synkmappen \(name) skapad i \(parent.lastPathComponent)")
+                return .success(name)
+            } catch {
+                return .failure(error)
+            }
+        }
+        return .failure(SyncFiles.WriteError.failed("Det finns redan många mappar som heter Sensus."))
     }
 }
 
@@ -322,6 +440,31 @@ enum SyncFiles {
         try? FileManager.default.moveItem(at: url, to: aside)
     }
 
+    /// L10: väntar högst `wait` sekunder på att iCloud tar emot en fil. Ger felet från iCloud (till exempel fullt
+    /// iCloud), eller nil när filen är uppladdad, inte ligger i iCloud (simulatorn) eller inte hunnit laddas upp
+    /// (det står då i loggen). Körs i bakgrunden.
+    static func uploadProblem(_ url: URL, wait: Double) -> String? {
+        let deadline = Date().addingTimeInterval(wait)
+        while true {
+            var current = url
+            current.removeAllCachedResourceValues()
+            let values = try? current.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemIsUploadedKey,
+                                                               .ubiquitousItemUploadingErrorKey])
+            guard values?.isUbiquitousItem == true else { return nil }
+            if let error = values?.ubiquitousItemUploadingError {
+                return error.localizedDescription
+            }
+            if values?.ubiquitousItemIsUploaded == true {
+                return nil
+            }
+            if Date() >= deadline {
+                AppLog.shared.write("\(url.lastPathComponent) laddas fortfarande upp till iCloud efter \(Int(wait)) s")
+                return nil
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+    }
+
     /// Provet i guiden (U7): skriver en liten fil i synkmappen, läser tillbaka den och tar bort den.
     static func probe(_ directory: URL) -> String? {
         let url = directory.appendingPathComponent(".sensus-prov-\(UUID().uuidString.prefix(8)).txt")
@@ -332,7 +475,18 @@ enum SyncFiles {
         } catch {
             return "Sensus kunde inte skriva i mappen: \(error.localizedDescription)"
         }
+        // L10: att filen går att skriva på iPaden räcker inte. Är iCloud fullt tar iCloud inte emot den.
+        let upload = uploadProblem(url, wait: 10)
         var deleteError: NSError?
+        if let problem = upload {
+            AppLog.shared.write("Provet i synkmappen: iCloud tog inte emot filen: \(problem)")
+            NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: [.forDeleting],
+                                                             error: &deleteError) { target in
+                try? FileManager.default.removeItem(at: target)
+            }
+            return "Filen sparades på iPaden men iCloud tog inte emot den (\(problem)). Kontrollera att det finns plats "
+                + "i iCloud, under Inställningar, ditt namn, iCloud."
+        }
         NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: [.forDeleting],
                                                          error: &deleteError) { target in
             try? FileManager.default.removeItem(at: target)

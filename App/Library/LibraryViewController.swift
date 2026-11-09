@@ -112,6 +112,9 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
                                                object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(syncFolderChanged), name: SyncFolder.didChange,
                                                object: nil)
+        // M1: iCloud-mappen läses i bakgrunden. När läsningen gett något nytt läses biblioteket om.
+        NotificationCenter.default.addObserver(self, selector: #selector(cloudListingChanged),
+                                               name: LibraryStore.cloudDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: Theme.didChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(coverUpdated), name: CoverStore.didUpdate,
                                                object: nil)
@@ -756,6 +759,7 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         collectionView.reloadData()
         updateEmptyState()
         prepareCovers()
+        updateActivity()
     }
 
     private var pendingCount = 0
@@ -781,6 +785,13 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         let waiting = LibraryStore.shared.waitingCloudBooks.count
         if waiting > 0 {
             lines.append((waiting == 1 ? "Hämtar en bok från iCloud" : "Hämtar \(waiting) böcker från iCloud", nil))
+        }
+        // M2: samma bok i Böcker och i iCloud-mappen visas en gång.
+        let twins = BookRegistry.shared.hiddenDuplicates
+        if !twins.isEmpty {
+            let names = twins.map { ($0 as NSString).lastPathComponent }.sorted()
+            let shown = names.prefix(3).joined(separator: ", ") + (names.count > 3 ? " med flera" : "")
+            lines.append(("Samma bok på två ställen, visas en gång: \(shown)", nil))
         }
         return lines
     }
@@ -887,6 +898,11 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         reload()
     }
 
+    @objc private func cloudListingChanged() {
+        guard isViewLoaded else { return }
+        reload()
+    }
+
     // MARK: Böcker i iCloud-mappen (B4)
 
     private var cloudTimer: Timer?
@@ -907,13 +923,9 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
 
     @objc private func cloudTimerFired() {
         guard view.window != nil, presentedViewController == nil else { return }
-        let before = LibraryStore.shared.waitingCloudBooks
-        // Biblioteket läses om bara när en bok blivit hämtad, så att rutnätet inte ritas om var femte sekund.
-        guard LibraryStore.shared.listing().waiting != before else { return }
-        reload()
-        if LibraryStore.shared.waitingCloudBooks != before {
-            AppLog.shared.write("iCloud-mappen: \(LibraryStore.shared.waitingCloudBooks.count) böcker hämtas")
-        }
+        // M1: mappen läses om i bakgrunden. Biblioteket läses om bara när läsningen gett något nytt
+        // (`cloudListingChanged`), så att rutnätet inte ritas om var femte sekund.
+        LibraryStore.shared.refreshCloud()
     }
 
     /// Flytta till iCloud-mappen eller till bara iPaden, i hållmenyn.

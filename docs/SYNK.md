@@ -4,8 +4,8 @@ Läsposition, markeringar med anteckningar, bokmärken och sparade ord (med repe
 
 ## Ställa in (en gång)
 
-1. I appen Filer på iPaden: skapa en mapp i iCloud Drive, till exempel `Sensus`.
-2. iPaden: Inställningar, Synk, Välj mapp i iCloud Drive. Välj mappen och tryck Öppna. Appen provar att skriva och läsa där och visar en grön bock.
+1. iPaden: Inställningar, Synk, Välj mapp i iCloud Drive. Gå till iCloud Drive överst och tryck Öppna. Sensus skapar då mappen `Sensus` där (en liten befintlig `Sensus` används), provar att skriva och läsa där och att iCloud tar emot filen, och visar en grön bock.
+2. Granskning 6, M1: roten i iCloud Drive blir aldrig själva synkmappen (bokmärket gäller då roten och undermappen sparas som `sync.folder.subfolder`). En mapp med fler än 20 böcker, fler än 10 undermappar eller böcker djupare än tre nivåer ger frågan Skapa mappen Sensus i mappen, Använd ändå eller Avbryt. Är den för stor (fler än 300 böcker, djupare än fyra nivåer eller fler än 3 000 poster) går bara en ny mapp. En mapp utanför iCloud Drive vägras.
 3. Datorn: installera iCloud för Windows och slå på iCloud Drive. Mappen syns då som `C:\Users\<namn>\iCloudDrive\Sensus`. I Sensus för Windows: Inställningar, Synk, fyll i mappen (eller tryck Hitta iCloud Drive) och tryck Spara och prova.
 
 Mappen sparas på iPaden som ett säkerhetsbokmärke. Går den inte att nå (mappen borttagen eller flyttad till papperskorgen, bokmärket för gammalt) står det i orange i biblioteket och under Synk, och ingenting tas bort.
@@ -14,7 +14,9 @@ Mappen sparas på iPaden som ett säkerhetsbokmärke. Går den inte att nå (map
 
 Böcker som ligger i mappen (också i undermappar, som blir kurser som i Böcker) syns i biblioteket på iPaden och finns på alla enheter. Böcker i appens egen mapp Böcker finns bara på iPaden. Valet görs per bok i hållmenyn: Flytta till iCloud-mappen eller Flytta till bara iPaden. Flytten kopierar först, läser kopian igen och jämför kontrollsumman, och tar bort originalet först sedan. Bokens id i bokregistret följer med, och därmed markeringar, bokmärken, läsposition och sparade ord. I registret har en bok i mappen sökvägen `/iCloud/<sökväg i mappen>`. En sökväg i Böcker börjar aldrig med snedstreck, så de två går aldrig ihop.
 
-En bok som iCloud inte hämtat än (en platshållare, `.Bok.pdf.icloud` i iOS 15) börjar hämtas och visas när den är hämtad. Biblioteket säger Hämtar 2 böcker från iCloud så länge. Undermappen `Sensus synk` och filer som inte är böcker visas inte. Windows-appen läser inte böcker ur mappen än, där läggs böckerna in som förut.
+Mappen läses i bakgrunden, aldrig på huvudtråden, med gränserna ovan (`LibraryStore.readCloud`). Biblioteket visar den senaste läsningen, och innan mappen lästs en gång räknas dess böcker som utom räckhåll, så att inget markeras som borta. Saknas mappen medan appen kör (L2) gäller samma sak. Samma bok (samma kontrollsumma) i Böcker och i mappen är en bok med ett id (M2, `BookMatch.duplicate`): den andra filen visas inte, biblioteket säger Samma bok på två ställen, och tas den som visas bort tar den andra över markeringarna. Flytten räknar en platshållare med samma namn som upptagen (M3), byter namn genom filkoordineringen, använder en likadan fil som redan ligger på den nya platsen i stället för en kopia, och avbryts om iCloud inte tar emot boken (L10, till exempel fullt iCloud). Kvarlämnade kopior från en avbruten flytt tas bort efter en timme (L5).
+
+En bok som iCloud inte hämtat än (en platshållare, `.Bok.pdf.icloud` i iOS 15) börjar hämtas och visas när den är hämtad (högst 20 nya hämtningar per läsning). Biblioteket säger Hämtar 2 böcker från iCloud så länge. Undermappen `Sensus synk` och filer som inte är böcker visas inte. Windows-appen läser inte böcker ur mappen än, där läggs böckerna in som förut.
 
 ## Hur det fungerar
 
