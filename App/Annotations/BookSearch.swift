@@ -228,6 +228,53 @@ final class BookSearch {
         }
     }
 
+    /// K6: var frågornas citat står. `hints` är avsnittet att börja i (filens sida eller kapitlet) eller nil.
+    /// Först letas det i avsnitten närmast hjälpen, sedan i resten av boken, där varje avsnitt läses en gång
+    /// för alla citat som saknas. Svarar med träffen eller nil per citat, i samma ordning.
+    func locate(_ quotes: [String], hints: [Int?]) async -> [SearchHit?] {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: self.locateOnQueue(quotes, hints: hints))
+            }
+        }
+    }
+
+    private func locateOnQueue(_ quotes: [String], hints: [Int?]) -> [SearchHit?] {
+        let queries = quotes.map { FoldedText.query($0) }
+        var result = [SearchHit?](repeating: nil, count: quotes.count)
+        let count = sectionCount()
+        defer { pdfDocument = nil }
+        guard count > 0 else { return result }
+        let usable = queries.indices.filter { ($0 < hints.count) && (queries[$0] as NSString).length >= 2 }
+        func first(_ index: Int, in section: Int) -> SearchHit? {
+            guard section >= 0, section < count, let chapter = text(of: section) else { return nil }
+            return Self.find(queries[index], in: chapter.folded, original: chapter.original, section: section, limit: 1).first
+        }
+        for index in usable {
+            guard let hint = hints[index] else { continue }
+            for offset in [0, 1, -1, 2, -2] {
+                if let hit = first(index, in: hint + offset) {
+                    result[index] = hit
+                    break
+                }
+            }
+        }
+        var missing = usable.filter { result[$0] == nil }
+        var section = 0
+        while !missing.isEmpty, section < count {
+            if let chapter = text(of: section) {
+                missing.removeAll { index in
+                    guard let hit = Self.find(queries[index], in: chapter.folded, original: chapter.original,
+                                              section: section, limit: 1).first else { return false }
+                    result[index] = hit
+                    return true
+                }
+            }
+            section += 1
+        }
+        return result
+    }
+
     /// Om sökningen har kvar sitt exemplar av boken eller kapiteltexter (till självtestet).
     var holdsBookText: Bool {
         queue.sync { pdfDocument != nil || !chapterTexts.isEmpty }

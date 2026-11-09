@@ -133,6 +133,23 @@ enum LibrarySelfTest {
             library.setScope(.all)
         }
         SelfTest.log("Sidopanelen (B3): \(library.sidebar.rowsForSelfTest.joined(separator: " | "))")
+        // U6: kortet Repetera visar samma antal som sidopanelen, och ett tryck öppnar repetitionen.
+        library.reload()
+        let study = library.studyItems.map { "\($0.title): \($0.text)" }.joined(separator: " | ")
+        let reviewCount = UserWords.shared.reviewCount()
+        let cardCount = library.studyItems.compactMap { item -> Int? in
+            if case .review(let count) = item {
+                return count
+            }
+            return nil
+        }.first
+        SelfTest.log("Studiekort (U6): \(study.isEmpty ? "inga" : study), kön har \(reviewCount) ord. "
+                     + (cardCount == reviewCount ? "Rätt" : "FEL"))
+        library.openReview()
+        await pause(0.6)
+        SelfTest.log("Kortet Repetera öppnar: \(navigation.topViewController is WordReviewViewController ? "repetitionen" : "FEL")")
+        navigation.popToRootViewController(animated: false)
+        await pause(0.3)
 
         await testFirstStart(library: library)
 

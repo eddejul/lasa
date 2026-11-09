@@ -7,6 +7,7 @@ All text är skriven för testet och fri att använda.
 Användning: python3 tools/simtest/make_books.py <mapp>
 """
 
+import json
 import random
 import sys
 import zipfile
@@ -576,6 +577,46 @@ def make_photo_text_pair(folder):
     (folder / "foto-text.txt").write_text("\n\n".join(pages), encoding="utf-8")
 
 
+def make_questions(folder):
+    """K6: frågefiler bredvid testböckerna, i formatet i docs/FRAGOR.md. Citaten står ordagrant i böckerna.
+    Filen heter som boken plus .fragor.json, så att test.pdf och test.epub får var sin."""
+    pdf = {
+        "sensus": "frågor",
+        "version": 1,
+        "bok": "test.pdf",
+        "fragor": [
+            {"id": "p1", "sida": 2, "citat": "Den som söker kunskap måste läsa noga",
+             "titel": "Att läsa noga", "fraga": "Vad måste den som söker kunskap göra?",
+             "svar": ["Läsa noga.", "Pröva det hon läser."]},
+            {"id": "p2", "sida": 3, "citat": "Det här stycket har en fotnot",
+             "fraga": "Vart leder fotnotssiffran på sidan?", "svar": "Till noten nederst på sista sidan."},
+            {"id": "p3", "sida": 5, "y": 0.5,
+             "fraga": "En fråga utan citat, som på en fotad sida: står pricken mitt på sidan?",
+             "svar": "Ja, på halva höjden."},
+            {"id": "p4", "sida": 6, "citat": "Kapitel 6", "fraga": "Vilket språk är kapitel 6 skrivet på?",
+             "svar": "Engelska."},
+            {"id": "p5", "citat": "Den här meningen finns inte i boken", "fraga": "Hittas det här citatet?",
+             "svar": "Nej, den står som inte hittad i fliken Frågor."},
+        ],
+    }
+    epub = {
+        "sensus": "frågor",
+        "version": 1,
+        "bok": "test.epub",
+        "fragor": [
+            {"id": "e1", "citat": "Det här kapitlet handlar om", "kapitel": "Kapitel 1: Början",
+             "titel": "Kapitlets ämne", "fraga": "Vad handlar första kapitlet om?",
+             "svar": ["Om kunskap.", "Om hur man undersöker en ny plats."]},
+            {"id": "e2", "citat": "Det här stycket har en fotnot", "kapitel": "Kapitel 3",
+             "fraga": "Var finns fotnoten?", "svar": "I kapitlet Noter sist i boken."},
+            {"id": "e3", "citat": "The morning was quiet", "fraga": "Vad rörde sig långsamt under bron?",
+             "svar": "Floden."},
+        ],
+    }
+    for name, data in (("test.pdf.fragor.json", pdf), ("test.epub.fragor.json", epub)):
+        (folder / name).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def main():
     folder = Path(sys.argv[1] if len(sys.argv) > 1 else "build/testbooks")
     folder.mkdir(parents=True, exist_ok=True)
@@ -587,6 +628,7 @@ def main():
     make_pdf(folder / "test.pdf", rng)
     make_cover_epub(folder / "roman.epub")
     make_photo_text_pair(folder)
+    make_questions(folder)
     if sys.platform == "darwin":
         make_photo_pdf(folder / "foto.pdf", random.Random(11))
     for item in sorted(folder.iterdir()):

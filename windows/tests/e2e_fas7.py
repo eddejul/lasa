@@ -530,7 +530,7 @@ def review(page, books, out):
     page.keyboard.press('Space')
     check(wait_for(lambda: page.locator('[data-testid="review-answer"]').is_visible()), 'mellanslag visar svaret')
     whens = page.locator('.grade-when').all_inner_texts()
-    check(whens == ['10 min', '1 dag', '1 dag', '4 dagar'], f'betygen visar när ordet kommer igen, som på iPaden: {whens}')
+    check(whens == ['10 min', '6 tim', '1 dag', '4 dagar'], f'betygen visar när ordet kommer igen, som på iPaden (U6): {whens}')
     page.screenshot(path=os.path.join(out, "f09-repetera.png"))
     page.keyboard.press('3')
     check(wait_for(lambda: page.locator('[data-testid="review-done"]').count() == 1
