@@ -304,6 +304,14 @@ final class SyncGuideViewController: UITableViewController, UIDocumentPickerDele
 
     /// Sparar mappen, provar att skriva och läsa där och synkar om provet gick bra. Också till självtestet.
     func use(_ url: URL) {
+        // Appens egen mapp Böcker (eller mappen den ligger i) går inte: böckerna skulle synas två gånger.
+        let books = LibraryStore.shared.booksDirectory.resolvingSymlinksInPath().standardizedFileURL.path
+        let chosen = url.resolvingSymlinksInPath().standardizedFileURL.path
+        if chosen == books || chosen.hasPrefix(books + "/") || books.hasPrefix(chosen + "/") {
+            probeResult = .some("Välj en mapp i iCloud Drive, inte Sensus egen mapp Böcker eller mappen den ligger i.")
+            rebuild()
+            return
+        }
         do {
             try SyncFolder.shared.choose(url)
         } catch {
