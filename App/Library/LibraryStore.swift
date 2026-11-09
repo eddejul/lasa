@@ -128,6 +128,8 @@ final class LibraryStore {
         for case let url as URL in enumerator {
             let values = try? url.resourceValues(forKeys: Set(keys))
             guard values?.isDirectory != true else { continue }
+            // K6: frågefilerna bredvid böckerna (Bok.pdf.fragor.json) är inga böcker.
+            guard !BookQuestionFile.isQuestionFile(url.lastPathComponent) else { continue }
             let components = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
             guard components.count > base.count, Array(components.prefix(base.count)) == base else { continue }
             let path = components.dropFirst(base.count).joined(separator: "/")

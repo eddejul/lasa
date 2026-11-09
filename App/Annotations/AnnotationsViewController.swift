@@ -134,20 +134,34 @@ final class AnnotationsViewController: UITableViewController {
 final class ReaderContentsContainerViewController: UIViewController {
 
     private let pages: [UIViewController]
-    private let picker = UISegmentedControl(items: ["Innehåll", "Bokmärken", "Markeringar"])
+    private let picker: UISegmentedControl
     private var current: UIViewController?
 
     /// `contents` är bokens innehållsförteckning, `annotations` visar bokmärken eller markeringar efter valet.
-    init(contents: UIViewController, annotations: AnnotationsViewController, initial: Int) {
+    /// `questions` (K6) är fliken Frågor, bara när frågorna i marginalen är påslagna.
+    init(contents: UIViewController, annotations: AnnotationsViewController, initial: Int,
+         questions: UIViewController? = nil) {
         self.annotations = annotations
-        self.pages = [contents, annotations]
+        self.questions = questions
+        self.pages = [contents, annotations] + (questions.map { [$0] } ?? [])
         self.initial = initial
+        picker = UISegmentedControl(items: ["Innehåll", "Bokmärken", "Markeringar"] + (questions == nil ? [] : ["Frågor"]))
         super.init(nibName: nil, bundle: nil)
         preferredContentSize = CGSize(width: 420, height: 640)
     }
 
     private let annotations: AnnotationsViewController
+    private let questions: UIViewController?
     private let initial: Int
+
+    /// Självtestet: antalet flikar och raderna i Frågor.
+    var tabCount: Int {
+        picker.numberOfSegments
+    }
+
+    var questionRowCount: Int {
+        (questions as? QuestionListViewController)?.count ?? -1
+    }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) används inte")
@@ -156,7 +170,7 @@ final class ReaderContentsContainerViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
-        picker.selectedSegmentIndex = min(max(initial, 0), 2)
+        picker.selectedSegmentIndex = min(max(initial, 0), picker.numberOfSegments - 1)
         picker.addTarget(self, action: #selector(pickerChanged), for: .valueChanged)
         navigationItem.titleView = picker
         show(picker.selectedSegmentIndex)
@@ -166,9 +180,9 @@ final class ReaderContentsContainerViewController: UIViewController {
         show(picker.selectedSegmentIndex)
     }
 
-    /// Väljer flik med kod: 0 innehåll, 1 bokmärken, 2 markeringar.
+    /// Väljer flik med kod: 0 innehåll, 1 bokmärken, 2 markeringar, 3 frågor (när fliken finns).
     func showTab(_ index: Int) {
-        picker.selectedSegmentIndex = min(max(index, 0), 2)
+        picker.selectedSegmentIndex = min(max(index, 0), picker.numberOfSegments - 1)
         show(picker.selectedSegmentIndex)
     }
 
@@ -178,7 +192,7 @@ final class ReaderContentsContainerViewController: UIViewController {
     }
 
     private func show(_ index: Int) {
-        let target: UIViewController = index == 0 ? pages[0] : annotations
+        let target: UIViewController = index == 0 ? pages[0] : (index == 3 ? (questions ?? annotations) : annotations)
         if index == 1 {
             annotations.kind = .bookmarks
         } else if index == 2 {

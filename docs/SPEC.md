@@ -201,6 +201,7 @@ Byggd 7 november 2026 på grenen `fas4`.
 Byggd 7 november 2026 på grenen `fas6`.
 
 * **Repetera ord:** kort med ordet och meningen det stod i, svaret ur ordboken bakom ett tryck. Igen, Svårt, Bra och Lätt flyttar ordet i ett schema i stil med Anki (Igen: tio minuter, Bra: en dag, sedan tre dagar och vidare). Högst 20 nya ord per dag.
+* **Kortläget (U6, 9 november 2026):** kortet Repetera i biblioteket med antalet ord, en tunn framstegslinje och ett papperskort med ordet, meningen och källan, svaret tonas fram vid ett tryck och betygen ligger längst ner med intervallet under. Filter överst: alla ord, en bok eller en kurs. Svårt ger alltid kortare tid än Bra (nytt ord: 10 min, 6 tim, 1 dag, 4 dagar). Småord sparas aldrig, och ord utan svar i ordboken kommer inte med. Ingen tid för omgången, bara antal ord.
 * **Uppläsning:** byggdes med AVSpeechSynthesizer men togs bort 8 november 2026, eftersom rösterna lät som en robot. Ett bättre alternativ undersöks senare.
 * **AI-knappen:** se 5.5. Modellen är `gemini-3.5-flash-lite` från början och kan bytas under Inställningar.
 * **Synk:** se `docs/SYNK.md`. Byggdes först mot Supabase, som aldrig sattes upp, och ersattes i våg 9 (9 november 2026) av en fil per enhet i en mapp i iCloud Drive (F1). Den nyaste ändringen vinner rad för rad.
@@ -280,6 +281,11 @@ Byggd 7 november 2026 på grenen `fas6`.
 
 * **Förklara stycket (A1):** knappen Förklara i markeringsraden. Stycket där markeringen ligger (EPUB och text) eller meningen med två före och två efter (PDF), högst 2 400 tecken, skickas med bokens titel och kapitlets rubrik, aldrig hela kapitel. Svaret på svenska: kärnan på vanlig svenska, nyckelbegreppen med kort definition, ett eget exempel och en kontrollfråga (svaret bakom Visa svaret). Det sparas som anteckning på markeringen, under en egen anteckning om det finns en. Samma fråga hämtas aldrig två gånger (sparade svar i `ai-svar.sqlite`), rutan visar dagens anrop, och saknad nyckel, fel nyckel, kvot slut för dagen (fylls på vid midnatt i Kalifornien, klockan 9 svensk tid) eller minuten och inget nät ger begripliga besked. Knappen syns även utan nyckel, då leder rutan till guiden.
 * **AI-nyckeln steg för steg (U7):** Inställningar har en rad Förklaring med AI med läget i färg (inte uppsatt, inte provad, fungerar, fel). Guiden: Öppna Google AI Studio (sidan API keys i Safari i appen), Klistra in nyckeln (eller skriv in den), appen provar nyckeln med ett anrop som inte drar av kvoten för svar (models.get) och visar en grön bock eller vad som är fel. En nyckel som Google underkänner sparas inte. Modellen och dagens anrop ligger i guiden. Synkens rader är orörda (F1 bygger om synken).
+
+### 6.15 Våg 8a, studiet (9 november 2026)
+
+* **Frågor i marginalen (K6):** en frågefil bredvid boken (`Bok.pdf.fragor.json`, formatet i `docs/FRAGOR.md`) ger en liten numrerad prick i marginalen vid varje frågas citat, också i smala marginaler och uppslag. Tryck visar frågan, Visa svaret visar svaret, och Kan, Osäker och Kan inte sparas (steg 10) och färgar pricken. Innehåll får fliken Frågor (hopp till stället, eller Välj frågefil). Av och på i Aa, från början av: avstängt ser läsaren ut som förut. Fotade sidor utan text får pricken på sidan och höjden i filen.
+* **Självtest efter kapitlet (K7):** när sista sidan i ett kapitel vänts visas raden Testa dig på kapitlet (Testa eller Hoppa över, försvinner av sig själv). Tre slags kort utan AI: lucktext ur en egen markering, flerval (fyra ord, de felaktiga ur andra markeringar och begrepp) och kapitlets frågor ur frågefilen. Korten får samma schema som orden (steg 11), och Dagens markeringar i biblioteket tar de kort som är på tur och högst tio nya om dagen. Ingen tid någonstans.
 
 ## 7. Bygge och installation
 

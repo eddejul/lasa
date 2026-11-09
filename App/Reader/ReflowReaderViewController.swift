@@ -87,6 +87,13 @@ final class ReflowReaderViewController: UIViewController {
     private var lastMarkMenuAnchor: CGRect?
     /// K12: anteckningarna bredvid texten, när panelen är framme.
     fileprivate var sideNotes: SideNotesPanel?
+    /// K6: bokens frågor i marginalen och trycket på en prick.
+    fileprivate var questions: ReaderQuestions?
+    fileprivate var questionTap: UITapGestureRecognizer?
+    /// Inställningen och platsernas version när citaten senast lades in i webbvyerna.
+    fileprivate var appliedQuestionsKey = ""
+    /// K7: kapitlen vars test redan erbjudits medan boken är öppen.
+    fileprivate var offeredChapterTests = Set<Int>()
     private var wordQueryRunning = false
     private var queuedWordPoint: CGPoint?
     private var pressEnded = false
@@ -293,6 +300,7 @@ final class ReflowReaderViewController: UIViewController {
             }
             installMarksProvider(on: renderer)
             self.renderer = renderer
+            setUpQuestions(content)
             // Sökregistret byggs i bakgrunden om det saknas, när de första sidorna hunnit visas (G11).
             SearchIndex.shared.prepare(SearchIndex.Key.make(for: book, chapters: content.chapters.count),
                                        source: .chapters(content.chapters.map { $0.url }), delay: 4)
@@ -434,6 +442,9 @@ final class ReflowReaderViewController: UIViewController {
                                             paperColor: theme.paperColor)
         page.isBookmarked = !bookmarksOnPage(page).isEmpty
         page.showsRibbonHint = !chromeHidden
+        page.questionInfo = { [weak self] id in
+            self?.questions?.info(for: id)
+        }
         page.onRetry = { [weak self] page in
             self?.retryChapter(page.chapter)
         }
@@ -966,7 +977,8 @@ final class ReflowReaderViewController: UIViewController {
         }
         let container = ReaderContentsContainerViewController(contents: contents,
                                                              annotations: makeAnnotationsList(),
-                                                             initial: 0)
+                                                             initial: 0,
+                                                             questions: makeQuestionsList())
         let navigation = UINavigationController(rootViewController: container)
         navigation.modalPresentationStyle = .popover
         navigation.popoverPresentationController?.barButtonItem = contentsItem
@@ -1502,9 +1514,14 @@ extension ReflowReaderViewController: UIPageViewControllerDataSource, UIPageView
             return
         }
         guard completed else { return }
+        let previousChapter = previousViewControllers.compactMap { ($0 as? ReflowPageViewController)?.chapter }.max()
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
         pagesChanged()
+        // K7: sista sidan i ett kapitel har vänts framåt.
+        if let previousChapter = previousChapter, currentChapter > previousChapter {
+            offerChapterTest(chapter: previousChapter)
+        }
         OnboardingTips.shared.record(.turn, book: book)
     }
 }
@@ -1539,6 +1556,14 @@ extension ReflowReaderViewController: UIGestureRecognizerDelegate {
         }
         if gestureRecognizer === markDrag {
             return markMode
+        }
+        // K6: en frågeprick i marginalen går före bandet, länkarna, markeringarna och kanttrycket som bläddrar.
+        let onQuestion = !markMode && questionHit(at: touch.location(in: view)) != nil
+        if gestureRecognizer === questionTap {
+            return onQuestion
+        }
+        if onQuestion {
+            return false
         }
         // Bandet i hörnet (U3) går före kanttrycket som bläddrar, menyn och länkarna.
         let onRibbon = !markMode && ribbonPage(at: touch.location(in: view)) != nil
@@ -1657,6 +1682,10 @@ extension ReflowReaderViewController {
 
         await selfTestWord(name: "03-ord")
         await selfTestAnnotations()
+        if BookQuestionFile.url(for: book) != nil {
+            await selfTestQuestions()
+            await selfTestChapterTest()
+        }
         await selfTestResumeCard()
 
         let isFull = SelfTest.bookName?.lowercased().hasSuffix(".epub") == true
@@ -1865,6 +1894,7 @@ extension ReflowReaderViewController {
         logState("Liggande")
         SelfTest.saveScreen(view, name: "11-liggande")
         selfTestChromeCoverage("liggande")
+        await selfTestQuestionsInSpread()
         turn(forward: true)
         await pause(1.5)
         _ = await waitUntilShown()
@@ -2010,8 +2040,10 @@ extension ReflowReaderViewController {
     /// Renderaren lägger in kapitlets markeringar när kapitlet laddas.
     fileprivate func installMarksProvider(on renderer: ReflowRenderer) {
         let key = bookKey
-        renderer.marksProvider = { chapter in
+        renderer.marksProvider = { [weak self] chapter in
+            // K6: frågornas citat följer med som markeringar utan färg, så att webbvyn ger deras rutor.
             ReflowMarks.arguments(for: AnnotationStore.shared.highlights(book: key, section: chapter))
+                + (self?.questions?.markArguments(forChapter: chapter) ?? [])
         }
         renderer.wordsProvider = {
             SavedWordMarks.shared.forms
@@ -2857,5 +2889,275 @@ extension ReflowReaderViewController {
         }
         let after = AnnotationStore.shared.totalCounts()
         SelfTest.log("Sparat nu: \(after.highlights) markeringar, \(after.notes) anteckningar, \(after.bookmarks) bokmärken")
+    }
+}
+
+// MARK: Frågor i marginalen (K6)
+
+extension ReflowReaderViewController {
+
+    fileprivate func setUpQuestions(_ content: ReflowableBook) {
+        guard questions == nil else { return }
+        let questions = ReaderQuestions(book: book, bookKey: bookKey)
+        questions.onChange = { [weak self] in
+            self?.questionsChanged()
+        }
+        self.questions = questions
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleQuestionTap(_:)))
+        tap.delegate = self
+        view.addGestureRecognizer(tap)
+        questionTap = tap
+        NotificationCenter.default.addObserver(self, selector: #selector(questionsSettingChanged),
+                                               name: QuestionsSetting.didChange, object: nil)
+        if QuestionsSetting.isEnabled {
+            loadQuestions()
+        }
+    }
+
+    /// Sökningen som letar upp citaten, samma som bokens sökning (G11).
+    fileprivate func questionSearch() -> BookSearch? {
+        guard let content = content else { return nil }
+        let search = bookSearch ?? BookSearch(source: .chapters(content.chapters.map { $0.url }),
+                                              index: SearchIndex.Key.make(for: book, chapters: content.chapters.count))
+        bookSearch = search
+        return search
+    }
+
+    fileprivate func loadQuestions() {
+        guard let content = content, let search = questionSearch() else { return }
+        let titles = content.chapters.indices.map { content.title(ofChapter: $0) ?? "" }
+        questions?.load(search: search, chapterTitles: titles.isEmpty ? [""] : titles,
+                        sectionCount: content.chapters.count)
+    }
+
+    @objc fileprivate func questionsSettingChanged() {
+        if QuestionsSetting.isEnabled {
+            loadQuestions()
+        } else {
+            questionsChanged()
+        }
+    }
+
+    /// Platserna eller inställningen har ändrats: citaten läggs in i webbvyerna igen. Bara ett nytt svar:
+    /// prickarna ritas om på bladen som syns.
+    fileprivate func questionsChanged() {
+        let key = "\(QuestionsSetting.isEnabled)-\(questions?.placesVersion ?? -1)"
+        guard key != appliedQuestionsKey else {
+            for page in visiblePages where !page.isBlank {
+                page.refreshQuestionDots()
+            }
+            return
+        }
+        appliedQuestionsKey = key
+        let shown = Set(visiblePages.filter { !$0.isBlank }.map(\.chapter))
+        for chapter in shown.union(renderer?.loadedChapters ?? []) {
+            reloadMarks(inChapter: chapter)
+        }
+        for page in visiblePages where !page.isBlank {
+            page.refreshQuestionDots()
+        }
+    }
+
+    fileprivate func questionHit(at point: CGPoint) -> (page: ReflowPageViewController, id: String)? {
+        guard questions?.showsDots == true else { return nil }
+        for page in visiblePages where !page.isBlank {
+            let local = page.view.convert(point, from: view)
+            if page.view.bounds.contains(local), let id = page.questionID(at: local) {
+                return (page, id)
+            }
+        }
+        return nil
+    }
+
+    @objc fileprivate func handleQuestionTap(_ tap: UITapGestureRecognizer) {
+        guard let hit = questionHit(at: tap.location(in: view)) else { return }
+        showQuestion(hit.id, on: hit.page)
+    }
+
+    fileprivate func showQuestion(_ id: String, on page: ReflowPageViewController) {
+        let rect = page.questionDotRect(id: id).map { view.convert($0, from: page.view) }
+            ?? CGRect(x: view.bounds.midX, y: 120, width: 2, height: 2)
+        questions?.presentCard(for: id, from: self, sourceView: view, sourceRect: rect)
+    }
+
+    /// Fliken Frågor i Innehåll, bara när frågorna är påslagna.
+    fileprivate func makeQuestionsList() -> UIViewController? {
+        guard QuestionsSetting.isEnabled, let questions = questions else { return nil }
+        return questions.makeList(placeLabel: { [weak self] place in
+            self?.chapterName(place.section) ?? "Avsnitt \(place.section + 1)"
+        }, onSelect: { [weak self] _, place in
+            guard let self = self else { return }
+            self.dismiss(animated: true)
+            self.reveal(chapter: place.section, body: "return lasaMarks.reveal(start, length);",
+                        arguments: ["start": place.start, "length": max(place.length, 1)])
+        })
+    }
+
+    /// Självtestet (K6): frågefilen bredvid test.epub, prickarna, rutan och svaret i databasen.
+    fileprivate func selfTestQuestions() async {
+        let wasEnabled = QuestionsSetting.isEnabled
+        QuestionsSetting.isEnabled = true
+        for _ in 0..<40 where questions?.isLocated != true {
+            await pause(0.2)
+        }
+        guard let questions = questions else { return }
+        let placed = questions.questions.filter { questions.place(of: $0.id) != nil }
+        let where_ = placed.map { "\($0.number) i \(chapterName(questions.place(of: $0.id)?.section ?? 0))" }
+        SelfTest.log("Frågor (K6): fil \(questions.fileURL?.lastPathComponent ?? "saknas"), \(questions.questions.count) frågor, "
+                     + "\(placed.count) placerade: " + where_.joined(separator: ", "))
+        guard let first = placed.first, let place = questions.place(of: first.id) else {
+            SelfTest.log("FEL: ingen fråga placerad (K6)")
+            QuestionsSetting.isEnabled = wasEnabled
+            return
+        }
+        reveal(chapter: place.section, body: "return lasaMarks.reveal(start, length);",
+               arguments: ["start": place.start, "length": place.length])
+        await pause(1.5)
+        _ = await waitUntilShown()
+        for _ in 0..<30 where visiblePages.map(\.questionDotCount).reduce(0, +) == 0 {
+            await pause(0.2)
+        }
+        let page = visiblePages.first { $0.questionDotRect(id: first.id) != nil }
+        let dotText = page?.questionDotRect(id: first.id).map { "\(Int($0.midX)),\(Int($0.midY))" } ?? "ingen"
+        SelfTest.log("Frågor (K6): \(visiblePages.map(\.questionDotCount).reduce(0, +)) prickar på bladen, "
+                     + "pricken för fråga \(first.number) vid \(dotText)")
+        SelfTest.saveScreen(view, name: "13-fragor")
+        if let page = page, let rect = page.questionDotRect(id: first.id) {
+            let point = view.convert(CGPoint(x: rect.midX, y: rect.midY), from: page.view)
+            SelfTest.log("Frågor (K6): trycket på pricken hittar \(questionHit(at: point)?.id ?? "ingen fråga"), "
+                         + "en markering där \(markHit(at: point)?.id ?? "ingen")")
+            showQuestion(first.id, on: page)
+            await pause(0.9)
+            if let navigation = presentedViewController as? UINavigationController,
+               let card = navigation.viewControllers.first as? QuestionCardViewController {
+                SelfTest.saveScreen(navigation.view, name: "13b-fraga")
+                card.revealAnswer()
+                await pause(0.4)
+                SelfTest.saveScreen(navigation.view, name: "13c-svar")
+                card.choose(.known)
+                await pause(0.3)
+                let saved = QuestionStore.shared.statuses(book: bookKey)[first.id]?.title ?? "inget"
+                SelfTest.log("Frågor (K6): svaret syns \(card.showsAnswer), sparat \(saved)")
+            } else {
+                SelfTest.log("FEL: rutan med frågan öppnades inte")
+            }
+            dismiss(animated: false)
+            await pause(0.5)
+            SelfTest.saveScreen(view, name: "13d-kan")
+        }
+        showContents()
+        await pause(0.8)
+        if let navigation = presentedViewController as? UINavigationController,
+           let container = navigation.viewControllers.first as? ReaderContentsContainerViewController {
+            container.showTab(3)
+            await pause(0.5)
+            SelfTest.log("Frågor (K6): flikar i Innehåll \(container.tabCount), rader i Frågor \(container.questionRowCount)")
+            SelfTest.saveScreen(navigation.view, name: "13e-flik")
+        } else {
+            SelfTest.log("FEL: Innehåll öppnades inte (K6)")
+        }
+        dismiss(animated: false)
+        await pause(0.4)
+        QuestionsSetting.isEnabled = false
+        await pause(1.5)
+        let left = visiblePages.map(\.questionDotCount).reduce(0, +)
+        SelfTest.log("Frågor (K6): avstängt ger \(left) prickar (ska vara 0)")
+        QuestionsSetting.isEnabled = wasEnabled
+    }
+}
+
+// MARK: Självtest efter kapitlet (K7)
+
+extension ReflowReaderViewController {
+
+    /// Sista sidan i kapitlet har vänts: erbjud ett test på kapitlet, en gång per kapitel medan boken är öppen.
+    fileprivate func offerChapterTest(chapter: Int) {
+        guard offeredChapterTests.insert(chapter).inserted else { return }
+        let title = chapterName(chapter)
+        let cards = chapterTestCards(chapter: chapter, title: title)
+        guard !cards.isEmpty else { return }
+        ChapterTestOffer.show(chapter: title, count: cards.count, in: view) { [weak self] in
+            guard let self = self else { return }
+            ChapterTestViewController.present(cards: cards, title: title, from: self)
+        }
+    }
+
+    /// Kapitlets kort: markeringarna i kapitlet och, när frågorna är påslagna, kapitlets frågor (K6).
+    fileprivate func chapterTestCards(chapter: Int, title: String) -> [ChapterTestCard] {
+        let all = AnnotationStore.shared.highlights(book: bookKey)
+        let here = all.filter { $0.section == chapter }
+        let questionsHere = questions?.showsDots == true ? (questions?.questions(inSection: chapter) ?? []) : []
+        let terms = ConceptStore.shared.concepts(book: bookKey).map(\.term)
+        return ChapterTestLogic.cards(highlights: here, allHighlights: all, questions: questionsHere, terms: terms,
+                                      book: bookKey, source: title)
+    }
+
+    /// Självtestet (K7): en markering i ett kapitel, erbjudandet, testet och schemat.
+    fileprivate func selfTestChapterTest() async {
+        guard let content = content, content.chapters.count > 2 else { return }
+        let chapter = 1
+        let text = "Kunskap kommer sällan av sig själv, den måste sökas upp och prövas mot verkligheten."
+        let added = AnnotationStore.shared.addHighlight(book: bookKey, section: chapter, start: 0,
+                                                        length: (text as NSString).length, text: text, color: .yellow)
+        offeredChapterTests.remove(chapter)
+        offerChapterTest(chapter: chapter)
+        await pause(0.4)
+        guard let offer = ChapterTestOffer.current else {
+            SelfTest.log("FEL: raden Testa dig på kapitlet visades inte (K7)")
+            return
+        }
+        SelfTest.saveScreen(view, name: "14-erbjudande")
+        offer.startTapped()
+        await pause(1.0)
+        if let navigation = presentedViewController as? UINavigationController,
+           let test = navigation.viewControllers.first as? ChapterTestViewController {
+            SelfTest.log("Självtest (K7): \(test.cardCount) kort i \(chapterName(chapter)), första "
+                         + "\(test.currentCard?.kindTitle ?? "inget"): \(test.currentCard?.prompt.prefix(80) ?? "")")
+            SelfTest.saveScreen(navigation.view, name: "14b-kort")
+            test.reveal()
+            await pause(0.3)
+            SelfTest.saveScreen(navigation.view, name: "14c-svar")
+            test.grade(.hard)
+            await pause(0.3)
+            let saved = StudyCardStore.shared.states()["m:" + added.id]
+            SelfTest.log("Självtest (K7): Svårt sparat \(saved != nil), nästa gång om "
+                         + "\(saved.map { ReviewSchedule.label(days: $0.interval) } ?? "inget")")
+        } else {
+            SelfTest.log("FEL: testet öppnades inte (K7)")
+        }
+        dismiss(animated: false)
+        await pause(0.4)
+    }
+}
+
+
+extension ReflowReaderViewController {
+
+    /// Självtestet (K6): prickarna i ett uppslag står i den yttre marginalen, till vänster på vänstersidan.
+    fileprivate func selfTestQuestionsInSpread() async {
+        guard BookQuestionFile.url(for: book) != nil, let questions = questions else { return }
+        QuestionsSetting.isEnabled = true
+        for _ in 0..<40 where !questions.isLocated {
+            await pause(0.2)
+        }
+        if let target = questions.questions.first(where: { questions.place(of: $0.id) != nil }),
+           let place = questions.place(of: target.id) {
+            reveal(chapter: place.section, body: "return lasaMarks.reveal(start, length);",
+                   arguments: ["start": place.start, "length": place.length])
+            await pause(1.5)
+            _ = await waitUntilShown()
+            for _ in 0..<30 where visiblePages.map(\.questionDotCount).reduce(0, +) == 0 {
+                await pause(0.2)
+            }
+            let report = visiblePages.compactMap { page -> String? in
+                guard let rect = page.questionDotRect(id: target.id) else { return nil }
+                let side = page.side == .left ? "vänstersidan" : (page.side == .right ? "högersidan" : "en sida")
+                return "\(side), x \(Int(rect.midX)) av \(Int(page.view.bounds.width))"
+            }
+            SelfTest.log("Frågor (K6) i uppslag: fråga \(target.number) på " + (report.isEmpty ? "ingen prick" : report.joined(separator: ", ")))
+            SelfTest.saveScreen(view, name: "11b-liggande-fragor")
+        }
+        QuestionsSetting.isEnabled = false
+        await pause(1.0)
     }
 }

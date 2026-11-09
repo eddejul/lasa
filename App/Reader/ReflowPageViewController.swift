@@ -28,6 +28,13 @@ final class ReflowPageViewController: UIViewController {
 
     // Fas 4: markeringar, bokmärke och sökträffar.
     private(set) var marks: [ReflowMarkRect] = []
+    /// K6: citatens rutor på sidan (id `fraga:` plus frågans id) och textens kolumn, ur sidbildens markeringar.
+    private var questionMarks: [ReflowMarkRect] = []
+    private var textColumn: CGRect?
+    private var questionFrames: [String: CGRect] = [:]
+    private let questionLayer = UIView()
+    /// K6: prickens nummer och svaret för en fråga, eller nil när prickarna inte ska synas. Sätts av läsaren.
+    var questionInfo: ((String) -> (number: Int, status: QuestionStatus?)?)?
     private var previewViews: [UIView] = []
     private let ribbon = UIImageView(image: UIImage(systemName: "bookmark.fill"))
     var isBookmarked = false {
@@ -83,6 +90,8 @@ final class ReflowPageViewController: UIViewController {
         view.backgroundColor = paperColor
         imageView.contentMode = .scaleToFill
         view.addSubview(imageView)
+        questionLayer.isUserInteractionEnabled = false
+        view.addSubview(questionLayer)
         ribbon.contentMode = .scaleAspectFit
         updateRibbon()
         ribbon.isAccessibilityElement = true
@@ -103,6 +112,10 @@ final class ReflowPageViewController: UIViewController {
         super.viewDidLayoutSubviews()
         let bounds = view.bounds
         imageView.frame = bounds
+        if questionLayer.frame != bounds {
+            questionLayer.frame = bounds
+            layoutQuestionDots()
+        }
         ribbon.frame = CGRect(x: bounds.width - 46, y: -2, width: 20, height: 32)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -200,12 +213,64 @@ final class ReflowPageViewController: UIViewController {
     private func show(_ snapshot: ReflowSnapshot) {
         imageView.image = snapshot.image
         links = snapshot.links
-        marks = snapshot.marks
+        // K6: citatens rutor och textens kolumn är inga markeringar man kan trycka på.
+        let prefix = ReaderQuestions.markPrefix
+        marks = snapshot.marks.filter { !$0.id.hasPrefix(prefix) && $0.id != ReaderQuestions.textColumnID }
+        questionMarks = snapshot.marks.filter { $0.id.hasPrefix(prefix) }
+        textColumn = snapshot.marks.first { $0.id == ReaderQuestions.textColumnID }?.rect
         hasImage = true
         isStale = false
         setFailureShown(false)
         // En ny bild har markeringen inritad, så förhandsvisningen behövs inte längre.
         clearPreview()
+        layoutQuestionDots()
+    }
+
+    // MARK: Frågor i marginalen (K6)
+
+    /// Ritar om prickarna, till exempel när ett svar har sparats eller frågorna slagits av.
+    func refreshQuestionDots() {
+        guard isViewLoaded else { return }
+        layoutQuestionDots()
+    }
+
+    /// Frågan vars prick ligger under en punkt i bladet, med lite marginal runt den lilla pricken.
+    func questionID(at point: CGPoint) -> String? {
+        questionFrames.first { $0.value.insetBy(dx: -10, dy: -10).contains(point) }?.key
+    }
+
+    func questionDotRect(id: String) -> CGRect? {
+        questionFrames[id]
+    }
+
+    /// Antalet prickar som ritats, till självtestet.
+    var questionDotCount: Int {
+        questionFrames.count
+    }
+
+    private func layoutQuestionDots() {
+        questionLayer.subviews.forEach { $0.removeFromSuperview() }
+        questionFrames = [:]
+        guard hasImage, let info = questionInfo, !questionMarks.isEmpty, view.bounds.width > 0 else { return }
+        // Pricken står vid citatets första rad på sidan.
+        var firstLines: [String: CGRect] = [:]
+        for mark in questionMarks {
+            let id = String(mark.id.dropFirst(ReaderQuestions.markPrefix.count))
+            let rect = viewRect(mark.rect)
+            if let current = firstLines[id], current.minY <= rect.minY {
+                continue
+            }
+            firstLines[id] = rect
+        }
+        let placements = firstLines.compactMap { id, rect -> QuestionDotPlacement? in
+            guard let shown = info(id) else { return nil }
+            return QuestionDotPlacement(id: id, number: shown.number, status: shown.status, anchorY: rect.midY)
+        }.sorted { $0.number < $1.number }
+        let bounds = view.bounds
+        let column = textColumn.map { viewRect($0) } ?? bounds.insetBy(dx: 16, dy: 0)
+        questionFrames = QuestionDotView.layout(placements, in: questionLayer, contentMinX: column.minX,
+                                                contentMaxX: column.maxX, top: 6, bottom: bounds.height - 6,
+                                                outerIsLeft: side == .left)
     }
 
     // MARK: Kapitlet kunde inte visas (G2)

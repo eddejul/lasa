@@ -252,6 +252,35 @@ final class AnnotationStore {
             );
             CREATE INDEX IF NOT EXISTS concepts_book ON concepts (book);
             """,
+        // Steg 10 (K6): hur det gick på frågorna i marginalen, en rad per bok och fråga (frågans id i
+        // frågefilen). Senaste svaret (kan, osaker, kan_inte) och hur många gånger frågan besvarats. Ingen synk.
+        """
+            CREATE TABLE IF NOT EXISTS question_answers (
+                book TEXT NOT NULL,
+                question TEXT NOT NULL,
+                status TEXT NOT NULL,
+                answered INTEGER NOT NULL DEFAULT 1,
+                updated REAL NOT NULL,
+                PRIMARY KEY (book, question)
+            );
+            """,
+        // Steg 11 (K7): självtestets kort ur markeringarna och frågorna, med samma schema som orden
+        // (`ReviewSchedule`). Id `m:` plus markeringens id eller `q:` plus bok och fråga. Ingen synk.
+        """
+            CREATE TABLE IF NOT EXISTS study_cards (
+                id TEXT PRIMARY KEY,
+                book TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                due REAL NOT NULL,
+                interval REAL NOT NULL DEFAULT 0,
+                ease REAL NOT NULL DEFAULT 2.5,
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                introduced REAL NOT NULL,
+                updated REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS study_cards_book ON study_cards (book);
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.

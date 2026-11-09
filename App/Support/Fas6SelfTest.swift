@@ -28,6 +28,7 @@ enum Fas6SelfTest {
         navigation.pushViewController(review, animated: false)
         await pause(1.0)
         SelfTest.log("Repetition: \(review.remaining) ord på tur, först \(review.currentWord ?? "inget")")
+        SelfTest.log("Repetition (U6), nytt ord: \(review.summaryForTest)")
         SelfTest.saveScreen(navigation.view, name: "01-kort")
         review.reveal()
         await pause(0.5)
@@ -44,6 +45,7 @@ enum Fas6SelfTest {
         }
         SelfTest.log("Schema för ett ord med 3 dagar: " + labels.joined(separator: ", "))
         navigation.popToRootViewController(animated: false)
+        await testReviewFilters(navigation: navigation)
 
         testDatabases()
         testBookMigration()
@@ -113,6 +115,61 @@ enum Fas6SelfTest {
 
         testLog()
         SelfTest.finish()
+    }
+
+    /// U6: småord sparas inte, ord utan svar i ordboken kommer inte med i kön, och filtret per bok, sparat till
+    /// nästa gång. Bilder av repetitionen med filtret, med svaret framme och i iPhone-bredd.
+    private static func testReviewFilters(navigation: UINavigationController) async {
+        UserWords.shared.save(word: "att", lemma: "att", language: .swedish, sentence: "Det är svårt att veta.",
+                              book: "test", pageIndex: 1)
+        UserWords.shared.save(word: "The", lemma: "the", language: .english, sentence: "The book was red.",
+                              book: "test", pageIndex: 1)
+        let stopSaved = UserWords.shared.isSaved(lemma: "att", language: .swedish)
+            || UserWords.shared.isSaved(lemma: "the", language: .english)
+        // Ett ord utan svar i ordboken, som från en annan enhet (synken filtrerar inte).
+        UserWords.shared.applySynced(SyncWord(lemma: "xqzvord", language: "sv", word: "xqzvord", sentence: "Xqzvord.",
+                                              book: "test", created: 1, updated: Date().timeIntervalSince1970))
+        let inQueue = UserWords.shared.reviewQueue().contains { $0.word.lemma == "xqzvord" }
+        let saved = UserWords.shared.isSaved(lemma: "xqzvord", language: .swedish)
+        SelfTest.log("Småord (U6): att och the \(stopSaved ? "FEL, sparades" : "sparas inte"). Ord utan svar: "
+                     + "\(saved ? "sparat" : "FEL, inte sparat"), i kön \(inQueue ? "FEL, ja" : "nej")")
+        UserWords.shared.delete(lemma: "xqzvord", language: .swedish)
+
+        guard let record = BookRegistry.shared.records().first(where: { !$0.missing }) else {
+            SelfTest.log("FEL: ingen bok i registret till filtret (U6)")
+            return
+        }
+        for (word, sentence) in [("vacker", "Alla var överens om att den var vacker."),
+                                 ("retorik", "Retorik är konsten att övertyga med ord.")] {
+            UserWords.shared.save(word: word, lemma: word, language: .swedish, sentence: sentence,
+                                  book: record.displayTitle, pageIndex: 11, bookID: record.id)
+        }
+        let before = UserDefaults.standard.string(forKey: WordReviewViewController.filterKey)
+        UserDefaults.standard.set(ReviewFilter.book(record.id).storage, forKey: WordReviewViewController.filterKey)
+        let review = WordReviewViewController()
+        navigation.pushViewController(review, animated: false)
+        await pause(0.8)
+        SelfTest.log("Repetition med filter (U6): \(review.summaryForTest), först \(review.currentWord ?? "inget"), "
+                     + "\(review.remaining) ord. Valen: \(review.filterChoicesForTest.joined(separator: " | "))")
+        SelfTest.saveScreen(navigation.view, name: "08a-repetition-bok")
+        review.reveal()
+        await pause(0.5)
+        SelfTest.saveScreen(navigation.view, name: "08b-repetition-bok-svar")
+        let container = navigation.view!
+        let original = container.frame
+        container.frame = CGRect(x: 0, y: 0, width: 390, height: min(844, original.height))
+        container.layoutIfNeeded()
+        await pause(0.6)
+        SelfTest.saveScreen(container, name: "08c-repetition-iphone")
+        container.frame = original
+        container.layoutIfNeeded()
+        review.setFilter(.all)
+        await pause(0.5)
+        SelfTest.log("Filtret Alla ord (U6): \(review.summaryForTest), \(review.remaining) ord, sparat som "
+                     + (UserDefaults.standard.string(forKey: WordReviewViewController.filterKey) ?? "inget"))
+        navigation.popToRootViewController(animated: false)
+        UserDefaults.standard.set(before, forKey: WordReviewViewController.filterKey)
+        await pause(0.3)
     }
 
     /// U4 och O7: ordkortet, fotograferat i en ruta i kortets storlek på en tom sida (popovers kommer inte med i

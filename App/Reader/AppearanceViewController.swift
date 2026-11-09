@@ -61,6 +61,7 @@ final class AppearanceViewController: UIViewController {
 
         stack.addArrangedSubview(makeThemeRow())
         stack.addArrangedSubview(makeSavedWordsRow())
+        stack.addArrangedSubview(makeQuestionsRow())
         if typography != nil {
             stack.addArrangedSubview(section("Storlek", makeSizeRow()))
             stack.addArrangedSubview(section("Typsnitt", makeFontRow()))
@@ -251,6 +252,27 @@ final class AppearanceViewController: UIViewController {
         toggle.accessibilityLabel = "Streck under sparade ord"
         toggle.addAction(UIAction { action in
             SavedWordMarks.shared.isEnabled = (action.sender as? UISwitch)?.isOn ?? true
+        }, for: .valueChanged)
+        let row = UIStackView(arrangedSubviews: [label, toggle])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 12
+        return row
+    }
+
+    /// K6: frågorna ur frågefilen som prickar i marginalen och fliken Frågor i Innehåll, av och på.
+    /// Avstängt ser läsaren ut som utan frågor. Gäller alla böcker.
+    private func makeQuestionsRow() -> UIView {
+        let label = UILabel()
+        label.text = "Frågor i marginalen"
+        label.font = .preferredFont(forTextStyle: .body)
+        label.numberOfLines = 0
+        let toggle = UISwitch()
+        toggle.isOn = QuestionsSetting.isEnabled
+        toggle.accessibilityLabel = "Frågor i marginalen"
+        toggle.accessibilityHint = "Frågor ur en frågefil bredvid boken"
+        toggle.addAction(UIAction { action in
+            QuestionsSetting.isEnabled = (action.sender as? UISwitch)?.isOn ?? false
         }, for: .valueChanged)
         let row = UIStackView(arrangedSubviews: [label, toggle])
         row.axis = .horizontal
