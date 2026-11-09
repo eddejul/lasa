@@ -220,7 +220,8 @@ final class HighlightMenuViewController: UIViewController, UIPopoverPresentation
         if highlight.hasNote {
             // Anteckningen i en rad under, så att man ser den utan att öppna den.
             let label = UILabel()
-            label.text = highlight.note
+            // Raderna i en rad, så att två rader räcker även för en förklaring med AI (A1) med tomrader.
+            label.text = highlight.note.split(whereSeparator: \.isNewline).joined(separator: " ")
             label.numberOfLines = 2
             label.font = .preferredFont(forTextStyle: .footnote)
             label.textColor = palette.inkSoft

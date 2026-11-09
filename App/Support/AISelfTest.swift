@@ -134,7 +134,14 @@ enum AISelfTest {
         PassageExplain.present(highlight: a, book: epub, chapter: chapterA, source: .chapter(content.chapters[1].url),
                                from: library, sourceView: library.view,
                                sourceRect: CGRect(x: 300, y: 500, width: 200, height: 40), onSaved: {})
-        await pause(8.0)
+        await pause(1.5)
+        if let shown = library.presentedViewController as? UINavigationController,
+           let box = shown.viewControllers.first as? ExplainViewController {
+            SelfTest.log("Rutan som popover: \(box.stateText), höjd \(Int(box.fittedHeight)), innehållet "
+                         + "\(Int(box.view.subviews.first.map { ($0 as? UIScrollView)?.contentSize.height ?? 0 } ?? 0)) "
+                         + "punkter högt, synlig yta \(Int(box.view.bounds.height))")
+        }
+        await pause(7.0)
         library.presentedViewController?.dismiss(animated: false)
         await pause(0.5)
         SelfTest.finish()

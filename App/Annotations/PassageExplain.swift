@@ -533,16 +533,21 @@ final class ExplainViewController: UIViewController {
         fitPopover()
     }
 
-    /// Rutan som popover (iPad) blir lika hög som innehållet, mellan 220 och 620 punkter.
+    /// Rutan som popover (iPad) blir lika hög som innehållet, mellan 220 och 620 punkter. Mäts efter en
+    /// layout i rutans egen bredd: flerradiga etiketter får sin höjd först när bredden är känd.
     private func fitPopover() {
-        guard let navigation = navigationController, navigation.modalPresentationStyle == .popover else { return }
-        let width: CGFloat = 440
-        let fitting = stack.systemLayoutSizeFitting(
-            CGSize(width: width - 40, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        let height = min(max(fitting.height + 36 + navigation.navigationBar.frame.height, 220), 620)
-        navigation.preferredContentSize = CGSize(width: width, height: ceil(height))
+        guard let navigation = navigationController, navigation.modalPresentationStyle == .popover,
+              view.bounds.width > 200 else { return }
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        view.layoutIfNeeded()
+        let height = min(max(stack.frame.height + 36 + navigation.navigationBar.frame.height, 220), 620)
+        fittedHeight = ceil(height)
+        navigation.preferredContentSize = CGSize(width: 440, height: fittedHeight)
     }
+
+    /// Höjden som rutan fick senast, till självtestet.
+    private(set) var fittedHeight: CGFloat = 0
 
     private func show(failure: AIClient.Failure) {
         stateText = "fel"
