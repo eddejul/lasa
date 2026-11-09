@@ -111,6 +111,10 @@ enum BookMatch: Equatable {
     /// Samma plats men nytt innehåll, eller ett liknande namn som en bok som inte finns längre:
     /// en ny version av boken. Frågan Ny version av boken, behåll markeringarna? ställs.
     case newVersion(id: String)
+    /// Granskning 6, M2: samma innehåll som en bok som finns, där minst en av de två ligger i iCloud-mappen
+    /// (till exempel samma bok i Böcker och i mappen). Det är samma bok: filen får inget eget id och visas inte en
+    /// gång till. Tas den andra bort tar filen över bokens id (`moved`), med markeringarna.
+    case duplicate(id: String)
 }
 
 enum BookMatcher {
@@ -146,7 +150,14 @@ enum BookMatcher {
 
         // Ny plats. Finns det böcker vars filer saknas kan filen vara en av dem med nytt namn.
         let absent = records.filter { !present.contains($0.file) }
-        guard !absent.isEmpty else { return .new }
+        // M2: böcker som finns, där filen eller boken ligger i iCloud-mappen, kan vara samma bok. En fil i
+        // iCloud-mappen får därför alltid sin kontrollsumma räknad innan den läggs in, och en fil i Böcker när en
+        // bok i mappen har samma storlek.
+        let inCloud = BookPlace.isCloud(file.path)
+        let twins = records.filter { present.contains($0.file) && $0.file != file.path
+            && (inCloud || BookPlace.isCloud($0.file)) }
+        let mayBeTwin = inCloud || twins.contains { $0.size == file.size }
+        guard !absent.isEmpty || mayBeTwin else { return .new }
         // En bok från före G3 vars kontrollsumma inte hunnit räknas: namnbyte och flytt i Filer behåller
         // storlek och ändringstid (granskningens fynd 4).
         if let same = absent.first(where: { record in
@@ -159,6 +170,9 @@ enum BookMatcher {
         guard let hash = hash else { return .needsHash }
         if let same = absent.first(where: { $0.sha256 == hash }) {
             return .moved(id: same.id)
+        }
+        if let twin = twins.first(where: { !$0.sha256.isEmpty && $0.sha256 == hash }) {
+            return .duplicate(id: twin.id)
         }
         if let similar = absent.first(where: { isSimilar($0, to: file) }) {
             return .newVersion(id: similar.id)
@@ -196,6 +210,17 @@ final class BookRegistry {
     private var cache: [BookRecord]?
     /// Vad flytten av gamla nycklar gjorde, till självtestet och loggen.
     private(set) var lastMigrationSummary: String?
+
+    /// M2: filer som är samma bok som en annan bok (`BookMatch.duplicate`), med sökvägen som nyckel. Bara i
+    /// minnet: kontrollsumman räknas en gång per start, och filen visas inte så länge boken finns.
+    private struct Twin {
+        let id: String
+        let size: Int
+        let modified: Int
+    }
+    private var duplicates: [String: Twin] = [:]
+    /// Sökvägarna till filerna som inte visades i den senaste läsningen, eftersom samma bok finns (M2).
+    private(set) var hiddenDuplicates: [String] = []
 
     private init() {}
 
@@ -409,8 +434,19 @@ final class BookRegistry {
         var books: [Book] = []
         var pending: [BookFile] = []
         var changed: [BookRecord] = []
+        var hidden: [String] = []
         for file in files {
             guard let url = urls[file.path] else { continue }
+            // M2: samma bok som en annan bok som finns visas inte en gång till. Saknas den andra tar filen över.
+            if let twin = duplicates[file.path] {
+                if twin.size == file.size, twin.modified == file.modified,
+                   let record = records.first(where: { $0.id == twin.id }), !record.missing, record.file != file.path,
+                   present.contains(record.file) {
+                    hidden.append(file.path)
+                    continue
+                }
+                duplicates[file.path] = nil
+            }
             switch BookMatcher.match(file, hash: nil, records: records, present: present) {
             case .known(let id):
                 if var record = records.first(where: { $0.id == id }), record.missing || record.title != file.title {
@@ -431,8 +467,11 @@ final class BookRegistry {
                 books.append(Book(url: url, id: record.id, path: file.path))
             case .needsHash, .moved, .newVersion:
                 pending.append(file)
+            case .duplicate:
+                hidden.append(file.path)
             }
         }
+        hiddenDuplicates = hidden
         // Filer som inte finns längre markeras som borta. Raderna och markeringarna finns kvar.
         for record in records where !record.missing && !present.contains(record.file)
             && !changed.contains(where: { $0.id == record.id }) {
@@ -512,6 +551,11 @@ final class BookRegistry {
                 if let record = records.first(where: { $0.id == id }) {
                     questions.append(VersionQuestion(file: file, hash: hash, record: record))
                 }
+            case .duplicate(let id):
+                duplicates[file.path] = Twin(id: id, size: file.size, modified: file.modified)
+                if let twin = records.first(where: { $0.id == id }) {
+                    AppLog.shared.write("Samma bok på två ställen: \(file.path) är samma som \(twin.file), visas en gång")
+                }
             case .needsHash:
                 break
             }
@@ -581,6 +625,10 @@ final class BookRegistry {
             let record = Self.makeRecord(for: file, hash: hash)
             save([record])
             return record.id
+        case .duplicate(let id):
+            // M2: samma bok finns redan (i iCloud-mappen eller i Böcker). Filen blir ingen ny bok.
+            duplicates[file.path] = Twin(id: id, size: file.size, modified: file.modified)
+            return id
         case .new, .needsHash:
             let record = Self.makeRecord(for: file, hash: hash)
             save([record])

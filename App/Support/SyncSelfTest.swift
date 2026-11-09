@@ -119,6 +119,7 @@ enum SyncSelfTest {
 
         navigation.popToRootViewController(animated: false)
         await testPlaces(library: library, navigation: navigation)
+        await testTwins(library: library)
         await testUnreachable(library: library, navigation: navigation)
 
         navigation.pushViewController(SettingsViewController(), animated: false)
@@ -256,6 +257,100 @@ enum SyncSelfTest {
                 }
             }
         }
+    }
+
+    /// Läser iCloud-mappen igen (i bakgrunden, M1) och biblioteket, och väntar tills `done` stämmer (högst 8 s).
+    private static func settle(_ library: LibraryViewController, until done: () -> Bool) async -> Bool {
+        for _ in 0..<16 {
+            LibraryStore.shared.refreshCloud(force: true)
+            await pause(0.5)
+            library.reload()
+            await pause(0.5)
+            if done() {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Granskning 6: samma bok i Böcker och i iCloud-mappen är en bok (M2), den som finns kvar tar över
+    /// markeringarna när den andra tas bort, och en fil i mappen som inte är hämtad gör namnet upptaget (M3).
+    private static func testTwins(library: LibraryViewController) async {
+        let manager = FileManager.default
+        let books = LibraryStore.shared.booksDirectory
+        // M2 a: en kopia av Kurs/Anteckningar.md i en annan mapp i iCloud-mappen visas inte som en egen bok.
+        guard let notes = library.books.first(where: { $0.path == "Kurs/Anteckningar.md" }) else {
+            SelfTest.log("FEL: Kurs/Anteckningar.md finns inte före tvillingprovet")
+            return
+        }
+        let copy = folder.appendingPathComponent("Kopia/Anteckningar.md")
+        try? manager.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? manager.copyItem(at: notes.url, to: copy)
+        let hidden = await settle(library) {
+            BookRegistry.shared.hiddenDuplicates.contains("/iCloud/Kopia/Anteckningar.md")
+        }
+        let shown = library.books.filter { $0.id == notes.id }.count
+        let ownRow = BookRegistry.shared.records().contains { $0.file == "/iCloud/Kopia/Anteckningar.md" }
+        SelfTest.log("Samma bok i Böcker och i iCloud-mappen (M2): dold \(hidden ? "ja" : "NEJ"), boken visas \(shown) gång, "
+                     + "egen rad i registret \(ownRow ? "FEL, ja" : "nej"), raden säger \(library.footerText). "
+                     + verdict(hidden && shown == 1 && !ownRow && library.footerText.contains("Samma bok på två ställen")))
+        try? manager.removeItem(at: copy.deletingLastPathComponent())
+
+        // M2 b: tas boken i Böcker bort tar kopian i mappen över id:t och markeringarna.
+        let twinLocal = books.appendingPathComponent("Tvilling.md")
+        try? Data("# Tvilling\n\nSamma bok på två ställen.\n".utf8).write(to: twinLocal)
+        _ = await settle(library) { library.books.contains { $0.path == "Tvilling.md" } }
+        guard let twin = library.books.first(where: { $0.path == "Tvilling.md" }) else {
+            SelfTest.log("FEL: Tvilling.md kom inte in i biblioteket")
+            return
+        }
+        _ = AnnotationStore.shared.addHighlight(book: twin.id, section: 0, start: 2, length: 8, text: "Tvilling",
+                                                color: .blue)
+        try? manager.copyItem(at: twinLocal, to: folder.appendingPathComponent("Tvilling.md"))
+        let twinHidden = await settle(library) {
+            BookRegistry.shared.hiddenDuplicates.contains("/iCloud/Tvilling.md")
+        }
+        do {
+            try LibraryStore.shared.delete(twin)
+        } catch {
+            SelfTest.log("FEL: Tvilling.md gick inte att ta bort: \(error.localizedDescription)")
+        }
+        let tookOver = await settle(library) {
+            BookRegistry.shared.record(id: twin.id)?.file == "/iCloud/Tvilling.md"
+        }
+        let record = BookRegistry.shared.record(id: twin.id)
+        let marks = AnnotationStore.shared.highlights(book: twin.id).count
+        let inLibrary = library.books.first { $0.id == twin.id }
+        SelfTest.log("Boken i Böcker borttagen: kopian i mappen \(tookOver ? "tog över" : "FEL, tog inte över") id:t, "
+                     + "registret \(record?.file ?? "?") \(record?.missing == false ? "finns" : "FEL, borta"), markeringar "
+                     + "\(marks), i biblioteket \(inLibrary?.path ?? "NEJ"). "
+                     + verdict(twinHidden && tookOver && record?.missing == false && marks == 1
+                                && inLibrary?.path == "/iCloud/Tvilling.md"))
+        if let inLibrary = inLibrary {
+            try? LibraryStore.shared.delete(inLibrary)
+        }
+
+        // M3: en fil med samma namn i iCloud-mappen som inte är hämtad (".Placering.md.icloud") gör namnet upptaget.
+        let placeholder = folder.appendingPathComponent(".Placering.md.icloud")
+        try? Data("platshållare".utf8).write(to: placeholder)
+        let local = books.appendingPathComponent("Placering.md")
+        try? Data("# Placering\n\nEn bok med samma namn som en fil i iCloud.\n".utf8).write(to: local)
+        _ = await settle(library) { library.books.contains { $0.path == "Placering.md" } }
+        if let placed = library.books.first(where: { $0.path == "Placering.md" }) {
+            let moved = await move(placed, toCloud: true, library: library)
+            let untouched = (try? String(contentsOf: placeholder, encoding: .utf8)) == "platshållare"
+            let wrongName = manager.fileExists(atPath: folder.appendingPathComponent("Placering.md").path)
+            SelfTest.log("Flytt med en platshållare med samma namn (M3): \(moved?.path ?? "FEL"), platshållaren "
+                         + "\(untouched ? "orörd" : "FEL, ändrad"), Placering.md i mappen \(wrongName ? "FEL, finns" : "nej"). "
+                         + verdict(moved?.path == "/iCloud/Placering 2.md" && untouched && !wrongName))
+            if let moved = moved {
+                try? LibraryStore.shared.delete(moved)
+            }
+        } else {
+            SelfTest.log("FEL: Placering.md kom inte in i biblioteket")
+        }
+        try? manager.removeItem(at: placeholder)
+        _ = await settle(library) { !library.footerText.contains("Hämtar") }
     }
 
     /// Mappen går inte att nå: biblioteket säger till i orange, och böckerna i mappen räknas inte som borttagna.

@@ -244,12 +244,105 @@ final class SyncFileTests: XCTestCase {
         let moved = BookFile(path: "/iCloud/Bok.pdf", size: 10, modified: 5)
         XCTAssertEqual(BookMatcher.match(moved, hash: "abc", records: [record], present: ["/iCloud/Bok.pdf"]),
                        .moved(id: "id-1"))
-        // En bok i iCloud-mappen som hämtas räknas som närvarande och tas inte över av en annan fil.
+        // En bok i iCloud-mappen som hämtas räknas som närvarande och tas inte över av en annan fil. Samma
+        // innehåll i Böcker är samma bok (granskning 6, M2): den får inget eget id.
         let cloud = BookRecord(id: "id-2", sha256: "def", file: "/iCloud/Kurs.pdf", title: "Kurs", size: 10, modified: 5,
                                added: 1, missing: false)
         let other = BookFile(path: "Kurs.pdf", size: 10, modified: 5)
         XCTAssertEqual(BookMatcher.match(other, hash: "def", records: [cloud], present: ["Kurs.pdf", "/iCloud/Kurs.pdf"]),
+                       .duplicate(id: "id-2"))
+        let otherContent = BookFile(path: "Kurs.pdf", size: 10, modified: 5)
+        XCTAssertEqual(BookMatcher.match(otherContent, hash: "ghi", records: [cloud],
+                                         present: ["Kurs.pdf", "/iCloud/Kurs.pdf"]), .new)
+    }
+
+    // MARK: Granskning 6
+
+    private func record(_ id: String, file: String, sha: String, size: Int, missing: Bool = false) -> BookRecord {
+        BookRecord(id: id, sha256: sha, file: file, title: ((file as NSString).lastPathComponent as NSString)
+                    .deletingPathExtension, size: size, modified: 5, added: 1, missing: missing)
+    }
+
+    func testSameBookInBooksAndCloudFolderIsOneBook() {
+        // M2: Bok.pdf finns i Böcker med markeringar, och samma fil läggs i iCloud-mappen från datorn.
+        let local = record("a", file: "Bok.pdf", sha: "h1", size: 100)
+        let cloudFile = BookFile(path: "/iCloud/Bok.pdf", size: 100, modified: 9)
+        let both: Set<String> = ["Bok.pdf", "/iCloud/Bok.pdf"]
+        XCTAssertEqual(BookMatcher.match(cloudFile, hash: nil, records: [local], present: both), .needsHash)
+        XCTAssertEqual(BookMatcher.match(cloudFile, hash: "h1", records: [local], present: both), .duplicate(id: "a"))
+        // En annan bok i mappen är en ny bok, men först när kontrollsumman är räknad.
+        let newFile = BookFile(path: "/iCloud/Annan.pdf", size: 7, modified: 9)
+        XCTAssertEqual(BookMatcher.match(newFile, hash: nil, records: [local], present: both.union(["/iCloud/Annan.pdf"])),
+                       .needsHash)
+        XCTAssertEqual(BookMatcher.match(newFile, hash: "h7", records: [local], present: both.union(["/iCloud/Annan.pdf"])),
                        .new)
+        // Tas boken i Böcker bort tar filen i mappen över bokens id, och därmed markeringarna.
+        let gone = record("a", file: "Bok.pdf", sha: "h1", size: 100, missing: true)
+        XCTAssertEqual(BookMatcher.match(cloudFile, hash: "h1", records: [gone], present: ["/iCloud/Bok.pdf"]),
+                       .moved(id: "a"))
+        // Åt andra hållet: en fil i Böcker med samma innehåll som en bok i mappen, på en annan plats.
+        let inCloud = record("c", file: "/iCloud/Kurs/Bok.pdf", sha: "h3", size: 200)
+        let copy = BookFile(path: "Bok kopia.pdf", size: 200, modified: 1)
+        let present: Set<String> = ["Bok kopia.pdf", "/iCloud/Kurs/Bok.pdf"]
+        XCTAssertEqual(BookMatcher.match(copy, hash: nil, records: [inCloud], present: present), .needsHash)
+        XCTAssertEqual(BookMatcher.match(copy, hash: "h3", records: [inCloud], present: present), .duplicate(id: "c"))
+        // Två kopior i Böcker är som förut två böcker, och en fil i Böcker med annan storlek läggs in direkt.
+        let small = BookFile(path: "Liten.pdf", size: 3, modified: 1)
+        XCTAssertEqual(BookMatcher.match(small, hash: nil, records: [inCloud], present: present.union(["Liten.pdf"])), .new)
+    }
+
+    func testFolderSurveyLimits() {
+        // M1: en ny eller nästan tom mapp väljs utan fråga, en stor ger en fråga, en för stor vägras.
+        XCTAssertTrue(FolderSurvey().isSmall)
+        XCTAssertTrue(FolderSurvey(books: 20, folders: 10, depth: 3).isSmall)
+        XCTAssertFalse(FolderSurvey(books: 21, folders: 1, depth: 1).isSmall)
+        XCTAssertFalse(FolderSurvey(books: 21, folders: 1, depth: 1).isTooBig)
+        XCTAssertFalse(FolderSurvey(books: 2, folders: 11, depth: 2).isSmall)
+        XCTAssertTrue(FolderSurvey(books: LibraryStore.cloudBookLimit + 1, folders: 1, depth: 1).isTooBig)
+        XCTAssertTrue(FolderSurvey(books: 2, folders: 4, depth: LibraryStore.cloudDepthLimit + 1).isTooBig)
+        XCTAssertTrue(FolderSurvey(books: 2, folders: 4, depth: 2, truncated: true).isTooBig)
+        XCTAssertEqual(FolderSurvey(books: 45, folders: 12, depth: 2).description, "45 böcker och 12 undermappar")
+        XCTAssertTrue(FolderSurvey.isCloudDriveRoot(URL(fileURLWithPath:
+            "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)))
+        XCTAssertFalse(FolderSurvey.isCloudDriveRoot(URL(fileURLWithPath:
+            "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/Sensus", isDirectory: true)))
+        XCTAssertTrue(FolderSurvey.isInCloudDrive(URL(fileURLWithPath:
+            "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/Sensus", isDirectory: true)))
+    }
+
+    func testFolderSurveyAndOwnFolderOnDisk() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent("survey-\(UUID().uuidString)", isDirectory: true)
+        defer { try? manager.removeItem(at: root) }
+        let deep = root.appendingPathComponent("Kurs/Del", isDirectory: true)
+        let sync = root.appendingPathComponent(SyncFile.folderName, isDirectory: true)
+        try manager.createDirectory(at: deep, withIntermediateDirectories: true)
+        try manager.createDirectory(at: sync, withIntermediateDirectories: true)
+        for path in ["Bok.pdf", "Kurs/Del/Bok2.epub", ".Bok3.pdf.icloud", "bild.jpg", SyncFile.folderName + "/a.json",
+                     SyncFile.folderName + "/b.txt"] {
+            try Data("x".utf8).write(to: root.appendingPathComponent(path))
+        }
+        let survey = FolderSurvey.of(root)
+        // Platshållaren räknas som en bok, bilden och synkmappen inte.
+        XCTAssertEqual(survey.books, 3)
+        XCTAssertEqual(survey.folders, 2)
+        XCTAssertEqual(survey.depth, 3)
+        XCTAssertTrue(survey.isSmall)
+        // M3: en fil som inte är hämtad gör namnet upptaget, och kopian får ett nytt namn.
+        XCTAssertTrue(BookPlace.isNameTaken(root.appendingPathComponent("Bok3.pdf")))
+        XCTAssertFalse(BookPlace.isNameTaken(root.appendingPathComponent("Bok4.pdf")))
+        XCTAssertEqual(BookImporter.freeName(for: "Bok3.pdf", in: root).lastPathComponent, "Bok3 2.pdf")
+        try Data("x".utf8).write(to: root.appendingPathComponent(".Bok3 2.pdf.icloud"))
+        XCTAssertEqual(BookImporter.freeName(for: "Bok3.pdf", in: root).lastPathComponent, "Bok3 3.pdf")
+        // M1: mappen Sensus skapas, och används igen när den finns och är liten.
+        XCTAssertEqual(try FolderSurvey.makeOwnFolder(in: root).get(), "Sensus")
+        XCTAssertTrue(manager.fileExists(atPath: root.appendingPathComponent("Sensus").path))
+        XCTAssertEqual(try FolderSurvey.makeOwnFolder(in: root).get(), "Sensus")
+        // En fil som heter Sensus ger Sensus 2.
+        let other = root.appendingPathComponent("Annan", isDirectory: true)
+        try manager.createDirectory(at: other, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: other.appendingPathComponent("Sensus"))
+        XCTAssertEqual(try FolderSurvey.makeOwnFolder(in: other).get(), "Sensus 2")
     }
 }
 

@@ -225,7 +225,8 @@ final class BookImporter {
         while true {
             let candidate = ext.isEmpty ? "\(base) \(number)" : "\(base) \(number).\(ext)"
             let url = directory.appendingPathComponent(candidate)
-            if !FileManager.default.fileExists(atPath: url.path) {
+            // M3: också en fil i iCloud som inte är hämtad (".namn.icloud") gör namnet upptaget.
+            if !BookPlace.isNameTaken(url) {
                 return url
             }
             number += 1
