@@ -160,12 +160,15 @@ enum AIClient {
     // MARK: Fråga
 
     /// Frågar modellen, eller ger det sparade svaret om exakt samma fråga redan ställts med samma modell.
-    /// `kind` skiljer frågetyperna åt i de sparade svaren (till exempel "stycke").
+    /// `kind` skiljer frågetyperna åt i de sparade svaren (till exempel "stycke"). `timeout` är tidsgränsen för
+    /// anropet, och med `useCache` false läses och sparas inget svar i `ai-svar.sqlite` (AI-frågorna, K6b, som
+    /// sparar sina frågor själva). Standardvärdena ger samma anrop som förut (A1, A2, U7 och ordknappen).
     static func generate(kind: String, prompt: String, schema: [String: Any], maxTokens: Int,
+                         timeout: TimeInterval = 40, useCache: Bool = true,
                          completion: @escaping (Result<Answer, Failure>) -> Void) {
         let model = GeminiClient.model
         let cacheKey = Self.cacheKey(kind: kind, model: model, prompt: prompt, schema: schema)
-        if let cached = AIStore.shared.answer(for: cacheKey) {
+        if useCache, let cached = AIStore.shared.answer(for: cacheKey) {
             completion(.success(Answer(json: cached, cached: true)))
             return
         }
@@ -173,10 +176,13 @@ enum AIClient {
             completion(.failure(.noKey))
             return
         }
-        send(prompt: prompt, schema: schema, key: key, model: model, maxTokens: maxTokens, useSchema: true) { result in
+        send(prompt: prompt, schema: schema, key: key, model: model, maxTokens: maxTokens, timeout: timeout,
+             useSchema: true) { result in
             switch result {
             case .success(let json):
-                AIStore.shared.store(json, for: cacheKey, kind: kind, model: model)
+                if useCache {
+                    AIStore.shared.store(json, for: cacheKey, kind: kind, model: model)
+                }
                 noteKey(.success(()))
                 completion(.success(Answer(json: json, cached: false)))
             case .failure(let failure):
@@ -224,7 +230,8 @@ enum AIClient {
     }
 
     private static func send(prompt: String, schema: [String: Any], key: String, model: String, maxTokens: Int,
-                             useSchema: Bool, completion: @escaping (Result<[String: Any], Failure>) -> Void) {
+                             timeout: TimeInterval = 40, useSchema: Bool,
+                             completion: @escaping (Result<[String: Any], Failure>) -> Void) {
         guard let url = modelURL(model, suffix: ":generateContent") else {
             completion(.failure(.invalidResponse))
             return
@@ -238,7 +245,7 @@ enum AIClient {
             "contents": [["role": "user", "parts": [["text": prompt]]]],
             "generationConfig": generation,
         ]
-        var request = URLRequest(url: url, timeoutInterval: 40)
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
@@ -269,7 +276,7 @@ enum AIClient {
                 if retryWithoutSchema {
                     let withSchema = prompt + "\n\nJSON-schema: " + (jsonText(schema) ?? "")
                     send(prompt: withSchema, schema: schema, key: key, model: model, maxTokens: maxTokens,
-                         useSchema: false, completion: completion)
+                         timeout: timeout, useSchema: false, completion: completion)
                 } else {
                     completion(result)
                 }

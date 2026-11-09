@@ -284,7 +284,7 @@ enum AIQuestions {
         return map
     }()
 
-    private static func loosened(_ text: NSString) -> NSString {
+    fileprivate static func loosened(_ text: NSString) -> NSString {
         var units = [unichar](repeating: 0, count: text.length)
         text.getCharacters(&units, range: NSRange(location: 0, length: text.length))
         for index in units.indices {
@@ -308,13 +308,27 @@ enum AIQuestions {
         return String(scalars)
     }
 
+    /// Texten att leta i, vikt en gång strikt och en gång med raka citattecken och streck.
+    struct Haystack {
+        let strict: FoldedText
+        let loose: FoldedText
+
+        init(_ text: NSString) {
+            strict = FoldedText(text)
+            loose = FoldedText(AIQuestions.loosened(text))
+        }
+    }
+
     /// Var ett citat står i texten (UTF-16): början och slutet (exklusivt) av första träffen, eller nil.
     /// Först strikt, sedan med typografiska citattecken och streck som raka i båda texterna.
     static func find(_ quote: String, in text: NSString) -> NSRange? {
+        find(quote, in: Haystack(text))
+    }
+
+    static func find(_ quote: String, in haystack: Haystack) -> NSRange? {
         for loose in [false, true] {
-            let haystack = loose ? loosened(text) : text
+            let folded = loose ? haystack.loose : haystack.strict
             let needle = loose ? (loosened(quote as NSString) as String) : quote
-            let folded = FoldedText(haystack)
             let query = foldedQuery(needle) as NSString
             guard query.length >= 2 else { return nil }
             let found = folded.text.range(of: query as String, options: [.literal])
@@ -459,7 +473,7 @@ enum AIQuestions {
     /// de andra böckernas titlar.
     static func check(answer: [String: Any], text: String, book: String, chapter: String, part: Int,
                       otherTitles: [String], cap: Cap) -> CheckResult {
-        let source = text as NSString
+        let source = Haystack(text as NSString)
         let textGrams = ngrams(words(text), length: 6)
         let titles = Set(otherTitles.map(foldedQuery))
         let items = (answer["fragor"] as? [Any]) ?? []

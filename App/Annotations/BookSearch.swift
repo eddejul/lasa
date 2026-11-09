@@ -455,7 +455,12 @@ final class BookSearch {
     /// Kapitlets text som webbvyn ser den: allt i body utom skript och stilar, med tecknen avkodade.
     static func plainText(ofChapterAt url: URL) -> String {
         guard let data = try? Data(contentsOf: url) else { return "" }
-        var html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) ?? ""
+        return plainText(html: String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) ?? "")
+    }
+
+    /// Samma sak för ett kapitel som redan är läst (AI-frågorna, K6b, lägger först in styckegränser).
+    static func plainText(html source: String) -> String {
+        var html = source
         for expression in removals {
             html = expression.stringByReplacingMatches(in: html, range: NSRange(location: 0, length: (html as NSString).length),
                                                        withTemplate: "")
