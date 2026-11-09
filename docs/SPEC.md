@@ -284,6 +284,7 @@ Byggd 7 november 2026 på grenen `fas6`.
 ### 6.15 Våg 8a, studiet (9 november 2026)
 
 * **Frågor i marginalen (K6):** en frågefil bredvid boken (`Bok.pdf.fragor.json`, formatet i `docs/FRAGOR.md`) ger en liten numrerad prick i marginalen vid varje frågas citat, också i smala marginaler och uppslag. Tryck visar frågan, Visa svaret visar svaret, och Kan, Osäker och Kan inte sparas (steg 10) och färgar pricken. Innehåll får fliken Frågor (hopp till stället, eller Välj frågefil). Av och på i Aa, från början av: avstängt ser läsaren ut som förut. Fotade sidor utan text får pricken på sidan och höjden i filen.
+* **Självtest efter kapitlet (K7):** när sista sidan i ett kapitel vänts visas raden Testa dig på kapitlet (Testa, eller krysset för att hoppa över, försvinner av sig själv). Tre slags kort utan AI: lucktext ur en egen markering, flerval (fyra ord, de felaktiga ur andra markeringar och begrepp) och kapitlets frågor ur frågefilen. Korten får samma schema som orden (steg 11), och Dagens markeringar i biblioteket tar de kort som är på tur och högst tio nya om dagen. Ingen tid någonstans.
 
 ## 7. Bygge och installation
 

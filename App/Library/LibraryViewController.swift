@@ -278,8 +278,16 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         case .review:
             openReview()
         case .highlights:
-            // K7 kopplar in Dagens markeringar.
-            break
+            openTodaysHighlights()
+        }
+    }
+
+    /// K7: Dagens markeringar, kort ur markeringarna i alla böcker med samma schema som orden.
+    func openTodaysHighlights() {
+        let cards = StudyCardStore.shared.todaysCards()
+        guard !cards.isEmpty else { return }
+        ChapterTestViewController.present(cards: cards, title: "Dagens markeringar", from: self) { [weak self] in
+            self?.reload()
         }
     }
 
@@ -607,6 +615,11 @@ final class LibraryViewController: UIViewController, UIDocumentPickerDelegate, U
         reviewCount = UserWords.shared.reviewCount()
         savedCount = UserWords.shared.savedWords().count
         studyItems = savedCount > 0 ? [.review(count: reviewCount)] : []
+        // K7: Dagens markeringar när det finns markeringskort på tur eller nya i dag.
+        let highlightCards = StudyCardStore.shared.todaysCards().count
+        if highlightCards > 0 {
+            studyItems.append(.highlights(count: highlightCards))
+        }
         showsMoreCard = Onboarding.showsMoreCard
         rebuildItems()
         collectionView.reloadData()

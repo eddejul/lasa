@@ -264,6 +264,23 @@ final class AnnotationStore {
                 PRIMARY KEY (book, question)
             );
             """,
+        // Steg 11 (K7): självtestets kort ur markeringarna och frågorna, med samma schema som orden
+        // (`ReviewSchedule`). Id `m:` plus markeringens id eller `q:` plus bok och fråga. Ingen synk.
+        """
+            CREATE TABLE IF NOT EXISTS study_cards (
+                id TEXT PRIMARY KEY,
+                book TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                due REAL NOT NULL,
+                interval REAL NOT NULL DEFAULT 0,
+                ease REAL NOT NULL DEFAULT 2.5,
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                introduced REAL NOT NULL,
+                updated REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS study_cards_book ON study_cards (book);
+            """,
     ]
 
     /// Databasens fil, till säkerhetskopian.

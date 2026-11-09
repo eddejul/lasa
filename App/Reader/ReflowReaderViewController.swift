@@ -92,6 +92,8 @@ final class ReflowReaderViewController: UIViewController {
     fileprivate var questionTap: UITapGestureRecognizer?
     /// Inställningen och platsernas version när citaten senast lades in i webbvyerna.
     fileprivate var appliedQuestionsKey = ""
+    /// K7: kapitlen vars test redan erbjudits medan boken är öppen.
+    fileprivate var offeredChapterTests = Set<Int>()
     private var wordQueryRunning = false
     private var queuedWordPoint: CGPoint?
     private var pressEnded = false
@@ -1512,9 +1514,14 @@ extension ReflowReaderViewController: UIPageViewControllerDataSource, UIPageView
             return
         }
         guard completed else { return }
+        let previousChapter = previousViewControllers.compactMap { ($0 as? ReflowPageViewController)?.chapter }.max()
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
         pagesChanged()
+        // K7: sista sidan i ett kapitel har vänts framåt.
+        if let previousChapter = previousChapter, currentChapter > previousChapter {
+            offerChapterTest(chapter: previousChapter)
+        }
         OnboardingTips.shared.record(.turn, book: book)
     }
 }
@@ -1677,6 +1684,7 @@ extension ReflowReaderViewController {
         await selfTestAnnotations()
         if BookQuestionFile.url(for: book) != nil {
             await selfTestQuestions()
+            await selfTestChapterTest()
         }
         await selfTestResumeCard()
 
@@ -3054,5 +3062,69 @@ extension ReflowReaderViewController {
         let left = visiblePages.map(\.questionDotCount).reduce(0, +)
         SelfTest.log("Frågor (K6): avstängt ger \(left) prickar (ska vara 0)")
         QuestionsSetting.isEnabled = wasEnabled
+    }
+}
+
+// MARK: Självtest efter kapitlet (K7)
+
+extension ReflowReaderViewController {
+
+    /// Sista sidan i kapitlet har vänts: erbjud ett test på kapitlet, en gång per kapitel medan boken är öppen.
+    fileprivate func offerChapterTest(chapter: Int) {
+        guard offeredChapterTests.insert(chapter).inserted else { return }
+        let title = chapterName(chapter)
+        let cards = chapterTestCards(chapter: chapter, title: title)
+        guard !cards.isEmpty else { return }
+        ChapterTestOffer.show(chapter: title, count: cards.count, in: view) { [weak self] in
+            guard let self = self else { return }
+            ChapterTestViewController.present(cards: cards, title: title, from: self)
+        }
+    }
+
+    /// Kapitlets kort: markeringarna i kapitlet och, när frågorna är påslagna, kapitlets frågor (K6).
+    fileprivate func chapterTestCards(chapter: Int, title: String) -> [ChapterTestCard] {
+        let all = AnnotationStore.shared.highlights(book: bookKey)
+        let here = all.filter { $0.section == chapter }
+        let questionsHere = questions?.showsDots == true ? (questions?.questions(inSection: chapter) ?? []) : []
+        let terms = ConceptStore.shared.concepts(book: bookKey).map(\.term)
+        return ChapterTestLogic.cards(highlights: here, allHighlights: all, questions: questionsHere, terms: terms,
+                                      book: bookKey, source: title)
+    }
+
+    /// Självtestet (K7): en markering i ett kapitel, erbjudandet, testet och schemat.
+    fileprivate func selfTestChapterTest() async {
+        guard let content = content, content.chapters.count > 2 else { return }
+        let chapter = 1
+        let text = "Kunskap kommer sällan av sig själv, den måste sökas upp och prövas mot verkligheten."
+        let added = AnnotationStore.shared.addHighlight(book: bookKey, section: chapter, start: 0,
+                                                        length: (text as NSString).length, text: text, color: .yellow)
+        offeredChapterTests.remove(chapter)
+        offerChapterTest(chapter: chapter)
+        await pause(0.4)
+        guard let offer = ChapterTestOffer.current else {
+            SelfTest.log("FEL: raden Testa dig på kapitlet visades inte (K7)")
+            return
+        }
+        SelfTest.saveScreen(view, name: "14-erbjudande")
+        offer.startTapped()
+        await pause(1.0)
+        if let navigation = presentedViewController as? UINavigationController,
+           let test = navigation.viewControllers.first as? ChapterTestViewController {
+            SelfTest.log("Självtest (K7): \(test.cardCount) kort i \(chapterName(chapter)), första "
+                         + "\(test.currentCard?.kindTitle ?? "inget"): \(test.currentCard?.prompt.prefix(80) ?? "")")
+            SelfTest.saveScreen(navigation.view, name: "14b-kort")
+            test.reveal()
+            await pause(0.3)
+            SelfTest.saveScreen(navigation.view, name: "14c-svar")
+            test.grade(.hard)
+            await pause(0.3)
+            let saved = StudyCardStore.shared.states()["m:" + added.id]
+            SelfTest.log("Självtest (K7): Svårt sparat \(saved != nil), nästa gång om "
+                         + "\(saved.map { ReviewSchedule.label(days: $0.interval) } ?? "inget")")
+        } else {
+            SelfTest.log("FEL: testet öppnades inte (K7)")
+        }
+        dismiss(animated: false)
+        await pause(0.4)
     }
 }

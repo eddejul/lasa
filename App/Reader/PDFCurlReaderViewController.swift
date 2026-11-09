@@ -67,6 +67,8 @@ final class PDFCurlReaderViewController: UIViewController {
     fileprivate var questionTap: UITapGestureRecognizer?
     fileprivate var questionRects: [Int: [String: CGRect]] = [:]
     fileprivate var questionRectsInFlight = Set<Int>()
+    /// K7: kapitlen (plats i `chapterStarts`) vars test redan erbjudits medan boken är öppen.
+    fileprivate var offeredChapterTests = Set<Int>()
     /// D4-1: bokens sida för filens första sida enligt tryckta sidnummer i textlagret, bara ett förslag.
     fileprivate var printedPageSuggestion: (first: Int, votes: Int)?
     /// Bubblan ovanför fingret när ett ord hålls (G12, gemensam med den andra läsaren).
@@ -1315,9 +1317,13 @@ extension PDFCurlReaderViewController: UIPageViewControllerDataSource, UIPageVie
                             previousViewControllers: [UIViewController],
                             transitionCompleted completed: Bool) {
         guard completed, let index = visibleIndices.first else { return }
+        let previous = previousViewControllers.compactMap { ($0 as? PDFPageViewController)?.pageIndex }.max()
         currentIndex = index
         LibraryStore.shared.savePageIndex(currentIndex, for: book)
         updatePageLabel()
+        if let previous = previous {
+            offerChapterTest(from: previous, to: index)
+        }
         updateBookmarkState()
         Haptics.shared.pageTurned()
         setChromeHidden(true, animated: true)
@@ -2413,6 +2419,7 @@ extension PDFCurlReaderViewController {
         await selfTestStudy()
         if BookQuestionFile.url(for: book) != nil {
             await selfTestQuestions()
+            await selfTestChapterTest()
         }
         await selfTestFoldWork()
         await selfTestResumeCard()
@@ -2829,7 +2836,7 @@ extension PDFCurlReaderViewController {
         }
         hop(to: place.section)
         _ = await waitForImages()
-        for _ in 0..<20 where (visiblePages.first { $0.pageIndex == place.section }?.questionDotCount ?? 0) == 0 {
+        for _ in 0..<20 where (visiblePages.first(where: { $0.pageIndex == place.section })?.questionDotCount ?? 0) == 0 {
             await pause(0.2)
         }
         let page = visiblePages.first { $0.pageIndex == place.section }
@@ -2876,6 +2883,100 @@ extension PDFCurlReaderViewController {
         await pause(0.4)
         let left = visiblePages.map(\.questionDotCount).reduce(0, +)
         SelfTest.log("Frågor (K6): avstängt ger \(left) prickar (ska vara 0)")
+        QuestionsSetting.isEnabled = wasEnabled
+    }
+}
+
+// MARK: Självtest efter kapitlet (K7)
+
+extension PDFCurlReaderViewController {
+
+    /// Bläddringen gick från sida `previous` till `index`. Gick den framåt över en kapitelgräns i PDF:ens
+    /// innehåll erbjuds ett test på kapitlet som just lästs ut, en gång per kapitel medan boken är öppen.
+    fileprivate func offerChapterTest(from previous: Int, to index: Int) {
+        guard let chapter = ChapterTestLogic.finishedChapter(from: previous, to: index,
+                                                             starts: chapterStarts.map(\.index)),
+              chapter < chapterStarts.count, offeredChapterTests.insert(chapter).inserted else { return }
+        let start = chapterStarts[chapter].index
+        let end = chapter + 1 < chapterStarts.count ? chapterStarts[chapter + 1].index : renderer.pageCount
+        let title = chapterStarts[chapter].title
+        let cards = chapterTestCards(pages: start..<max(end, start + 1), title: title)
+        guard !cards.isEmpty else { return }
+        ChapterTestOffer.show(chapter: title, count: cards.count, in: view) { [weak self] in
+            guard let self = self else { return }
+            ChapterTestViewController.present(cards: cards, title: title, from: self)
+        }
+    }
+
+    /// Kapitlets kort: markeringarna på kapitlets sidor och, när frågorna är påslagna, frågorna där (K6).
+    fileprivate func chapterTestCards(pages: Range<Int>, title: String) -> [ChapterTestCard] {
+        let all = AnnotationStore.shared.highlights(book: bookKey)
+        let here = all.filter { pages.contains($0.section) }
+        var questionsHere: [BookQuestion] = []
+        if let questions = questions, questions.showsDots {
+            questionsHere = questions.questions.filter { question in
+                questions.place(of: question.id).map { pages.contains($0.section) } ?? false
+            }
+        }
+        let terms = ConceptStore.shared.concepts(book: bookKey).map(\.term)
+        return ChapterTestLogic.cards(highlights: here, allHighlights: all, questions: questionsHere, terms: terms,
+                                      book: bookKey, source: title)
+    }
+
+    /// Självtestet (K7): en markering i första kapitlet, bläddringen över gränsen, raden och testet.
+    fileprivate func selfTestChapterTest() async {
+        guard chapterStarts.count > 1 else {
+            SelfTest.log("FEL: boken har inget innehåll med kapitel (K7)")
+            return
+        }
+        let wasEnabled = QuestionsSetting.isEnabled
+        QuestionsSetting.isEnabled = true
+        for _ in 0..<40 where questions?.isLocated != true {
+            await pause(0.2)
+        }
+        let text = "Den som söker kunskap måste läsa noga och pröva det hon läser."
+        let added = AnnotationStore.shared.addHighlight(book: bookKey, section: chapterStarts[0].index, start: 0,
+                                                        length: (text as NSString).length, text: text, color: .green)
+        let last = chapterStarts[1].index - 1
+        offeredChapterTests.remove(0)
+        offerChapterTest(from: last, to: last + 1)
+        await pause(0.4)
+        guard let offer = ChapterTestOffer.current else {
+            SelfTest.log("FEL: raden Testa dig på kapitlet visades inte (K7)")
+            QuestionsSetting.isEnabled = wasEnabled
+            return
+        }
+        SelfTest.saveScreen(view, name: "14-erbjudande")
+        offer.startTapped()
+        await pause(1.0)
+        if let navigation = presentedViewController as? UINavigationController,
+           let test = navigation.viewControllers.first as? ChapterTestViewController {
+            SelfTest.log("Självtest (K7): \(test.cardCount) kort, första \(test.currentCard?.kindTitle ?? "inget"): "
+                         + "\(test.currentCard?.prompt.prefix(80) ?? "")")
+            SelfTest.saveScreen(navigation.view, name: "14b-kort")
+            if test.currentCard?.kind == .choice, let option = test.currentCard?.options.first {
+                test.choose(option)
+            } else {
+                test.reveal()
+                await pause(0.3)
+                SelfTest.saveScreen(navigation.view, name: "14c-svar")
+                test.grade(.good)
+            }
+            await pause(0.4)
+            SelfTest.saveScreen(navigation.view, name: "14d-nasta")
+            let saved = StudyCardStore.shared.states()["m:" + added.id]
+            SelfTest.log("Självtest (K7): kortet för markeringen sparat \(saved != nil), "
+                         + "nästa gång om \(saved.map { ReviewSchedule.label(days: $0.interval) } ?? "inget")")
+        } else {
+            SelfTest.log("FEL: testet öppnades inte (K7)")
+        }
+        await dismissPresented()
+        // Samma kapitel erbjuds inte igen medan boken är öppen.
+        offerChapterTest(from: last, to: last + 1)
+        await pause(0.3)
+        SelfTest.log("Självtest (K7): erbjuds igen \(ChapterTestOffer.current?.superview != nil) (ska vara false), "
+                     + "Dagens markeringar \(StudyCardStore.shared.todaysCards().count) kort")
+        ChapterTestOffer.current?.hide()
         QuestionsSetting.isEnabled = wasEnabled
     }
 }
