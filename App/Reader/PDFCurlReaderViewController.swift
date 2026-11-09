@@ -68,6 +68,8 @@ final class PDFCurlReaderViewController: UIViewController {
     fileprivate var questionTap: UITapGestureRecognizer?
     fileprivate var questionRects: [Int: [String: CGRect]] = [:]
     fileprivate var questionRectsInFlight = Set<Int>()
+    /// K6b: platsernas version när rutorna räknades, så att nya AI-frågor får nya rutor.
+    fileprivate var questionRectsVersion = -1
     /// K7: kapitlen (plats i `chapterStarts`) vars test redan erbjudits medan boken är öppen.
     fileprivate var offeredChapterTests = Set<Int>()
     /// D4-1: bokens sida för filens första sida enligt tryckta sidnummer i textlagret, bara ett förslag.
@@ -943,6 +945,8 @@ final class PDFCurlReaderViewController: UIViewController {
         reportReadingStatus(indices)
         logReading(indices)
         updateSideNotes()
+        // K6b: kapitlet som visas får AI-frågor i bakgrunden om det saknar frågor.
+        questions?.pageShown(section: indices.min() ?? currentIndex)
     }
 
     /// K12: anteckningen för sidan som syns (den vänstra i ett uppslag).
@@ -3090,6 +3094,16 @@ extension PDFCurlReaderViewController {
         questions.onChange = { [weak self] in
             self?.questionsChanged()
         }
+        // K6b: kapitlen ur innehållet (eller tio sidor i taget) och PDF:ens text, med textfilen från OCR:en (P4).
+        questions.aiContext = AIBookContext(
+            book: bookKey, title: PassageExplain.title(of: book),
+            author: BookRegistry.shared.record(id: book.id)?.displayAuthor ?? "",
+            chapters: AIChapterText.chapters(starts: chapterStarts, pageCount: renderer.pageCount),
+            text: .pdf(book.url, textFile: PDFTextCompanion.textURL(forPDF: book.url)))
+        questions.presenter = self
+        questions.jump = { [weak self] place in
+            self?.jumpToQuestionPlace(place)
+        }
         self.questions = questions
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleQuestionTap(_:)))
         tap.delegate = self
@@ -3118,6 +3132,12 @@ extension PDFCurlReaderViewController {
     }
 
     fileprivate func questionsChanged() {
+        // K6b: AI-frågorna läses in på nytt när ett kapitel fått frågor. Då räknas citatens rutor om.
+        if let version = questions?.placesVersion, version != questionRectsVersion {
+            questionRectsVersion = version
+            questionRects.removeAll()
+            questionRectsInFlight.removeAll()
+        }
         for page in visiblePages where !page.isBlank {
             applyQuestions(to: page)
         }
@@ -3192,13 +3212,17 @@ extension PDFCurlReaderViewController {
         return questions.makeList(placeLabel: { [weak self] place in
             self?.placeLabel(place.section) ?? "s. \(place.section + 1)"
         }, onSelect: { [weak self] _, place in
-            guard let self = self else { return }
-            self.dismiss(animated: true)
-            self.hop(to: place.section)
-            if place.length > 0 {
-                self.flash(NSRange(location: place.start, length: place.length), onPage: place.section)
-            }
+            self?.jumpToQuestionPlace(place)
         })
+    }
+
+    /// Fliken Frågor och Visa i boken (K6b): stänger rutorna och hoppar dit genom `hop(to:)`, med i historiken.
+    fileprivate func jumpToQuestionPlace(_ place: QuestionPlace) {
+        dismiss(animated: true)
+        hop(to: place.section)
+        if place.length > 0 {
+            flash(NSRange(location: place.start, length: place.length), onPage: place.section)
+        }
     }
 
     /// Självtestet (K6): frågefilen bredvid test.pdf, prickarna, rutan och svaret i databasen.
@@ -3334,9 +3358,8 @@ extension PDFCurlReaderViewController {
         let here = all.filter { pages.contains($0.section) }
         var questionsHere: [BookQuestion] = []
         if let questions = questions, questions.showsDots {
-            questionsHere = questions.questions.filter { question in
-                questions.place(of: question.id).map { pages.contains($0.section) } ?? false
-            }
+            // K6b: kapitlets AI-frågor (före, i texten och efter kapitlet), annars frågefilens frågor på sidorna.
+            questionsHere = questions.chapterQuestions(sections: pages)
         }
         let terms = ConceptStore.shared.concepts(book: bookKey).map(\.term)
         return ChapterTestLogic.cards(highlights: here, allHighlights: all, questions: questionsHere, terms: terms,

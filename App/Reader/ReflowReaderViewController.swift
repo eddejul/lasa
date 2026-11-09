@@ -832,6 +832,11 @@ final class ReflowReaderViewController: UIViewController {
         reportReadingStatus(content: content, renderer: renderer)
         logReading(content: content)
         updateSideNotes()
+        // K6b: kapitlet som visas får AI-frågor i bakgrunden om det saknar frågor.
+        let chapter = currentChapter
+        questions?.pageShown(section: chapter, atChapterStart: visiblePages.contains {
+            !$0.isBlank && $0.chapter == chapter && $0.page == 0
+        })
     }
 
     /// K12: anteckningen för kapitlet som syns. EPUB och text har inga fasta sidor, så en per kapitel.
@@ -2981,6 +2986,16 @@ extension ReflowReaderViewController {
         questions.onChange = { [weak self] in
             self?.questionsChanged()
         }
+        // K6b: ett kapitel i läsordningen, med kapitlets text utan taggar.
+        questions.aiContext = AIBookContext(
+            book: bookKey, title: PassageExplain.title(of: book),
+            author: BookRegistry.shared.record(id: book.id)?.displayAuthor ?? "",
+            chapters: AIChapterText.chapters(titles: content.chapters.indices.map { content.title(ofChapter: $0) ?? "" }),
+            text: .chapters(content.chapters.map { $0.url }))
+        questions.presenter = self
+        questions.jump = { [weak self] place in
+            self?.jumpToQuestionPlace(place)
+        }
         self.questions = questions
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleQuestionTap(_:)))
         tap.delegate = self
@@ -3065,11 +3080,16 @@ extension ReflowReaderViewController {
         return questions.makeList(placeLabel: { [weak self] place in
             self?.chapterName(place.section) ?? "Avsnitt \(place.section + 1)"
         }, onSelect: { [weak self] _, place in
-            guard let self = self else { return }
-            self.dismiss(animated: true)
-            self.reveal(chapter: place.section, body: "return lasaMarks.reveal(start, length);",
-                        arguments: ["start": place.start, "length": max(place.length, 1)])
+            self?.jumpToQuestionPlace(place)
         })
+    }
+
+    /// Fliken Frågor och Visa i boken (K6b): stänger rutorna och visar stället (`reveal` sparar platsen i
+    /// historiken först, som `hop(to:)`).
+    fileprivate func jumpToQuestionPlace(_ place: QuestionPlace) {
+        dismiss(animated: true)
+        reveal(chapter: place.section, body: "return lasaMarks.reveal(start, length);",
+               arguments: ["start": place.start, "length": max(place.length, 1)])
     }
 
     /// Självtestet (K6): frågefilen bredvid test.epub, prickarna, rutan och svaret i databasen.
@@ -3183,7 +3203,12 @@ extension ReflowReaderViewController {
     fileprivate func chapterTestCards(chapter: Int, title: String) -> [ChapterTestCard] {
         let all = AnnotationStore.shared.highlights(book: bookKey)
         let here = all.filter { $0.section == chapter }
-        let questionsHere = questions?.showsDots == true ? (questions?.questions(inSection: chapter) ?? []) : []
+        var questionsHere: [BookQuestion] = []
+        if let questions = questions, questions.showsDots {
+            // K6b: kapitlets AI-frågor (före, i texten och efter kapitlet), annars frågefilens frågor i kapitlet.
+            questionsHere = questions.usesAI ? questions.chapterQuestions(sections: chapter..<(chapter + 1))
+                : questions.questions(inSection: chapter)
+        }
         let terms = ConceptStore.shared.concepts(book: bookKey).map(\.term)
         return ChapterTestLogic.cards(highlights: here, allHighlights: all, questions: questionsHere, terms: terms,
                                       book: bookKey, source: title)

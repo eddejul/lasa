@@ -9,6 +9,11 @@ och provet av nyckeln (GET /v1beta/models/<modell>). Svaret beror på nyckeln i 
   mock-quota-day     429 med quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier
   mock-quota-minute  429 med quotaId GenerateRequestsPerMinutePerProjectPerModel-FreeTier och retryDelay 30s
 
+AI-frågorna (K6b): en fråga av typen fragor-1 (börjar med "Du gör frågor som hjälper en läsare") får frågor
+vars plats och källa tas ur texten mellan <text> och </text> i frågan, plus en fråga vars plats inte står i
+texten och en som upprepar sex ord ur texten (båda ska slängas av appens kontroll). Jämför (jamfor-1, "Du
+bedömer en läsares svar") får ett omdöme med punkter.
+
 En modell som heter finns-inte ger 404. Varje anrop skrivs till en JSON-fil (nyckeln maskad, frågans längd och
 början), så att testet kan visa att bara stycket skickades. Ingen riktig nyckel används någonsin.
 
@@ -16,6 +21,7 @@ Användning: python3 tools/simtest/mock_gemini.py <port> <utfil.json>
 """
 
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
@@ -77,6 +83,79 @@ CHAPTER_ANSWER = {
 }
 
 
+def sentences(text):
+    """Meningarna i texten med var de slutar, ordagrant (för plats och källa)."""
+    result = []
+    start = 0
+    for match in re.finditer(r"[.!?](?=\s|$)", text):
+        sentence = text[start:match.end()].strip()
+        if len(sentence.split()) >= 8:
+            result.append((sentence, match.end()))
+        start = match.end()
+    return result
+
+
+def count_after(prompt):
+    match = re.search(r"^a\) (\d+) fråg", prompt, re.M)
+    return int(match.group(1)) if match else 2
+
+
+def questions_answer(prompt):
+    """K6b: frågor ur texten i frågan. Platsen är de sex sista orden i en mening, källan de åtta första."""
+    text = prompt.split("<text>\n", 1)[-1].rsplit("\n</text>", 1)[0]
+    found = sentences(text)
+    wanted = count_after(prompt)
+    fragor = []
+    if found:
+        # Den första frågan i texten står tidigt (andra meningen), så att pricken syns på kapitlets första sida.
+        picks = sorted({min(1, len(found) - 1)} | {len(found) * (k + 1) // (wanted + 1) for k in range(1, wanted)})
+        types = ["varfor", "egna_ord", "skillnad", "vems_rost", "belagg", "huvudpoang", "tillampa", "falla"]
+        for number, index in enumerate(picks):
+            sentence, _ = found[index]
+            words = sentence.rstrip(".!?").split()
+            fragor.append({"typ": types[number % len(types)], "nar": "efter",
+                           "fraga": f"Vad vill författaren få fram i avsnittet som slutar här, fråga {number + 1}?",
+                           "svar": ["Avsnittets huvudtanke med egna ord.", "Varför den spelar roll."],
+                           "oppen": False, "plats": " ".join(words[-6:]), "kalla": " ".join(words[:8])})
+        first, _ = found[0]
+        fragor.insert(0, {"typ": "huvudpoang", "nar": "fore",
+                          "fraga": "Vad är det viktigaste du ska hålla utkik efter när du läser kapitlet?",
+                          "svar": ["Kapitlets huvudtanke."], "oppen": False, "plats": "",
+                          "kalla": " ".join(first.split()[:8])})
+        # Slängs: platsen står inte i texten.
+        fragor.append({"typ": "huvudpoang", "nar": "efter", "fraga": "En fråga vars plats inte finns i texten?",
+                       "svar": ["Inget."], "oppen": False, "plats": "den här platsen står inte i texten alls",
+                       "kalla": " ".join(first.split()[:8])})
+        # Slängs: frågan upprepar sex ord i rad ur texten.
+        fragor.append({"typ": "egna_ord", "nar": "efter", "fraga": "Förklara: " + " ".join(first.split()[:7]) + "?",
+                       "svar": ["Något."], "oppen": False, "plats": " ".join(first.rstrip(".").split()[-6:]),
+                       "kalla": " ".join(first.split()[:8])})
+    if 'Inga frågor med "nar": "slut"' not in prompt:
+        fragor.append({"typ": "sammanfatta", "nar": "slut",
+                       "fraga": "Sammanfatta kapitlet med egna ord i två eller tre meningar.",
+                       "svar": ["Kapitlets huvudtanke.", "Hur resonemanget byggs upp."], "oppen": False, "plats": "",
+                       "kalla": ""})
+        fragor.append({"typ": "verkligheten", "nar": "slut",
+                       "fraga": "Var i ditt eget liv eller din omvärld syns det kapitlet beskriver?",
+                       "svar": ["Kapitlets idé kan prövas mot vardagen."], "oppen": True, "plats": "", "kalla": ""})
+        if "Det här är bokens sista kapitel" in prompt:
+            fragor.append({"typ": "syntes", "nar": "slut",
+                           "fraga": "Hur hänger bokens viktigaste idéer ihop, sett från slutet?",
+                           "svar": ["Bokens röda tråd."], "oppen": True, "plats": "", "kalla": ""})
+    words = re.findall(r"[^\W\d_]{7,}", text)
+    return {"sammanfattning": "Kapitlet för ett resonemang i flera steg om det texten handlar om.",
+            "begrepp": list(dict.fromkeys(words))[:5], "fragor": fragor}
+
+
+COMPARE_ANSWER = {
+    "med": ["Du fick med huvudtanken."],
+    "saknas": ["Varför den spelar roll saknas."],
+    "fel": [],
+    "omdome": "delvis",
+    "kommentar": "En bra början, men förklara också varför det spelar roll.",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *args):
@@ -125,7 +204,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(429, quota_error(False))
         if not path.endswith(":generateContent"):
             return self.reply(404, google_error(404, "NOT_FOUND", "Okänd metod"))
-        answer = CHAPTER_ANSWER if "Studentens förklaring" in prompt else ANSWER
+        if prompt.startswith("Du gör frågor som hjälper en läsare"):
+            answer = questions_answer(prompt)
+        elif prompt.startswith("Du bedömer en läsares svar"):
+            answer = COMPARE_ANSWER
+        else:
+            answer = CHAPTER_ANSWER if "Studentens förklaring" in prompt else ANSWER
         text = json.dumps(answer, ensure_ascii=False)
         return self.reply(200, {"candidates": [{"content": {"role": "model", "parts": [{"text": text}]},
                                                 "finishReason": "STOP"}]})

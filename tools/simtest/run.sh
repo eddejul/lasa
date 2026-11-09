@@ -156,11 +156,12 @@ rm -f "$DATA/Documents/selftest/ai.klar"
 xcrun simctl launch "$UDID" "$BUNDLE" -LasaSelfTest ai -LasaGeminiURL http://127.0.0.1:54322
 waited=0
 shot=0
-while [ ! -f "$DATA/Documents/selftest/ai.klar" ] && [ $waited -lt 240 ]; do
+# K6b: AI-frågorna i en EPUB och en PDF görs sist och tar ett par minuter till.
+while [ ! -f "$DATA/Documents/selftest/ai.klar" ] && [ $waited -lt 480 ]; do
   sleep 4
   waited=$((waited + 4))
   # Markeringsraden och rutan som popover syns bara i simctl:s skärmbilder (glas i iOS 26).
-  if [ $waited -ge 20 ] && [ $shot -lt 8 ]; then
+  if [ $waited -ge 20 ] && [ $shot -lt 16 ]; then
     shot=$((shot + 1))
     xcrun simctl io "$UDID" screenshot "$OUT/ai-skarm-$shot.png" > /dev/null 2>&1 || true
   fi
@@ -168,7 +169,7 @@ done
 if [ -f "$DATA/Documents/selftest/ai.klar" ]; then
   echo "Klart efter cirka $waited sekunder."
 else
-  echo "Självtestet för AI blev inte klart inom 240 sekunder."
+  echo "Självtestet för AI blev inte klart inom 480 sekunder."
   status=1
 fi
 xcrun simctl terminate "$UDID" "$BUNDLE" || true
