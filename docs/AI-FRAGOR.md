@@ -95,7 +95,7 @@ Slängda frågor skrivs aldrig ut, men antalet per orsak loggas (iPaden i `AppLo
 
 ## Prov
 
-* **Logiken:** iPaden ett XCTest och Windows ett node-test som läser `tools/simtest/ai-fragor/fixtur-1.json` och kontrollerar frågan, Jämförs frågor, schemana, kontrollens resultat och id:na. Windows-testet läser dessutom iPadens Swift-kod och kontrollerar att typerna och texterna i frågan är desamma, som `review.test.mjs` gör.
+* **Logiken:** iPaden ett XCTest och Windows ett node-test som läser `tools/simtest/ai-fragor/fixtur-1.json` och kontrollerar frågan, Jämförs frågor, schemana, kontrollens resultat och id:na. Fixturen är det gemensamma facit, så att båda apparna bevisligen bygger samma fråga och behåller samma frågor.
 * **iPaden:** självtestet mot `tools/simtest/mock_gemini.py`, som svarar på `fragor-1` med frågor vars platser och källor tas ur den text som skickats, plus en som inte hittas. Läs loggen och bilderna: prickarna, rutan före och efter Visa svaret, Jämför, raden före läsningen och fliken Frågor.
 * **Windows:** e2e med `dev/server.py` och Gemini-anropen fångade i testet (Playwright `route`), aldrig mot Google.
 * Inget prov mot riktiga Gemini utan Edvins ja.
