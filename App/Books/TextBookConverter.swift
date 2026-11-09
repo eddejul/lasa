@@ -39,6 +39,11 @@ enum TextBookConverter {
             blocks = plainBlocks(text)
         default:
             text = try readText(book.url)
+            // P4: txt-filen från OCR-flödet bredvid sin PDF blir ett kapitel per sida (PhotoPages.swift).
+            if fileExtension == "txt", PDFTextCompanion.pdfURL(forText: book.url) != nil,
+               let pages = OCRPagedText.parse(text) {
+                return try openPaged(book, pages: pages, text: text, directory: directory, identifier: identifier)
+            }
             blocks = plainBlocks(text)
         }
         let language = languageCode(for: text)
@@ -117,7 +122,7 @@ enum TextBookConverter {
         return result
     }
 
-    private static func languageCode(for text: String) -> String {
+    static func languageCode(for text: String) -> String {
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(String(text.prefix(4000)))
         return recognizer.dominantLanguage?.rawValue ?? "sv"
@@ -162,7 +167,7 @@ enum TextBookConverter {
         hr { border: none; border-top: 1px solid currentColor; opacity: 0.3; margin: 1.2em 0; }
         """
 
-    private static func page(title: String, language: String, body: String) -> String {
+    static func page(title: String, language: String, body: String) -> String {
         """
         <!DOCTYPE html>
         <html lang="\(language)">

@@ -197,6 +197,7 @@ final class ReflowReaderViewController: UIViewController {
         setUpBottomBar()
         setUpBackStack()
         setUpTaps()
+        setUpPageImageSwitch()
         // B5: stegen i exempelboken, en rad längst ner som inte tar tryck.
         OnboardingTips.shared.attach(to: view, book: book)
 
@@ -656,6 +657,49 @@ final class ReflowReaderViewController: UIViewController {
         if pendingJump != nil {
             spinner.startAnimating()
         }
+    }
+
+    // MARK: Textläget (P4)
+
+    /// P4: txt-filen från OCR-flödet bredvid sin PDF får Visa sidbilden i Mer.
+    private func setUpPageImageSwitch() {
+        guard PDFTextCompanion.pdfURL(forText: book.url) != nil else { return }
+        chrome.pageItems = { [weak self] in
+            guard self != nil else { return [] }
+            return [UIAction(title: "Visa sidbilden", image: UIImage(systemName: "doc.richtext")) { [weak self] _ in
+                self?.showPageImage()
+            }]
+        }
+    }
+
+    /// P4: tillbaka till PDF:en på samma sida (kapitel n är PDF:ens sida n).
+    @objc func showPageImage() {
+        guard let url = PDFTextCompanion.pdfURL(forText: book.url),
+              let pdfBook = LibraryStore.shared.book(at: url) else {
+            chrome.showToast("Sidbilden läses fortfarande in. Försök igen om en stund.")
+            return
+        }
+        if isShowingPages {
+            saveLocation()
+        }
+        let page = max(currentChapter, 0)
+        LibraryStore.shared.savePageIndex(page, for: pdfBook)
+        guard let reader = PDFCurlReaderViewController(book: pdfBook) else {
+            chrome.showToast("PDF:en kunde inte öppnas.")
+            return
+        }
+        AppLog.shared.write("Textläge (P4): kapitel \(currentChapter + 1) till sida \(page + 1)")
+        PDFTextCompanion.replace(self, with: reader)
+    }
+
+    /// Självtestet (P4): kapitlet som visas och dess rubrik.
+    var photoTestChapter: (index: Int, title: String?) {
+        (currentChapter, content?.title(ofChapter: currentChapter))
+    }
+
+    /// Självtestet (P4): hoppar till ett kapitel.
+    func photoTestJump(chapter: Int) {
+        jump(to: ReflowLocation(chapter: chapter, progression: 0))
     }
 
     // MARK: Menyn

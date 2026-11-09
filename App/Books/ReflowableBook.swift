@@ -157,7 +157,11 @@ enum ReflowableBookLoader {
         let values = try? book.url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let size = values?.fileSize ?? 0
         let date = Int(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)
-        let source = "\(book.url.lastPathComponent)|\(size)|\(date)|\(formatVersion)"
+        var source = "\(book.url.lastPathComponent)|\(size)|\(date)|\(formatVersion)"
+        // P4: en txt-fil bredvid sin PDF görs om sida för sida, så att gamla sidantal och kapitel inte används.
+        if PDFTextCompanion.pdfURL(forText: book.url) != nil {
+            source += "|sidor"
+        }
         let digest = SHA256.hash(data: Data(source.utf8))
         let hex = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
         return safeName(book.title) + "-" + hex

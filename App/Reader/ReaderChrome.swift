@@ -63,6 +63,16 @@ final class ReaderChrome {
     private var onHistory: ((Int) -> Void)?
     /// V4: Tillbaka i sidans hörn, som följer temat.
     weak var backControl: ReaderBackControl?
+    /// P3 och P4: rader som läsaren bygger själv i Mer, efter Zooma sidan. Byggs om med `refreshMoreMenu`.
+    var pageItems: (() -> [UIMenuElement])? {
+        didSet {
+            moreItem.menu = makeMoreMenu()
+        }
+    }
+
+    func refreshMoreMenu() {
+        moreItem.menu = makeMoreMenu()
+    }
 
     /// Om menyraden och nederkanten är dolda.
     private(set) var isHidden = false
@@ -190,6 +200,10 @@ final class ReaderChrome {
                 [weak self] _ in
                 self?.send(zoom)
             })
+        }
+        // P3 och P4: läsarens egna rader (Beskär, Visa texten eller Visa sidbilden).
+        if let page = pageItems?(), !page.isEmpty {
+            children.append(UIMenu(title: "", options: .displayInline, children: page))
         }
         var study: [UIMenuElement] = []
         if let notebook = actions.notebook {

@@ -185,6 +185,7 @@ final class PDFCurlReaderViewController: UIViewController {
         setUpBottomBar()
         setUpBackStack()
         setUpTaps()
+        setUpPhotoPages()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -431,6 +432,311 @@ final class PDFCurlReaderViewController: UIViewController {
         updatePageLabel()
         updateBookmarkState()
         keepNeighbours()
+    }
+
+    // MARK: Beskärning och textläge (P3, P4)
+
+    /// P3: bokens ram läses när läsaren öppnas, före första sidbilden. P3 och P4 får egna rader i Mer.
+    private func setUpPhotoPages() {
+        renderer.setCrop(PageCropStore.active(bookID: book.id))
+        chrome.pageItems = { [weak self] in
+            self?.photoPageItems() ?? []
+        }
+    }
+
+    /// Beskär marginalerna (eller Visa hela sidan när ramen är på), Ändra beskärningen och Visa texten.
+    private func photoPageItems() -> [UIMenuElement] {
+        var items: [UIMenuElement] = []
+        let saved = PageCropStore.saved(bookID: book.id)
+        if let saved = saved, saved.isOn {
+            items.append(UIAction(title: "Visa hela sidan",
+                                  image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")) { [weak self] _ in
+                self?.setCropOn(false)
+            })
+        } else {
+            items.append(UIAction(title: "Beskär marginalerna", image: UIImage(systemName: "crop")) { [weak self] _ in
+                if saved != nil {
+                    self?.setCropOn(true)
+                } else {
+                    self?.showCropEditor()
+                }
+            })
+        }
+        if saved != nil {
+            items.append(UIAction(title: "Ändra beskärningen", image: UIImage(systemName: "slider.horizontal.3")) {
+                [weak self] _ in
+                self?.showCropEditor()
+            })
+        }
+        if PDFTextCompanion.textURL(forPDF: book.url) != nil {
+            items.append(UIAction(title: "Visa texten", image: UIImage(systemName: "text.alignleft")) { [weak self] _ in
+                self?.showTextMode()
+            })
+        }
+        return items
+    }
+
+    /// Ett tryck: hela sidan, eller beskuret igen med samma ram.
+    private func setCropOn(_ on: Bool) {
+        guard var saved = PageCropStore.saved(bookID: book.id) else { return }
+        saved.isOn = on
+        PageCropStore.save(saved, bookID: book.id)
+        applyCrop()
+        showToast(on ? "Marginalerna är beskurna i hela boken." : "Hela sidan visas. Beskär igen i Mer.")
+    }
+
+    /// Ritar om sidorna med ramen som gäller. Den gamla bilden står kvar tills den nya är ritad (i bakgrunden).
+    private func applyCrop() {
+        renderer.setCrop(PageCropStore.active(bookID: book.id))
+        refreshVisiblePages()
+        keepNeighbours()
+        chrome.refreshMoreMenu()
+        AppLog.shared.write("Beskärning (P3): " + (PageCropStore.saved(bookID: book.id).map(PageCropStore.format) ?? "ingen"))
+    }
+
+    /// Rutan där ramen dras, med sidan man läser.
+    @objc fileprivate func showCropEditor() {
+        let index = min(max(currentIndex, 0), renderer.pageCount - 1)
+        let current = PageCropStore.saved(bookID: book.id)?.crop ?? .full
+        let renderer = self.renderer
+        let width = min(view.bounds.width, view.bounds.height, 820)
+        let scale = displayScale
+        let editor = PageCropViewController(crop: current) { completion in
+            renderer.thumbnail(for: index, width: width, scale: scale) { image in
+                completion(image)
+            }
+        }
+        editor.onSave = { [weak self] crop in
+            guard let self = self else { return }
+            PageCropStore.save(PageCropStore.Saved(crop: crop, isOn: true), bookID: self.book.id)
+            self.applyCrop()
+        }
+        editor.onFullPage = { [weak self] in
+            guard let self = self else { return }
+            PageCropStore.save(nil, bookID: self.book.id)
+            self.applyCrop()
+        }
+        let navigation = UINavigationController(rootViewController: editor)
+        navigation.modalPresentationStyle = .fullScreen
+        present(navigation, animated: true)
+    }
+
+    /// P4: byter till txt-filen bredvid PDF:en, på samma sida (kapitel n är PDF:ens sida n).
+    @objc fileprivate func showTextMode() {
+        guard let url = PDFTextCompanion.textURL(forPDF: book.url) else { return }
+        guard let textBook = LibraryStore.shared.book(at: url) else {
+            showToast("Texten läses fortfarande in. Försök igen om en stund.")
+            return
+        }
+        let count = OCRPagedText.pageCount(at: url) ?? 1
+        let chapter = min(max(currentIndex, 0), max(count - 1, 0))
+        LibraryStore.shared.savePageIndex(currentIndex, for: book)
+        LibraryStore.shared.saveLocation(ReflowLocation(chapter: chapter, progression: 0), for: textBook)
+        AppLog.shared.write("Textläge (P4): sida \(currentIndex + 1) till kapitel \(chapter + 1) av \(count)")
+        PDFTextCompanion.replace(self, with: ReflowReaderViewController(book: textBook))
+    }
+
+    /// Självtestet (P4): sidan som visas.
+    var photoTestPageIndex: Int {
+        currentIndex
+    }
+
+    /// Våg 10b: beskärningen (P3), textläget (P4) och provet med Apples Vision (P5), med foto-text.pdf och
+    /// foto-text.txt från make_books.py.
+    fileprivate func selfTestPhotoPages() async {
+        PhotoPagesSelfTest.running = true
+        PageCropStore.save(nil, bookID: book.id)
+        applyCrop()
+        _ = await waitForCrop()
+        await pause(0.6)
+        SelfTest.saveScreen(view, name: "01-hela-sidan")
+        let fullFrame = visiblePages.first(where: { !$0.isBlank })?.imageFrame ?? .zero
+        let fullOK = selfTestCropWord("hela sidan")
+
+        // Rutan: förslaget efter var texten ligger, sedan Klar.
+        showCropEditor()
+        guard let editor = await waitForPresented(PageCropViewController.self) else {
+            SelfTest.log("FEL: rutan för beskärningen öppnades inte")
+            return
+        }
+        for _ in 0..<80 where !editor.hasImage {
+            await pause(0.1)
+        }
+        await pause(0.5)
+        let suggestion = editor.suggestion()
+        SelfTest.log("Förslaget (P3): \(suggestion.map { PageCropStore.format(.init(crop: $0, isOn: true)) } ?? "inget") "
+                     + "(papperet i provboken är 0,10 till 0,90 brett, texten cirka 0,18 till 0,81)")
+        let chosen = suggestion ?? PageCrop(rect: CGRect(x: 0.15, y: 0.12, width: 0.7, height: 0.76))
+        editor.setCrop(chosen)
+        await pause(0.4)
+        if let shown = presentedViewController?.view {
+            SelfTest.saveScreen(shown, name: "02-ramen")
+        }
+        editor.doneTapped()
+        await pause(0.8)
+        let cropped = await waitForCrop()
+        view.layoutIfNeeded()
+        visiblePages.forEach { $0.view.layoutIfNeeded() }
+        await pause(0.4)
+        let croppedFrame = visiblePages.first(where: { !$0.isBlank })?.imageFrame ?? .zero
+        let growth = fullFrame.width > 0 ? croppedFrame.width / max(chosen.rect.width, 0.01) / fullFrame.width : 0
+        SelfTest.log("Beskuren (P3): \(cropped ? "ny sidbild" : "FEL, ingen ny sidbild"), sparad "
+                     + "\(UserDefaults.standard.string(forKey: PageCropStore.prefix + book.id) ?? "INGET"), bildruta "
+                     + "\(Int(fullFrame.width)) x \(Int(fullFrame.height)) till \(Int(croppedFrame.width)) x "
+                     + "\(Int(croppedFrame.height)), texten \(String(format: "%.2f", Double(growth))) gånger större, "
+                     + "variant på disk: \(renderer.diskCount()) sidbilder")
+        let cropOK = selfTestCropWord("beskuren")
+        SelfTest.saveScreen(view, name: "03-beskuren")
+        if let page = visiblePages.first(where: { !$0.isBlank }), let pdfPage = document.page(at: page.pageIndex),
+           let string = pdfPage.string {
+            let range = (string as NSString).range(of: "kunskap", options: [.caseInsensitive])
+            if range.location != NSNotFound {
+                page.flash(PDFTextRanges.rects(on: pdfPage, range: range))
+                await pause(0.3)
+                SelfTest.saveScreen(view, name: "04-beskuren-sokruta")
+            }
+        }
+        turnPage(forward: true)
+        await pause(1.4)
+        _ = await waitForCrop()
+        SelfTest.saveScreen(view, name: "05-nasta-sida")
+        let nextOK = selfTestCropWord("nästa sida")
+
+        // Ett tryck visar hela sidan, ett till beskär igen.
+        setCropOn(false)
+        let backToFull = await waitForCrop()
+        view.layoutIfNeeded()
+        let offFrame = visiblePages.first(where: { !$0.isBlank })?.imageFrame ?? .zero
+        setCropOn(true)
+        let again = await waitForCrop()
+        SelfTest.log("Visa hela sidan (P3): \(backToFull ? "ok" : "FEL"), bildruta \(Int(offFrame.width)) x "
+                     + "\(Int(offFrame.height)), beskär igen \(again ? "ok" : "FEL"), ramen kvar "
+                     + "\(PageCropStore.saved(bookID: book.id)?.isOn == true ? "på" : "FEL")")
+        let backup = Backup.positionSnapshot()[PageCropStore.prefix + book.id] != nil
+        SelfTest.log("Ramen i säkerhetskopian (P3): \(backup ? "ja" : "FEL, saknas")")
+        SelfTest.log("Beskärningen (P3) sammanfattat: \(fullOK && cropOK && nextOK && cropped && backToFull ? "ok" : "FEL")")
+
+        // P5: Apples Vision med tyska på svensk text.
+        SelfTest.log("Vision (P5), språk i simulatorn: \(VisionProbe.supportedLanguagesSummary())")
+        for line in await VisionProbe.swedishProbe() {
+            SelfTest.log("Vision (P5): " + line)
+        }
+
+        await selfTestTextMode()
+    }
+
+    /// P4: biblioteket döljer txt-filen, Visa texten öppnar samma sida och Visa sidbilden tar tillbaka.
+    fileprivate func selfTestTextMode() async {
+        let hidden = PDFTextCompanion.companionTextIDs(in: LibraryStore.shared.allBooks())
+        let txtBook = PDFTextCompanion.textURL(forPDF: book.url).flatMap { LibraryStore.shared.book(at: $0) }
+        SelfTest.log("Biblioteket (P4): txt-filen \(txtBook == nil ? "FEL, finns inte i registret" : "finns"), "
+                     + "dold i biblioteket: \(txtBook.map { hidden.contains($0.id) ? "ja" : "FEL, nej" } ?? "-")")
+        guard let navigation = navigationController else {
+            SelfTest.log("FEL: ingen navigering för textläget")
+            return
+        }
+        jump(to: 2)
+        await pause(0.6)
+        showTextMode()
+        var text: ReflowReaderViewController?
+        for _ in 0..<60 {
+            text = navigation.topViewController as? ReflowReaderViewController
+            if text != nil {
+                break
+            }
+            await pause(0.1)
+        }
+        guard let reader = text else {
+            SelfTest.log("FEL: textläget öppnades inte")
+            return
+        }
+        await pause(4)
+        let shown = reader.photoTestChapter
+        SelfTest.log("Visa texten (P4) från PDF:ens sida 3: kapitel \(shown.index + 1), rubrik \(shown.title ?? "ingen") "
+                     + "(väntat kapitel 3, Sida 13): \(shown.index == 2 && shown.title == "Sida 13" ? "ok" : "FEL")")
+        SelfTest.saveScreen(navigation.view, name: "06-textlage")
+        reader.photoTestJump(chapter: 3)
+        await pause(3)
+        SelfTest.saveScreen(navigation.view, name: "07-textlage-sida-14")
+        reader.showPageImage()
+        var pdf: PDFCurlReaderViewController?
+        for _ in 0..<60 {
+            pdf = navigation.topViewController as? PDFCurlReaderViewController
+            if pdf != nil {
+                break
+            }
+            await pause(0.1)
+        }
+        guard let back = pdf else {
+            SelfTest.log("FEL: Visa sidbilden öppnade inte PDF:en")
+            return
+        }
+        await pause(2.5)
+        SelfTest.log("Visa sidbilden (P4) från kapitel 4: PDF:ens sida \(back.photoTestPageIndex + 1) (väntat 4): "
+                     + "\(back.photoTestPageIndex == 3 ? "ok" : "FEL"), ramen \(back.renderer.crop.isFull ? "FEL, borta" : "kvar")")
+        SelfTest.saveScreen(navigation.view, name: "08-tillbaka-till-sidbilden")
+    }
+
+    /// P3: ordet kunskap på sidan som syns. Ordet under fingret mitt på ordets ruta ska vara kunskap, och
+    /// sidbilden ska ha bläck i rutan men inte två rader ovanför, så att bilden och omräkningen stämmer.
+    fileprivate func selfTestCropWord(_ label: String) -> Bool {
+        guard let page = visiblePages.first(where: { !$0.isBlank }), let pdfPage = document.page(at: page.pageIndex),
+              let pageFrame = page.pageFrame, let imageFrame = page.imageFrame, let string = pdfPage.string else {
+            SelfTest.log("FEL (\(label)): ingen sida med text")
+            return false
+        }
+        let range = (string as NSString).range(of: "kunskap", options: [.caseInsensitive])
+        guard range.location != NSNotFound, let rect = PDFTextRanges.rects(on: pdfPage, range: range).first,
+              let shown = page.viewRect(forPageRect: rect) else {
+            SelfTest.log("FEL (\(label)): hittade inte ordet kunskap")
+            return false
+        }
+        let finger = CGPoint(x: shown.midX, y: shown.midY)
+        let word = Self.word(on: pdfPage, at: finger, imageFrame: pageFrame).map { (string as NSString).substring(with: $0) }
+        let ink = Self.inkShare(in: page.view, rect: shown)
+        let above = Self.inkShare(in: page.view, rect: shown.offsetBy(dx: 0, dy: -2.2 * shown.height))
+        let ok = word?.lowercased() == "kunskap" && ink > 0.04 && above < ink / 3 && imageFrame.contains(finger)
+        SelfTest.log("Ordet kunskap (\(label), sida \(page.pageIndex + 1)): bildruta \(Int(imageFrame.minX)),"
+                     + "\(Int(imageFrame.minY)) \(Int(imageFrame.width)) x \(Int(imageFrame.height)), ordets ruta "
+                     + "\(Int(shown.minX)),\(Int(shown.minY)) \(Int(shown.width)) x \(Int(shown.height)), under fingret "
+                     + "\(word ?? "inget"), bläck i rutan \(String(format: "%.1f", ink * 100)) %, två rader ovanför "
+                     + "\(String(format: "%.1f", above * 100)) %: \(ok ? "ok" : "FEL")")
+        return ok
+    }
+
+    /// Andelen mörka punkter i en ruta av en vy, till självtestet.
+    fileprivate static func inkShare(in view: UIView, rect: CGRect) -> Double {
+        let width = max(Int(rect.width.rounded()), 1)
+        let height = max(Int(rect.height.rounded()), 1)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { _ in
+            _ = view.drawHierarchy(in: CGRect(x: -rect.minX, y: -rect.minY, width: view.bounds.width,
+                                              height: view.bounds.height), afterScreenUpdates: true)
+        }
+        guard let cg = image.cgImage else { return -1 }
+        var pixels = [UInt8](repeating: 255, count: width * height)
+        let dark: Int = pixels.withUnsafeMutableBytes { buffer -> Int in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                                          bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return -1 }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return buffer.bindMemory(to: UInt8.self).filter { $0 < 110 }.count
+        }
+        return dark < 0 ? -1 : Double(dark) / Double(width * height)
+    }
+
+    /// Väntar tills sidorna som syns har bilder ritade med ramen som gäller.
+    fileprivate func waitForCrop() async -> Bool {
+        for _ in 0..<150 {
+            if !visiblePages.isEmpty,
+               visiblePages.allSatisfy({ $0.isBlank || ($0.imageFrame != nil && $0.shownCrop == renderer.crop) }) {
+                view.layoutIfNeeded()
+                return true
+            }
+            await pause(0.1)
+        }
+        return false
     }
 
     // MARK: Tillbaka och historik (V4)
@@ -1138,7 +1444,7 @@ final class PDFCurlReaderViewController: UIViewController {
     private func updatePressedWord(at point: CGPoint) -> Bool {
         guard let page = pageView(at: point),
               let pdfPage = document.page(at: page.pageIndex),
-              let imageFrame = page.imageFrame else {
+              let imageFrame = page.pageFrame else {
             return false
         }
         let local = page.view.convert(point, from: view)
@@ -1604,7 +1910,7 @@ extension PDFCurlReaderViewController {
             markSelection = nil
             guard let page = pageView(at: point),
                   let pdfPage = document.page(at: page.pageIndex),
-                  let frame = page.imageFrame else { return }
+                  let frame = page.pageFrame else { return }
             let local = page.view.convert(point, from: view)
             let tapped = page.markID(at: local).flatMap { SavedWordMarks.isWordID($0) ? nil : $0 }
             let word = PDFCurlReaderViewController.word(on: pdfPage, at: local, imageFrame: frame)
@@ -1619,7 +1925,7 @@ extension PDFCurlReaderViewController {
 
         case .changed:
             guard var selection = markSelection, selection.anchor != nil,
-                  let frame = selection.page.imageFrame else { return }
+                  let frame = selection.page.imageFrame, let pageFrame = selection.page.pageFrame else { return }
             if !selection.moved, hypot(point.x - selection.startPoint.x, point.y - selection.startPoint.y) > 6 {
                 selection.moved = true
             }
@@ -1627,7 +1933,7 @@ extension PDFCurlReaderViewController {
             local.x = min(max(local.x, frame.minX + 1), frame.maxX - 1)
             local.y = min(max(local.y, frame.minY + 1), frame.maxY - 1)
             let previous = selection.current
-            if let word = PDFCurlReaderViewController.word(on: selection.pdfPage, at: local, imageFrame: frame) {
+            if let word = PDFCurlReaderViewController.word(on: selection.pdfPage, at: local, imageFrame: pageFrame) {
                 selection.current = word
             }
             markSelection = selection
@@ -2002,7 +2308,8 @@ extension PDFCurlReaderViewController {
 extension PDFCurlReaderViewController {
 
     fileprivate func startSelfTestIfNeeded() {
-        guard SelfTest.isActive, !selfTestStarted, SelfTest.bookName?.lowercased().hasSuffix(".pdf") == true else { return }
+        guard SelfTest.isActive, !selfTestStarted, !PhotoPagesSelfTest.running,
+              SelfTest.bookName?.lowercased().hasSuffix(".pdf") == true else { return }
         selfTestStarted = true
         Task { @MainActor [weak self] in
             await self?.runSelfTest()
@@ -2176,6 +2483,11 @@ extension PDFCurlReaderViewController {
     }
 
     fileprivate func runSelfTest() async {
+        if SelfTest.bookName == PhotoPagesSelfTest.bookName {
+            await selfTestPhotoPages()
+            SelfTest.finish()
+            return
+        }
         if SelfTest.bookName == "foto.pdf" {
             await selfTestPhotoPDF()
             SelfTest.finish()
@@ -2206,7 +2518,7 @@ extension PDFCurlReaderViewController {
         // Ordet under en punkt, som när fingret börjar markera.
         guard let page = visiblePages.first(where: { !$0.isBlank }),
               let pdfPage = document.page(at: page.pageIndex),
-              let frame = page.imageFrame,
+              let frame = page.pageFrame,
               let string = pdfPage.string else {
             SelfTest.log("FEL: ingen sida med text")
             SelfTest.finish()
@@ -2655,7 +2967,7 @@ extension PDFCurlReaderViewController {
         lastWordProbe = nil
         let screen = view.convert(CGPoint(x: shown.midX, y: shown.midY), from: page.view)
         let local = page.view.convert(screen, from: view)
-        let pagePoint = page.imageFrame.flatMap { PDFPageGeometry.pagePoint(for: local, imageFrame: $0, page: pdfPage) }
+        let pagePoint = page.pageFrame.flatMap { PDFPageGeometry.pagePoint(for: local, imageFrame: $0, page: pdfPage) }
         SelfTest.log("Fingerprovet: sida \(page.pageIndex + 1), bladet under fingret \(pageView(at: screen).map { "\($0.pageIndex + 1)" } ?? "inget"), "
                      + "bildruta \(page.imageFrame.map { "\($0)" } ?? "ingen"), punkt \(pagePoint.map { "\($0)" } ?? "ingen")")
         for step in 0..<12 {

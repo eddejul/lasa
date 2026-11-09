@@ -504,6 +504,78 @@ def make_photo_pdf(path, rng):
     path.write_bytes(bytes(data))
 
 
+def make_photo_text_pair(folder):
+    """Våg 10b (P3, P4): en PDF som liknar Edvins kamerafoton, med textlager, och txt-filen från OCR-flödet
+    bredvid (samma namn, en rubrik "--- boksida N ---" per sida som i ocr_spalter.py i Reta 30).
+    Varje sida är ett grått bord med en ljus boksida på (papperet 10 till 90 procent av bredden) och texten i
+    mitten. Ordet kunskap står ensamt på en rad med tomt runt, så att självtestet kan se att sidbilden och
+    rutorna stämmer på en beskuren sida. Sida 1 är titelsidan, sidorna 2 till 4 är boksidorna 12 till 14."""
+    labels = ["titelsida", "boksida 12", "boksida 13", "boksida 14"]
+    texts = [
+        ["FOTOBOKEN", "", "En provbok för textläget och beskärningen."],
+        ["Retoriken handlar om att övertyga. Den som talar väljer argument efter publiken,",
+         "och ordningen mellan argumenten avgör ofta hur väl de tas emot av den som lyssnar.",
+         "", "RETORIKENS GRUNDER", "",
+         "Den klassiska läran delar arbetet i fem delar: inventio, dispositio, elocutio, memo-",
+         "ria och actio. Varje del har sina egna begrepp och sina egna övningar."],
+        ["Inventio är att finna argumenten. Topikerna är platser där argumenten kan sökas,",
+         "till exempel orsak och verkan, likhet och skillnad eller helhet och delar.",
+         "", "Ett bra argument är anpassat till situationen och till den som ska övertygas."],
+        ["Dispositio är ordningen. Ett tal börjar med exordium och slutar med peroratio,",
+         "och däremellan står berättelsen, beviset och vederläggningen.",
+         "", "Den som har ordning i sitt tal blir lättare att följa och att minnas."],
+    ]
+
+    objects = []
+
+    def add(body):
+        objects.append(body)
+        return len(objects)
+
+    catalog = add(None)
+    page_tree = add(None)
+    regular = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    kids = [add(None) for _ in labels]
+    for number, lines in enumerate(texts):
+        content = [
+            "0.35 0.33 0.31 rg 0 0 595 842 re f",  # bordet
+            "0.96 0.95 0.92 rg 60 40 476 770 re f",  # boksidan, 10 till 90 procent av bredden
+            "0 0 0 rg",
+            "BT /F1 12 Tf 16 TL 110 700 Td",
+        ]
+        for line in lines:
+            content.append(f"{pdf_string(line)} Tj T*")
+        content.append("ET")
+        # Ordet kunskap ensamt på en rad, med tomma rader runt.
+        content.append(f"BT /F1 12 Tf 110 470 Td {pdf_string('Ord: kunskap')} Tj ET")
+        content.append(f"BT /F1 12 Tf 110 300 Td {pdf_string('Sidan slutar här.')} Tj ET")
+        stream = "\n".join(content).encode("latin-1")
+        contents = add(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+        objects[kids[number] - 1] = ("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 595 842] "
+                                     "/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>"
+                                     % (page_tree, regular, contents)).encode("ascii")
+    objects[catalog - 1] = ("<< /Type /Catalog /Pages %d 0 R >>" % page_tree).encode("ascii")
+    objects[page_tree - 1] = ("<< /Type /Pages /Kids [%s] /Count %d >>"
+                              % (" ".join(f"{kid} 0 R" for kid in kids), len(kids))).encode("ascii")
+    data = bytearray(b"%PDF-1.4\n%\xe5\xe4\xf6\n")
+    offsets = []
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(data))
+        data += b"%d 0 obj\n" % index + body + b"\nendobj\n"
+    xref = len(data)
+    data += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        data += b"%010d 00000 n \n" % offset
+    data += b"trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, catalog, xref)
+    (folder / "foto-text.pdf").write_bytes(bytes(data))
+
+    # Txt-filen som OCR-flödet skriver: rubriken före varje sida, sidorna åtskilda av en tom rad.
+    pages = []
+    for label, lines in zip(labels, texts):
+        pages.append(f"--- {label} ---\n" + "\n".join(lines) + "\n\nOrd: kunskap\n\nSidan slutar här.")
+    (folder / "foto-text.txt").write_text("\n\n".join(pages), encoding="utf-8")
+
+
 def main():
     folder = Path(sys.argv[1] if len(sys.argv) > 1 else "build/testbooks")
     folder.mkdir(parents=True, exist_ok=True)
@@ -514,6 +586,7 @@ def main():
     make_rtf(folder / "test.rtf", rng)
     make_pdf(folder / "test.pdf", rng)
     make_cover_epub(folder / "roman.epub")
+    make_photo_text_pair(folder)
     if sys.platform == "darwin":
         make_photo_pdf(folder / "foto.pdf", random.Random(11))
     for item in sorted(folder.iterdir()):
