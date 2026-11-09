@@ -2521,6 +2521,21 @@ extension ReflowReaderViewController {
     /// Edvin 8 nov: när man ändrade i Aa blev sidan blank. Här görs ändringarna med rutan öppen, via rutans
     /// egna knappar, en i taget och några tätt efter varandra, och efter varje ändring räknas bläcket på sidan.
     fileprivate func selfTestAppearancePanel() async {
+        // Edvin 9 nov: efter ett byte av bakgrund blev hela skärmen en enda färg och appen såg fryst ut, men
+        // sidan i läsaren var hel (loggen var tom). Systemets egna fönster, till exempel tangentbordets
+        // textfönster, ligger över hela skärmen när man skrivit något i appen. Ett textfält tar fram dem här,
+        // och efter varje steg mäts hela skärmen med alla fönster, inte bara läsarens vy.
+        let field = UITextField(frame: CGRect(x: 0, y: 0, width: 40, height: 30))
+        field.alpha = 0.02
+        view.addSubview(field)
+        let focused = field.becomeFirstResponder()
+        await pause(0.8)
+        field.resignFirstResponder()
+        field.removeFromSuperview()
+        await pause(0.4)
+        let scene = view.window?.windowScene
+        SelfTest.log("Fönster efter ett textfält (\(focused ? "fick fokus" : "FEL, fick inte fokus")): "
+                     + SelfTest.windowSummary(in: scene))
         showTypography()
         await pause(0.9)
         guard let navigation = presentedViewController as? UINavigationController,
@@ -2544,6 +2559,7 @@ extension ReflowReaderViewController {
             ("Återställ", [.reset]),
         ]
         var blank = 0
+        var covered = 0
         for (name, actions) in steps {
             let started = CACurrentMediaTime()
             for action in actions {
@@ -2560,6 +2576,16 @@ extension ReflowReaderViewController {
             SelfTest.log("Aa med rutan öppen, \(name): \(shown ? "sidan klar" : "FEL, sidan kom inte") efter "
                          + "\(milliseconds) ms, bläck \(String(format: "%.1f", ink)) %"
                          + "\(ink < 0.5 ? " FEL, BLANK" : ""). Nyckel \(typography.key), bakgrund \(theme.rawValue)")
+            let variation = SelfTest.screenVariationPercent(in: scene)
+            let covering = SelfTest.coveringWindows(in: scene)
+            let oneColor = variation >= 0 && variation < 0.5
+            if oneColor || !covering.isEmpty {
+                covered += 1
+            }
+            SelfTest.log("Aa med rutan öppen, \(name): hela skärmen \(String(format: "%.1f", variation)) % "
+                         + "utöver vanligaste färgen\(oneColor ? " FEL, SKÄRMEN EN FÄRG" : "")"
+                         + (covering.isEmpty ? "" : ", FEL, systemfönster med egen färg: "
+                            + covering.joined(separator: ", ")))
             if theme.isDark, let styles = renderer?.webViewStyles {
                 // Webbvyerna ska behålla ljust läge även när läsaren är mörk (färgerna kommer ur vår stil).
                 let dark = styles.filter { $0 == .dark }.count
@@ -2572,12 +2598,20 @@ extension ReflowReaderViewController {
         if let window = view.window {
             SelfTest.saveScreen(window, name: "16b-aa-oppen-fonster")
         }
+        SelfTest.saveWholeScreen(scene, name: "16c-aa-oppen-hela-skarmen")
+        SelfTest.log("Fönster efter bytena i Aa: " + SelfTest.windowSummary(in: scene))
         dismiss(animated: false)
         await pause(0.5)
         _ = await waitUntilShown()
         let ink = SelfTest.inkPercent(in: view, paper: theme.paperColor)
         SelfTest.log("Aa stängd: bläck \(String(format: "%.1f", ink)) %. Blanka steg med rutan öppen: \(blank)"
                      + (blank > 0 ? " FEL" : ""))
+        let variation = SelfTest.screenVariationPercent(in: scene)
+        let oneColor = variation >= 0 && variation < 0.5
+        SelfTest.saveWholeScreen(scene, name: "16d-aa-stangd-hela-skarmen")
+        SelfTest.log("Aa stängd: hela skärmen \(String(format: "%.1f", variation)) % utöver vanligaste färgen"
+                     + (oneColor ? " FEL, SKÄRMEN EN FÄRG" : "")
+                     + ". Steg där skärmen täcktes av en färg med rutan öppen: \(covered)" + (covered > 0 ? " FEL" : ""))
     }
 
     /// Mäter raden i kapitlet: sidmarginal, textbredd, ungefär antal tecken per rad (medelbredden för tecknen
