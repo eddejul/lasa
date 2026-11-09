@@ -222,12 +222,13 @@ final class StudyCardStore {
     func todaysCards(now: Date = Date()) -> [ChapterTestCard] {
         let highlights = AnnotationStore.shared.highlightsForSync().filter { !$0.1 }.map(\.0)
         guard !highlights.isEmpty else { return [] }
+        // Bara böcker som finns i biblioteket: en borttagen bok behåller sina markeringar (D3-5) men ger inga kort.
         var titles: [String: String] = [:]
-        for record in BookRegistry.shared.records() {
+        for record in BookRegistry.shared.records() where !record.missing {
             titles[record.id] = record.displayTitle
         }
         var cards: [ChapterTestCard] = []
-        for (book, list) in Dictionary(grouping: highlights, by: \.book) {
+        for (book, list) in Dictionary(grouping: highlights, by: \.book) where titles[book] != nil {
             let terms = ConceptStore.shared.concepts(book: book).map(\.term)
             cards += ChapterTestLogic.cards(highlights: list, allHighlights: list, questions: [], terms: terms,
                                             book: book, source: titles[book] ?? "", limit: 400)
